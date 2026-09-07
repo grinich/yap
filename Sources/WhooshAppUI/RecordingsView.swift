@@ -167,19 +167,20 @@ struct RecordingPlayerView: View {
             if let meeting = model.selectedMeeting {
                 GeometryReader { geometry in
                     let overlaysChat = geometry.size.width < 660
+                    let chatWidth = max(0, min(300, geometry.size.width - 32))
                     HStack(spacing: 0) {
                         playerContent(meeting)
                             .padding(.top, headerHeight)
                         if model.chat.isPresented && !overlaysChat {
-                            chatPane(width: 300)
+                            chatPane(width: chatWidth)
                         }
                     }
                     .overlay(alignment: .trailing) {
                         if model.chat.isPresented && overlaysChat {
-                            chatPane(width: max(0, min(300, geometry.size.width - 32)))
+                            chatPane(width: chatWidth)
                         }
                     }
-                    .overlay(alignment: .top) { playerHeader(meeting) }
+                    .overlay(alignment: .top) { playerHeader(meeting, chatWidth: chatWidth) }
                     .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: model.chat.isPresented)
                 }
                 .clipped()
@@ -200,7 +201,7 @@ struct RecordingPlayerView: View {
         .onChange(of: model.selectedMeeting?.id) { _, _ in copiedLink = nil }
     }
 
-    private func playerHeader(_ meeting: ZoomRecordingMeeting) -> some View {
+    private func playerHeader(_ meeting: ZoomRecordingMeeting, chatWidth: CGFloat) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 12) {
@@ -215,23 +216,28 @@ struct RecordingPlayerView: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 8)
-            if model.chat.isPresented {
-                Text("Chat")
-                    .font(.headline).lineLimit(1)
-                    .accessibilityAddTraits(.isHeader)
-                    .frame(height: 32)
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+            HStack(spacing: 12) {
+                if model.chat.isPresented {
+                    Text("Chat")
+                        .font(.headline).lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                        .frame(height: 32)
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    Spacer(minLength: 0)
+                }
+                Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.chat.setPresented($0) })) {
+                    Label("Chat", systemImage: "bubble")
+                }
+                .toggleStyle(.button).labelStyle(.iconOnly).buttonStyle(.borderless)
+                .frame(width: 32, height: 32)
+                .background(model.chat.isPresented ? Color.primary.opacity(0.09) : .clear,
+                            in: RoundedRectangle(cornerRadius: 10))
+                .tint(nil as Color?).foregroundStyle(.primary)
+                .help("\(model.chat.isPresented ? "Hide" : "Show") chat")
+                .background(WhooshWindowInteractionRegion())
             }
-            Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.chat.setPresented($0) })) {
-                Label("Chat", systemImage: "bubble")
-            }
-            .toggleStyle(.button).labelStyle(.iconOnly).buttonStyle(.borderless)
-            .frame(width: 32, height: 32)
-            .background(model.chat.isPresented ? Color.primary.opacity(0.09) : .clear,
-                        in: RoundedRectangle(cornerRadius: 10))
-            .tint(nil as Color?).foregroundStyle(.primary)
-            .help("\(model.chat.isPresented ? "Hide" : "Show") chat")
-            .background(WhooshWindowInteractionRegion())
+            // Match the transcript’s leading inset inside the actual chat pane.
+            .frame(width: model.chat.isPresented ? max(32, chatWidth - 14 - 24) : 32)
         }
         .padding(24)
         .frame(height: headerHeight)

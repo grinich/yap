@@ -24,8 +24,10 @@ struct RecordingSidebar: View {
                 .buttonStyle(.plain).padding(6)
                 .disabled(model.isLoading || isPreview || connection.isBusy)
                 .help("Refresh recordings").accessibilityLabel("Refresh recordings")
+                .background(WhooshWindowInteractionRegion())
             }
             .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 18)
+            .overlay(WhooshWindowDragSurface())
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
@@ -39,6 +41,7 @@ struct RecordingSidebar: View {
             }
             .padding(9).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 14).padding(.bottom, 12)
+            .background(WhooshWindowInteractionRegion())
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
@@ -89,6 +92,7 @@ struct RecordingSidebar: View {
                 }.padding(.horizontal, 8).padding(.bottom, 20)
             }
             .scrollEdgeEffectStyle(.soft, for: .all)
+            .background(WhooshWindowInteractionRegion())
             Spacer(minLength: 0)
             if let since = model.oldestLoadedDate {
                 Text("\(model.meetings.count) recordings · since \(since.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, timeZone: .gmt)))")
@@ -97,7 +101,6 @@ struct RecordingSidebar: View {
             }
         }
         .background(.quaternary.opacity(0.12))
-        .background(WhooshWindowInteractionRegion(isEnabled: true))
     }
 
     private func sidebarMessage(_ title: String, detail: String) -> some View {
@@ -155,7 +158,7 @@ struct RecordingSidebar: View {
 
 struct RecordingPlayerView: View {
     @Bindable var model: RecordingLibraryModel
-    var allowsWindowDragging = false
+    private let headerHeight: CGFloat = 100
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var copiedLink: UUID?
 
@@ -166,7 +169,7 @@ struct RecordingPlayerView: View {
                     let overlaysChat = geometry.size.width < 660
                     HStack(spacing: 0) {
                         playerContent(meeting)
-                            .padding(.top, 92)
+                            .padding(.top, headerHeight)
                         if model.chat.isPresented && !overlaysChat {
                             chatPane(width: 300)
                         }
@@ -182,10 +185,12 @@ struct RecordingPlayerView: View {
                 .clipped()
             } else {
                 emptyPlayer(title: "Pick a recording", subtitle: "Your meetings, ready to replay. Select a recording from the library to start watching.")
+                    .overlay(alignment: .top) {
+                        WhooshWindowDragSurface().frame(height: headerHeight)
+                    }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(WhooshWindowInteractionRegion(isEnabled: !allowsWindowDragging))
         .background(RecordingPlaybackKeyboardShortcuts(model: model))
         .task(id: copiedLink) {
             guard copiedLink != nil else { return }
@@ -204,6 +209,7 @@ struct RecordingPlayerView: View {
                         .help(meeting.topic.isEmpty ? "Untitled meeting" : meeting.topic)
                     recordingActions(meeting)
                         .fixedSize()
+                        .background(WhooshWindowInteractionRegion())
                 }
                 Text(meeting.startTime.formatted(date: .long, time: .shortened))
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
@@ -225,8 +231,11 @@ struct RecordingPlayerView: View {
                         in: RoundedRectangle(cornerRadius: 10))
             .tint(nil as Color?).foregroundStyle(.primary)
             .help("\(model.chat.isPresented ? "Hide" : "Show") chat")
+            .background(WhooshWindowInteractionRegion())
         }
         .padding(24)
+        .frame(height: headerHeight)
+        .overlay(WhooshWindowDragSurface())
     }
 
     private func recordingActions(_ meeting: ZoomRecordingMeeting) -> some View {
@@ -252,7 +261,7 @@ struct RecordingPlayerView: View {
         RecordingChatView(model: model)
             // Like live meeting chat, the glass extends behind the shared
             // header, whose trailing toggle is the sole open/close control.
-            .padding(.top, 92)
+            .padding(.top, headerHeight)
             .whooshGlassSurface(cornerRadius: 22)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .frame(width: width)
@@ -274,6 +283,7 @@ struct RecordingPlayerView: View {
                         speedPicker
                     }
                 }
+                .background(WhooshWindowInteractionRegion())
                 .padding(.horizontal, 24).padding(.bottom, 16)
                 ZStack {
                     NativeRecordingPlayer(player: model.player)
@@ -309,6 +319,7 @@ struct RecordingPlayerView: View {
                         }
                     }
                 }
+                .background(WhooshWindowInteractionRegion())
                 .aspectRatio(model.videoAspectRatio, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -63,7 +63,9 @@ public final class RecordingLibraryModel {
     private(set) var selectedMeeting: ZoomRecordingMeeting? {
         didSet { chat.select(selectedMeeting, isPreview: isPreview) }
     }
-    private(set) var selectedFile: ZoomRecordingFile?
+    private(set) var selectedFile: ZoomRecordingFile? {
+        didSet { chat.setPlaybackActive(selectedFile != nil) }
+    }
     private(set) var isLoading = false
     private(set) var hasLoadedInitial = false
     private(set) var oldestLoadedDate: Date?

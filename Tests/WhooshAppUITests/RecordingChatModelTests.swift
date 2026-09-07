@@ -85,6 +85,112 @@ struct RecordingChatModelTests {
         #expect(await fixture.calls == ["chat"])
     }
 
+    @Test func playbackOpensChatOnlyAfterMessagesArrive() async throws {
+        let fixture = ChatModelFixture(responses: ["chat": ["00:00:01\tAda: Hello"]], pausedRequests: [1])
+        let model = makeModel(fixture)
+        defer { model.clear() }
+        model.select(meeting("meeting", chats: [chat("chat")]), isPreview: false)
+        #expect(!model.isLoading)
+        model.setPlaybackActive(true)
+        try await waitUntil { await fixture.isPaused(1) }
+        #expect(model.isLoading)
+        #expect(!model.isPresented)
+
+        await fixture.resume(1)
+        try await waitUntil { model.hasLoaded || model.error != nil }
+        #expect(model.messages.map(\.text) == ["Hello"])
+        #expect(model.isPresented)
+        #expect(model.error == nil)
+    }
+
+    @Test(arguments: [" \n\t", "Unsupported chat content"])
+    func emptyOrUnreadableTranscriptsDoNotAutomaticallyOpenAPane(_ transcript: String) async throws {
+        let fixture = ChatModelFixture(responses: ["chat": [transcript]])
+        let model = makeModel(fixture)
+        defer { model.clear() }
+        model.select(meeting("meeting", chats: [chat("chat")]), isPreview: false)
+        model.setPlaybackActive(true)
+        try await waitUntil { model.hasLoaded || model.error != nil }
+        #expect(model.messages.isEmpty)
+        #expect(!model.isPresented)
+
+        model.select(meeting("without-chat"), isPreview: false)
+        model.setPlaybackActive(true)
+        #expect(model.hasLoaded)
+        #expect(!model.isPresented)
+        #expect(await fixture.calls == ["chat"])
+    }
+
+    @Test func manualHideDuringLoadingSurvivesCompletionAndVideoModeChanges() async throws {
+        let fixture = ChatModelFixture(responses: ["chat": ["00:00:01\tAda: Hello"]], pausedRequests: [1])
+        let model = makeModel(fixture)
+        defer { model.clear() }
+        let selected = meeting("meeting", chats: [chat("chat")])
+        model.select(selected, isPreview: false)
+        model.setPlaybackActive(true)
+        try await waitUntil { await fixture.isPaused(1) }
+        model.setPresented(true)
+        model.setPresented(false)
+        await fixture.resume(1)
+        try await waitUntil { model.hasLoaded || model.error != nil }
+        #expect(model.messages.count == 1)
+        #expect(!model.isPresented)
+
+        model.select(selected, isPreview: false)
+        model.setPlaybackActive(true)
+        model.synchronize(playerTime: 2, file: video(), duration: 60)
+        model.setPlaybackActive(false)
+        model.setPlaybackActive(true)
+        #expect(!model.isPresented)
+        #expect(await fixture.calls == ["chat"])
+        model.setPresented(true)
+        #expect(model.isPresented)
+        #expect(await fixture.calls == ["chat"])
+    }
+
+    @Test func aNewRecordingResetsManualHidingButTranscriptRefreshDoesNot() async throws {
+        let fixture = ChatModelFixture(responses: [
+            "first": ["00:00:01\tAda: First"],
+            "updated": ["00:00:02\tAda: Updated"],
+            "next": ["00:00:03\tAda: Next recording"]
+        ])
+        let model = makeModel(fixture)
+        defer { model.clear() }
+        model.select(meeting("meeting", chats: [chat("first")]), isPreview: false)
+        model.setPlaybackActive(true)
+        try await waitUntil { model.hasLoaded || model.error != nil }
+        try #require(model.isPresented)
+        model.setPresented(false)
+
+        model.select(meeting("meeting", chats: [chat("updated")]), isPreview: false)
+        try await waitUntil { model.hasLoaded || model.error != nil }
+        #expect(model.messages.map(\.text) == ["Updated"])
+        #expect(!model.isPresented)
+        model.select(meeting("next-meeting", chats: [chat("next")]), isPreview: false)
+        #expect(!model.isPresented)
+        model.setPlaybackActive(true)
+        try await waitUntil { model.hasLoaded || model.error != nil }
+        #expect(model.messages.map(\.text) == ["Next recording"])
+        #expect(model.isPresented)
+    }
+
+    @Test func stoppingVideoWhileChatLoadsDoesNotOpenTheInactivePlayer() async throws {
+        let fixture = ChatModelFixture(responses: ["chat": ["00:00:01\tAda: Hello"]], pausedRequests: [1])
+        let model = makeModel(fixture)
+        defer { model.clear() }
+        model.select(meeting("meeting", chats: [chat("chat")]), isPreview: false)
+        model.setPlaybackActive(true)
+        try await waitUntil { await fixture.isPaused(1) }
+        model.setPlaybackActive(false)
+        await fixture.resume(1)
+        try await waitUntil { model.hasLoaded || model.error != nil }
+        #expect(model.messages.count == 1)
+        #expect(!model.isPresented)
+        model.setPlaybackActive(true)
+        #expect(model.isPresented)
+        #expect(await fixture.calls == ["chat"])
+    }
+
     @Test(arguments: [RecordingChatAvailability.noFile, .emptyFile, .preview])
     func emptyAndPreviewStatesAvoidUnnecessaryRequests(_ availability: RecordingChatAvailability) async throws {
         let fixture = ChatModelFixture(responses: ["chat": [" \n\t\n"]])
@@ -110,11 +216,12 @@ struct RecordingChatModelTests {
         let model = makeModel(fixture)
         defer { model.clear() }
         model.select(meeting("old", chats: [chat("old-chat")]), isPreview: false)
-        model.setPresented(true)
+        model.setPlaybackActive(true)
         try await waitUntil { await fixture.isPaused(1) }
 
         if replaceMeeting {
             model.select(meeting("new", chats: [chat("new-chat")]), isPreview: false)
+            model.setPlaybackActive(true)
             try await waitUntil { await fixture.isPaused(2) }
         } else { model.clear() }
         await fixture.resume(1)
@@ -127,7 +234,7 @@ struct RecordingChatModelTests {
         #expect(model.messages.isEmpty)
         #expect(!model.hasLoaded)
         #expect(model.isLoading == replaceMeeting)
-        #expect(model.isPresented == replaceMeeting)
+        #expect(!model.isPresented)
         #expect(model.error == nil)
         #expect(model.activeMessageIDs.isEmpty)
 
@@ -137,6 +244,7 @@ struct RecordingChatModelTests {
             #expect(model.messages.map(\.text) == ["Current content"])
             #expect(model.error == nil)
             #expect(!model.isLoading)
+            #expect(model.isPresented)
         }
     }
 
@@ -190,6 +298,41 @@ struct RecordingChatModelTests {
         #expect(child.hasLoaded)
         #expect(await childFixture.calls.isEmpty)
         child.clear()
+    }
+
+    @Test(arguments: [false, true])
+    func aPlayerWindowInheritsAutomaticOrHiddenChatWithoutRevivingTheInlinePlayer(manuallyHidden: Bool) async throws {
+        let fixture = ChatModelFixture(responses: ["chat": ["00:00:01\tAda: Inline", "00:00:01\tAda: Window"]],
+                                       pausedRequests: [1, 2])
+        let source = makeModel(fixture)
+        let child = makeModel(fixture)
+        defer { source.clear(); child.clear() }
+        let selected = meeting("meeting", chats: [chat("chat")])
+        source.select(selected, isPreview: false)
+        source.setPlaybackActive(true)
+        try await waitUntil { await fixture.isPaused(1) }
+        if manuallyHidden { source.setPresented(false) }
+
+        child.select(selected, isPreview: false)
+        child.adoptState(from: source)
+        source.clear()
+        source.select(selected, isPreview: false)
+        child.setPlaybackActive(true)
+        try await waitUntil { await fixture.isPaused(2) }
+        await fixture.resume(1)
+        try await waitUntil { await fixture.cancelledReturns.contains(1) }
+        #expect(source.messages.isEmpty)
+        #expect(!source.isPresented)
+        #expect(!source.isLoading)
+        await fixture.resume(2)
+        try await waitUntil { child.hasLoaded || child.error != nil }
+        #expect(child.messages.map(\.text) == ["Window"])
+        #expect(child.isPresented == !manuallyHidden)
+        #expect(!source.isPresented)
+        #expect(await fixture.calls == ["chat", "chat"])
+        child.setPresented(true)
+        #expect(child.isPresented)
+        #expect(!source.isPresented)
     }
 
     @Test func unreadableContentOffersRetryAndDoesNotBecomeACachedEmptyChat() async throws {

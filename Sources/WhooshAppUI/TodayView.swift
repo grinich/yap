@@ -143,12 +143,16 @@ struct TodayView: View {
                         .help("Show or hide recordings · ⇧⌘R")
                         .background(WhooshWindowInteractionRegion(isEnabled: true))
                         Spacer(minLength: 0)
-                        meetingActions
-                            .background(WhooshWindowInteractionRegion(isEnabled: true))
+                        if !model.recordings.isPresented {
+                            meetingActions
+                                .background(WhooshWindowInteractionRegion(isEnabled: true))
+                        }
                     }
+                    .frame(minHeight: 36)
                     .padding(.leading, 52)
                     .padding(.trailing, 12)
                     .padding(.vertical, 12)
+                    .overlay(WhooshWindowDragSurface())
 
                     HStack(spacing: 0) {
                         if model.recordings.isPresented {

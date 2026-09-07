@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 import WhooshMeetings
@@ -33,12 +34,44 @@ struct RecordingLibraryTests {
         model.downloadSelected()
         await model.loadInitial()
         #expect(model.selectedFile != nil)
+        #expect(model.chat.isPresented)
+        #expect(!model.chat.messages.isEmpty)
         #expect(model.player.currentItem == nil)
         #expect(!model.isDownloading)
         #expect(await fixture.calls.isEmpty)
         model.dismiss()
         #expect(!model.isPresented)
         #expect(model.selectedFile == nil)
+    }
+
+    @Test func startingARecordingLoadsAndOpensItsChatWithoutAToggle() async throws {
+        let client = ZoomAccountClient(store: RecordingLibraryUnusedStore(), transport: ZoomHTTPTransport { _ in
+            throw URLError(.unsupportedURL)
+        })
+        let model = RecordingLibraryModel(client: client,
+            makePlaybackSource: { _ in RecordingPlaybackSource(item: AVPlayerItem(asset: AVMutableComposition())) },
+            fetchChat: { _ in "00:00:01\tAda: Recorded message" })
+        defer { model.clear() }
+        let chat = ZoomRecordingFile(id: "chat", recordingType: "chat_file", fileType: "CHAT", fileSize: 100,
+            downloadURL: URL(string: "https://zoom.us/rec/download/chat"), playURL: nil, status: "completed")
+        let video = ZoomRecordingFile(id: "video", recordingType: "gallery_view", fileType: "MP4", fileSize: 100,
+            downloadURL: URL(string: "https://zoom.us/rec/download/video"), playURL: nil, status: "completed")
+        model.select(.init(id: "chat-only", topic: "Chat without video", startTime: .now, duration: 1, files: [chat]))
+        #expect(model.selectedFile == nil)
+        #expect(!model.chat.isLoading)
+        #expect(!model.chat.isPresented)
+
+        model.select(.init(id: "with-video", topic: "Video with chat", startTime: .now, duration: 1, files: [video, chat]))
+        #expect(model.selectedFile?.id == video.id)
+        #expect(model.chat.isLoading)
+        #expect(!model.chat.isPresented)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !model.chat.hasLoaded, model.chat.error == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(model.chat.hasLoaded)
+        #expect(model.chat.messages.map(\.text) == ["Recorded message"])
+        #expect(model.chat.isPresented)
     }
 
     @Test(arguments: [

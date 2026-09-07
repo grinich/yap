@@ -353,15 +353,20 @@ struct RecordingPlayerView: View {
                 })) {
                     if model.selectedFile == nil { Text("Choose a video").tag("") }
                     ForEach(meeting.playableVideoFiles) { file in
-                        Text(RecordingFilePresentation.label(for: file, among: meeting.playableVideoFiles)).tag(file.id)
+                        Label {
+                            Text(RecordingFilePresentation.label(for: file, among: meeting.playableVideoFiles))
+                        } icon: {
+                            Image(nsImage: RecordingPlaybackLayout(recordingType: file.recordingType).image)
+                        }
+                        .tag(file.id)
                     }
                 }
                 .pickerStyle(.inline).labelsHidden()
             } label: {
-                Image(systemName: "display")
+                Image(nsImage: RecordingPlaybackLayout(recordingType: model.selectedFile?.recordingType).image)
             }
             .modifier(RecordingPlaybackMenuStyle())
-            .help("Video layout: \(currentLayout)")
+            .help("Video layout: \(currentLayout) · V to cycle")
             .accessibilityLabel("Video layout").accessibilityValue(currentLayout)
             .background(WhooshWindowInteractionRegion())
         }
@@ -383,7 +388,7 @@ struct RecordingPlayerView: View {
         }
         .modifier(RecordingPlaybackMenuStyle())
         .disabled(model.selectedFile == nil)
-        .help("Playback speed").accessibilityLabel("Playback speed")
+        .help("Playback speed · S to cycle").accessibilityLabel("Playback speed")
         .accessibilityValue(playbackSpeedLabel)
         .background(WhooshWindowInteractionRegion())
     }

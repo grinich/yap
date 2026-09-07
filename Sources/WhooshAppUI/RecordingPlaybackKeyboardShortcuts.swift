@@ -2,8 +2,8 @@ import AppKit
 import AVKit
 import SwiftUI
 
-/// Space belongs to the visible recording in this window. Consuming handled
-/// events here keeps AVPlayerView from also toggling when its controls have focus.
+/// Playback shortcuts belong to the visible recording in this window. Consuming
+/// handled events prevents AVPlayerView from also toggling or seeking.
 @MainActor
 struct RecordingPlaybackKeyboardShortcuts: NSViewRepresentable {
     var model: RecordingLibraryModel
@@ -20,10 +20,12 @@ struct RecordingPlaybackKeyboardShortcuts: NSViewRepresentable {
 
     private func configure(_ view: RecordingPlaybackKeyboardView) {
         view.hasRecording = { [weak model] in
-            model?.selectedFile != nil && model?.player.currentItem != nil
+            guard let model else { return false }
+            return !model.isPreview && model.selectedFile != nil
         }
         view.togglePlayback = { [weak model] in
-            guard let model, !model.isPreparing, model.playbackError == nil else { return }
+            guard let model, !model.isPreparing, model.playbackError == nil,
+                  model.player.currentItem != nil else { return }
             if model.player.rate != 0 || model.player.timeControlStatus != .paused {
                 model.player.pause()
             } else {
@@ -32,6 +34,9 @@ struct RecordingPlaybackKeyboardShortcuts: NSViewRepresentable {
                 model.player.play()
             }
         }
+        view.cycleSpeed = { [weak model] in model?.cyclePlaybackSpeed() }
+        view.cycleView = { [weak model] in model?.cyclePlaybackView() }
+        view.jogPlayback = { [weak model] seconds in model?.jogPlayback(by: seconds) }
     }
 
     static func dismantleNSView(_ view: RecordingPlaybackKeyboardView, coordinator: ()) {
@@ -43,8 +48,11 @@ struct RecordingPlaybackKeyboardShortcuts: NSViewRepresentable {
 final class RecordingPlaybackKeyboardView: NSView {
     var hasRecording: () -> Bool = { false }
     var togglePlayback: () -> Void = {}
+    var cycleSpeed: () -> Void = {}
+    var cycleView: () -> Void = {}
+    var jogPlayback: (Double) -> Void = { _ in }
     private var monitor: Any?
-    private var isTrackingMenu = false
+    private var trackingMenus: Set<ObjectIdentifier> = []
     private var stopped = false
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -68,48 +76,91 @@ final class RecordingPlaybackKeyboardView: NSView {
     }
 
     func handleLocalEvent(_ event: NSEvent) -> NSEvent? {
-        guard !stopped, !isTrackingMenu, !isHiddenOrHasHiddenAncestor,
-              let window, window.isKeyWindow, event.window === window,
+        guard !stopped, trackingMenus.isEmpty, !isHiddenOrHasHiddenAncestor,
+              let window, window.isKeyWindow, window.isVisible, !window.isMiniaturized,
+              event.window === window,
               window.attachedSheet == nil, NSApplication.shared.modalWindow == nil,
-              event.type == .keyDown, event.keyCode == 49,
-              event.charactersIgnoringModifiers == " ",
-              event.modifierFlags.intersection([.command, .control, .option, .shift, .function]).isEmpty,
-              !Self.focusedControlOwnsSpace(window.firstResponder), hasRecording() else { return event }
+              event.type == .keyDown,
+              event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+              let shortcut = Shortcut(event),
+              !Self.focusedControlOwnsShortcut(window.firstResponder, shortcut: shortcut),
+              hasRecording() else { return event }
 
-        // Suppress repeated keyDown events too, so holding Space cannot toggle
-        // repeatedly through either this handler or the native AVPlayerView.
-        if !event.isARepeat { togglePlayback() }
+        // Held arrows keep jogging; held toggles cycle only once. Consume their
+        // repeats as well so a native AVPlayerView cannot handle them a second time.
+        switch shortcut {
+        case .space: if !event.isARepeat { togglePlayback() }
+        case .speed: if !event.isARepeat { cycleSpeed() }
+        case .view: if !event.isARepeat { cycleView() }
+        case .backward: jogPlayback(-10)
+        case .forward: jogPlayback(10)
+        }
         return nil
     }
 
-    private static func focusedControlOwnsSpace(_ responder: NSResponder?) -> Bool {
-        // Field editors are NSTextViews even when the visible field is SwiftUI.
-        if responder is NSText || responder is NSTextField { return true }
-        guard let focusedView = responder as? NSView else { return false }
-        var ancestor: NSView? = focusedView
-        while let view = ancestor {
-            if view is AVPlayerView { return false }
-            ancestor = view.superview
+    private enum Shortcut: Equatable {
+        case space, speed, view, backward, forward
+
+        init?(_ event: NSEvent) {
+            // AppKit supplies these flags for ordinary arrows, even without Fn.
+            if event.keyCode == 123 { self = .backward; return }
+            if event.keyCode == 124 { self = .forward; return }
+            guard event.modifierFlags.intersection([.function, .numericPad]).isEmpty else { return nil }
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case " " where event.keyCode == 49: self = .space
+            case "s": self = .speed
+            case "v": self = .view
+            default: return nil
+            }
         }
-        // Preserve ordinary keyboard activation/editing of controls outside the
-        // player, including the search field, video picker, and native buttons.
-        return focusedView is NSControl
+
+        var isJog: Bool { self == .backward || self == .forward }
     }
 
-    @objc private func menuBegan(_ notification: Notification) { isTrackingMenu = true }
-    @objc private func menuEnded(_ notification: Notification) { isTrackingMenu = false }
+    private static func focusedControlOwnsShortcut(_ responder: NSResponder?, shortcut: Shortcut) -> Bool {
+        // Field editors and selectable chat transcripts are NSTextViews even
+        // when the visible field/text was created by SwiftUI.
+        if responder is NSText || responder is NSTextField { return true }
+        guard let focusedView = responder as? NSView else { return false }
+        var hasControl = false
+        var hasArrowControl = false
+        var ancestor: NSView? = focusedView
+        while let view = ancestor {
+            if view is NSText || view is NSTextField { return true }
+            if view is AVPlayerView { return shortcut.isJog && hasArrowControl }
+            if view is NSControl || view is NSCollectionView { hasControl = true }
+            if view is NSSlider || view is NSStepper || view is NSSegmentedControl ||
+                view is NSPopUpButton || view is NSTableView || view is NSCollectionView {
+                hasArrowControl = true
+            }
+            ancestor = view.superview
+        }
+        // Preserve native control activation, list selection, and navigation.
+        // In particular, focused AVPlayer sliders retain their own arrow keys.
+        return hasControl
+    }
+
+    @objc private func menuBegan(_ notification: Notification) {
+        if let menu = notification.object as? NSMenu { trackingMenus.insert(ObjectIdentifier(menu)) }
+    }
+    @objc private func menuEnded(_ notification: Notification) {
+        if let menu = notification.object as? NSMenu { trackingMenus.remove(ObjectIdentifier(menu)) }
+    }
 
     func stop() {
         stopped = true
         removeMonitor()
         hasRecording = { false }
         togglePlayback = {}
+        cycleSpeed = {}
+        cycleView = {}
+        jogPlayback = { _ in }
     }
 
     private func removeMonitor() {
         NotificationCenter.default.removeObserver(self)
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        isTrackingMenu = false
+        trackingMenus.removeAll()
     }
 }

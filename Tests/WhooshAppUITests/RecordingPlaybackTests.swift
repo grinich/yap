@@ -610,6 +610,165 @@ struct RecordingPlaybackTests {
         #expect(fixture.createdIDs == ["view-a", "view-b"])
     }
 
+    @Test func speedCyclingUsesAscendingChoicesAndWrapsWithoutResumingAPausedVideo() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.player.pause()
+        #expect(await model.player.seek(to: time(0.4), toleranceBefore: .zero, toleranceAfter: .zero))
+        let item = model.player.currentItem
+        for expected in [Float(1.25), 1.5, 1.75, 2, 2.25, 2.5, 0.5, 0.75, 1] {
+            model.cyclePlaybackSpeed()
+            #expect(model.playbackSpeed == expected)
+            #expect(model.player.defaultRate == expected)
+            #expect(model.player.rate == 0)
+        }
+        model.player.defaultRate = 1.1
+        model.cyclePlaybackSpeed()
+        #expect(model.playbackSpeed == 1.25)
+        #expect(model.player.currentItem === item)
+        #expect(abs(model.player.currentTime().seconds - 0.4) < 0.025)
+    }
+
+    @Test func viewCyclingWrapsAndReusesTheOriginalItemAfterRapidChanges() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        let original = fixture.meeting()
+        let meeting = ZoomRecordingMeeting(id: original.id, topic: original.topic, startTime: original.startTime,
+                                          duration: original.duration, files: Array(original.files.prefix(3)))
+        model.select(meeting)
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.player.pause()
+        #expect(await model.player.seek(to: time(1.1), toleranceBefore: .zero, toleranceAfter: .zero))
+        model.setPlaybackSpeed(1.5)
+        let firstItem = model.player.currentItem
+        model.cyclePlaybackView()
+        #expect(model.selectedFile?.id == "view-b")
+        model.cyclePlaybackView()
+        try #require(await waitUntil { !model.isPreparing && model.selectedFile?.id == "view-c" })
+        model.cyclePlaybackView()
+        try #require(await waitUntil { !model.isPreparing && model.selectedFile?.id == "view-a" })
+        #expect(model.player.currentItem === firstItem)
+        #expect(abs(model.player.currentTime().seconds - 1.1) < 0.025)
+        #expect(model.player.rate == 0)
+        #expect(model.playbackSpeed == 1.5)
+        #expect(fixture.createdIDs == ["view-a", "view-b", "view-c"])
+    }
+
+    @Test func repeatedTenSecondJogsAccumulateClampAndSynchronizeChat() async throws {
+        let fixture = try await RecordingPlaybackFixture.make(duration: 60)
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel(fetchChat: { _ in "00:00:10\tAda: Early\n00:00:30\tLin: Middle\n00:00:50\tSam: Late" })
+        defer { model.clear() }
+        let original = fixture.meeting()
+        let chatFile = ZoomRecordingFile(id: "chat", recordingType: "chat_file", fileType: "CHAT", fileSize: 0,
+            downloadURL: URL(string: "https://zoom.us/fixture/chat"), playURL: nil, status: "completed")
+        model.select(.init(id: original.id, topic: original.topic, startTime: original.startTime, duration: 1,
+                           files: original.files + [chatFile]))
+        try #require(await waitUntil { !model.isPreparing && model.chat.hasLoaded })
+        model.player.pause()
+        #expect(await model.player.seek(to: time(5), toleranceBefore: .zero, toleranceAfter: .zero))
+        let early = try #require(model.chat.messages.first)
+        model.jogPlayback(by: 10)
+        model.jogPlayback(by: 10)
+        model.jogPlayback(by: 10)
+        model.jogPlayback(by: -10)
+        try #require(await waitUntil { abs(model.player.currentTime().seconds - 25) < 0.025 && model.chat.activeMessageIDs == [early.id] })
+        #expect(model.player.rate == 0)
+        model.jogPlayback(by: -100)
+        try #require(await waitUntil { model.player.currentTime().seconds < 0.025 && model.chat.activeMessageIDs.isEmpty })
+        model.jogPlayback(by: 100)
+        let end = try #require(model.player.currentItem?.duration.seconds) - 1.0 / 600
+        try #require(await waitUntil { abs(model.player.currentTime().seconds - end) < 0.025 })
+        #expect(model.player.currentTime().seconds < 60)
+        #expect(model.player.rate == 0)
+        model.jogPlayback(by: -.infinity)
+        model.jogPlayback(by: .nan)
+        #expect(abs(model.player.currentTime().seconds - end) < 0.025)
+    }
+
+    @Test(arguments: [false, true])
+    func jogsPreservePlayingOrPausedStateAndDoNotUndoAHide(hideDuringSeek: Bool) async throws {
+        let fixture = try await RecordingPlaybackFixture.make(duration: 60)
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.player.pause()
+        #expect(await model.player.seek(to: time(5), toleranceBefore: .zero, toleranceAfter: .zero))
+        model.setPlaybackSpeed(1.5)
+        model.player.play()
+        model.jogPlayback(by: 10)
+        model.jogPlayback(by: 10)
+        if hideDuringSeek { model.suspendPlayback() }
+        try #require(await waitUntil { model.player.currentTime().seconds >= 24.99 })
+        #expect(model.player.currentTime().seconds < 26)
+        #expect(model.player.rate == (hideDuringSeek ? 0 : 1.5))
+        #expect(model.playbackSpeed == 1.5)
+    }
+
+    @Test func pendingJogsCarryIntoAnotherViewAndClearCancelsQueuedSeeks() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.player.pause()
+        #expect(await model.player.seek(to: time(0.2), toleranceBefore: .zero, toleranceAfter: .zero))
+        model.jogPlayback(by: 0.7)
+        model.jogPlayback(by: 0.3)
+        model.cyclePlaybackView()
+        try #require(await waitUntil { !model.isPreparing && model.selectedFile?.id == "view-b" })
+        #expect(abs(model.player.currentTime().seconds - 1.2) < 0.025)
+        #expect(model.player.rate == 0)
+        model.jogPlayback(by: -0.5)
+        model.clear()
+        await Task.yield()
+        #expect(model.player.currentItem == nil)
+        #expect(model.selectedMeeting == nil)
+        #expect(model.chat.activeMessageIDs.isEmpty)
+    }
+
+    @Test func shortcutsIgnorePreviewAndMissingVideoButAllowSpeedAndViewDuringPreparation() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        model.cyclePlaybackSpeed()
+        model.cyclePlaybackView()
+        model.jogPlayback(by: 10)
+        #expect(model.playbackSpeed == 1)
+        #expect(fixture.createdIDs.isEmpty)
+        model.enterPreview()
+        model.select(try #require(model.meetings.first))
+        let previewFile = model.selectedFile
+        model.cyclePlaybackSpeed()
+        model.cyclePlaybackView()
+        model.jogPlayback(by: 10)
+        #expect(model.playbackSpeed == 1)
+        #expect(model.selectedFile == previewFile)
+        #expect(fixture.createdIDs.isEmpty)
+        model.clear()
+        model.select(fixture.meeting())
+        #expect(model.isPreparing)
+        model.jogPlayback(by: 10)
+        model.cyclePlaybackSpeed()
+        model.cyclePlaybackView()
+        model.suspendPlayback()
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        #expect(model.playbackSpeed == 1.25)
+        #expect(model.selectedFile?.id == "view-b")
+        #expect(model.player.currentTime().seconds < 0.025)
+        #expect(model.player.rate == 0)
+    }
+
     private func time(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 600) }
 
     private func waitUntil(_ condition: () -> Bool) async throws -> Bool {
@@ -623,17 +782,17 @@ struct RecordingPlaybackTests {
 
 @MainActor private final class RecordingPlaybackFixture {
     private let url: URL
-    private let fullAsset: AVURLAsset
+    private let fullAsset: AVAsset
     private let shortAsset: AVMutableComposition
     private(set) var createdIDs: [String] = []
 
-    private init(url: URL, fullAsset: AVURLAsset, shortAsset: AVMutableComposition) {
+    private init(url: URL, fullAsset: AVAsset, shortAsset: AVMutableComposition) {
         self.url = url
         self.fullAsset = fullAsset
         self.shortAsset = shortAsset
     }
 
-    static func make() async throws -> RecordingPlaybackFixture {
+    static func make(duration: Int = 2) async throws -> RecordingPlaybackFixture {
         let video = try #require(Data(base64Encoded: recordingPlaybackMP4Fixture))
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("recording-playback-fixture-\(UUID().uuidString).mp4")
         try video.write(to: url)
@@ -644,7 +803,17 @@ struct RecordingPlaybackTests {
             let shortTrack = try #require(shortAsset.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid))
             try shortTrack.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 0.6, preferredTimescale: 600)),
                                            of: sourceTrack, at: .zero)
-            return RecordingPlaybackFixture(url: url, fullAsset: asset, shortAsset: shortAsset)
+            var fullAsset: AVAsset = asset
+            if duration > 2 {
+                let repeated = AVMutableComposition()
+                let track = try #require(repeated.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid))
+                for seconds in stride(from: 0, to: duration, by: 2) {
+                    try track.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 2, preferredTimescale: 600)),
+                                              of: sourceTrack, at: CMTime(seconds: Double(seconds), preferredTimescale: 600))
+                }
+                fullAsset = repeated
+            }
+            return RecordingPlaybackFixture(url: url, fullAsset: fullAsset, shortAsset: shortAsset)
         } catch {
             try? FileManager.default.removeItem(at: url)
             throw error

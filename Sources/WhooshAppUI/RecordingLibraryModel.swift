@@ -103,7 +103,9 @@ public final class RecordingLibraryModel {
     @ObservationIgnored private var preparationTask: Task<Void, Never>?
     @ObservationIgnored private var pendingPosition: RecordingPlaybackPosition?
     @ObservationIgnored private var playbackTimeObserver: Any?
-    @ObservationIgnored private var chatSeekTask: Task<Void, Never>?
+    @ObservationIgnored private var manualSeekTask: Task<Void, Never>?
+    @ObservationIgnored private var manualSeekRevision = UUID()
+    @ObservationIgnored private var pendingSeekTime: CMTime?
 
     init(client: ZoomAccountClient,
          fetchPage: (@Sendable (Date, Date, String) async throws -> ZoomRecordingPage)? = nil,
@@ -136,6 +138,29 @@ public final class RecordingLibraryModel {
     func setPlaybackSpeed(_ speed: Float) {
         guard Self.playbackSpeeds.contains(speed) else { return }
         applyPlaybackSpeed(speed)
+    }
+
+    func cyclePlaybackSpeed() {
+        guard !isPreview, selectedFile != nil else { return }
+        synchronizeDefaultPlaybackSpeed()
+        setPlaybackSpeed(Self.playbackSpeeds.first(where: { $0 > playbackSpeed }) ?? Self.playbackSpeeds[0])
+    }
+
+    func cyclePlaybackView() {
+        guard !isPreview, let meeting = selectedMeeting, let selectedFile else { return }
+        let files = meeting.playableVideoFiles
+        guard files.count > 1, let index = files.firstIndex(where: { $0.id == selectedFile.id }) else { return }
+        play(files[(index + 1) % files.count])
+    }
+
+    func jogPlayback(by seconds: Double) {
+        guard !isPreview, !isPreparing, playbackError == nil, selectedFile != nil,
+              seconds.isFinite, seconds != 0, let item = player.currentItem, item.status == .readyToPlay else { return }
+        let current = (pendingSeekTime ?? player.currentTime()).seconds
+        let duration = item.duration.seconds
+        guard current.isFinite, duration.isFinite, duration > 0 else { return }
+        let target = min(max(0, current + seconds), max(0, duration - 1.0 / 600))
+        seekManually(to: CMTime(seconds: target, preferredTimescale: 600))
     }
 
     private func synchronizeDefaultPlaybackSpeed() {
@@ -278,7 +303,7 @@ public final class RecordingLibraryModel {
         synchronizeDefaultPlaybackSpeed()
         let file = selectedMeeting?.id == meeting.id ? selectedFile : nil
         let position = file == nil ? nil : pendingPosition
-            ?? RecordingPlaybackPosition(time: player.currentTime(), rate: player.rate)
+            ?? RecordingPlaybackPosition(time: pendingSeekTime ?? player.currentTime(), rate: player.rate)
         let localVideo = file?.id == temporaryVideoFileID ? temporaryVideo : nil
         if localVideo != nil {
             // Move ownership before stopping the inline player can remove its fallback file.
@@ -347,11 +372,10 @@ public final class RecordingLibraryModel {
         // Carry the original intent through until the replacement has finished seeking.
         let position = resumePosition ?? pendingPosition ?? (selectedFile == nil
             ? RecordingPlaybackPosition(time: .zero, rate: playbackSpeed)
-            : RecordingPlaybackPosition(time: player.currentTime(), rate: player.rate))
+            : RecordingPlaybackPosition(time: pendingSeekTime ?? player.currentTime(), rate: player.rate))
         if position.rate > 0 { applyPlaybackSpeed(position.rate) }
         playbackGeneration = UUID()
-        chatSeekTask?.cancel()
-        chatSeekTask = nil
+        cancelManualSeek()
         preparationTask?.cancel()
         preparationTask = nil
         player.currentItem?.cancelPendingSeeks()
@@ -418,6 +442,7 @@ public final class RecordingLibraryModel {
 
     private func installPlayerItem(_ item: AVPlayerItem, generation expected: UUID,
                                    position: RecordingPlaybackPosition) {
+        cancelManualSeek()
         let revision = UUID()
         itemRevision = revision
         if let playbackTimeObserver { player.removeTimeObserver(playbackTimeObserver) }
@@ -468,8 +493,7 @@ public final class RecordingLibraryModel {
 
     public func stopPlayback() {
         playbackGeneration = UUID()
-        chatSeekTask?.cancel()
-        chatSeekTask = nil
+        cancelManualSeek()
         if let playbackTimeObserver { player.removeTimeObserver(playbackTimeObserver) }
         playbackTimeObserver = nil
         preparationTask?.cancel()
@@ -503,14 +527,32 @@ public final class RecordingLibraryModel {
     func seekToChatMessage(_ message: ZoomRecordingChatMessage) {
         guard !isPreparing, let seconds = chat.playbackTime(for: message), player.currentItem != nil else { return }
         chat.followsPlayback = true
+        seekManually(to: CMTime(seconds: seconds, preferredTimescale: 600))
+    }
+
+    private func cancelManualSeek() {
+        manualSeekRevision = UUID()
+        if manualSeekTask != nil { player.currentItem?.cancelPendingSeeks() }
+        manualSeekTask?.cancel()
+        manualSeekTask = nil
+        pendingSeekTime = nil
+    }
+
+    private func seekManually(to target: CMTime) {
+        guard let item = player.currentItem else { return }
+        cancelManualSeek()
+        pendingSeekTime = target
         let expected = playbackGeneration
-        chatSeekTask?.cancel()
-        chatSeekTask = Task { [weak self] in
-            guard let self else { return }
-            let completed = await self.player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
-                                                   toleranceBefore: .zero, toleranceAfter: .zero)
-            guard completed, !Task.isCancelled, self.playbackGeneration == expected else { return }
-            self.synchronizeChat(at: self.player.currentTime())
+        let revision = manualSeekRevision
+        manualSeekTask = Task { [weak self] in
+            guard let self, !Task.isCancelled, self.playbackGeneration == expected,
+                  self.manualSeekRevision == revision, self.player.currentItem === item else { return }
+            let completed = await self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+            guard !Task.isCancelled, self.playbackGeneration == expected,
+                  self.manualSeekRevision == revision, self.player.currentItem === item else { return }
+            self.pendingSeekTime = nil
+            self.manualSeekTask = nil
+            if completed { self.synchronizeChat(at: self.player.currentTime()) }
         }
     }
 
@@ -526,7 +568,7 @@ public final class RecordingLibraryModel {
         guard !isPreview, let file = selectedFile, !isDownloading else { return }
         synchronizeDefaultPlaybackSpeed()
         let expected = playbackGeneration
-        let position = pendingPosition ?? RecordingPlaybackPosition(time: player.currentTime(), rate: player.rate)
+        let position = pendingPosition ?? RecordingPlaybackPosition(time: pendingSeekTime ?? player.currentTime(), rate: player.rate)
         let target = destination ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("Zooom-recording-\(UUID().uuidString).mp4")
         isDownloading = true

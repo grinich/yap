@@ -63,6 +63,10 @@ Before calling the updater live, install version N from the DMG, publish N+1, an
 
 Local production packaging uses `Scripts/package-release.sh` with the same variables as CI plus `WHOOSH_ZOOM_SDK_PATH`, `WHOOSH_SIGNING_IDENTITY`, `ZOOOM_NOTARY_PROFILE`, optional `ZOOOM_NOTARY_KEYCHAIN`, and `ZOOOM_UPDATE_PRIVATE_KEY_FILE`. It fails if notarization or update signing is unavailable. It does not publish or launch the app. Personal debug builds remain available through `Scripts/build-app.sh` without release credentials. Set `WHOOSH_OUTPUT_DIR` to stage a separate build while someone is running `outputs/Zooom.app`; the builder refuses to replace a running output bundle.
 
+## Public-preview verification
+
+September 7, 2026: 608 Swift tests in 73 suites passed with the real Zoom SDK, and 18 Python release/signing/dependency tests passed. The signed app was built, installed, and restarted; Help → Report a Bug opened this repository’s issue-creation page in the default browser. Bundled Sparkle and Zoom notices matched their upstream files byte-for-byte. GitHub CI passed the SDK-free test/build/signature checks, and the Apple Signing workflow independently passed its disposable-app notarization check. README screenshots use sample data and original local recording content. This validates the public source preview; the binary distribution and updater acceptance items above still apply.
+
 ## Recovery
 
 - If a public release is bad, stop offering it by publishing a higher build number with the fix; do not overwrite archive bytes or reuse a signed version. Removing its latest status/feed can halt discovery but cannot undo already installed updates.

@@ -13,7 +13,7 @@
   <a href="https://github.com/grinich/zooom/issues/new/choose">Report a bug</a>
 </p>
 
-![Zooom agenda showing sample upcoming meetings](Documentation/Images/agenda.jpg)
+![Zooom recording player with searchable, synchronized transcript](Documentation/Images/recordings.jpg)
 
 Zooom brings your next meeting and your past conversations into one small Mac app. Join from your calendar, keep the conversation in focus, then come back to a recording with its chat and spoken transcript alongside it.
 
@@ -36,15 +36,15 @@ Chat, transcripts, and video layouts appear when Zoom includes those files in th
 
 ## Less between you and your next meeting
 
+![Zooom agenda showing sample upcoming meetings](Documentation/Images/agenda.jpg)
+
 Connect Google Calendar, choose the calendars you care about, and see upcoming Zoom meetings at a glance. Join the next one from the app or menu bar, paste a meeting link, or start a meeting with your own Zoom account. An optional setting lets Zooom handle Zoom’s native meeting links.
 
 ## A meeting window that feels like a Mac app
 
-![Native meeting gallery and chat, shown with sample participants](Documentation/Images/meeting.jpg)
-
 Keep people in a gallery or focus on one person. Open chat and the participant list from the side, share a window or display, and keep the meeting nearby with floating sharing controls. Camera, microphone, recording, and leaving the call stay within reach. Native glass, resizable windows, and keyboard shortcuts keep the interface familiar.
 
-*Screenshots show the native interface with sample meetings and participants. No private meeting content is included.*
+*Screenshots show the native interface with sample meetings and an original sample recording. No private meeting content is included.*
 
 ## A few keys worth knowing
 

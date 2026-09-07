@@ -77,17 +77,26 @@ public struct WhooshRootView: View {
         .alert("Zooom", isPresented: Binding(get: { model.error != nil || model.meeting.lastError != nil }, set: { if !$0 { model.error = nil; model.meeting.dismissError() } })) {
             Button("OK", role: .cancel) { model.error = nil; model.meeting.dismissError() }
         } message: { Text(model.error ?? model.meeting.lastError ?? "") }
+        .alert("Open in Zoom Workplace?", isPresented: Binding(
+            get: { model.unsupportedZoomLink != nil },
+            set: { if !$0 { model.unsupportedZoomLink = nil } }
+        ), presenting: model.unsupportedZoomLink) { url in
+            Button("Open Zoom Workplace") {
+                Task {
+                    do { try await ZoomLinkHandlerService().openInZoom(url) }
+                    catch { model.error = error.localizedDescription }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("This link uses a Zoom feature that Zooom doesn’t support yet. You can open it in the official app.")
+        }
         .onAppear {
             applicationDelegate?.configure(model: model, openMainWindow: { openWindow(id: "main") })
         }
         .task { if applicationDelegate == nil { await model.start() } }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in Task { await model.refreshOnForeground() } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await model.refreshOnForeground() } }
-        .onOpenURL { url in
-            if let meetingURL = WhooshDeepLink.meetingURL(from: url) {
-                model.selectedEvent = nil; model.joinLink = meetingURL.absoluteString; model.showJoinSheet = true
-            }
-        }
     }
 
     private var windowBackground: AnyShapeStyle {
@@ -432,9 +441,24 @@ struct JoinMeetingSheet: View {
 
 public enum WhooshDeepLink {
     public static func meetingURL(from url: URL) -> URL? {
-        guard url.scheme == "whoosh", url.host == "join", let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        guard url.scheme?.lowercased() == "whoosh" else {
+            return ZoomMeetingLinkParser.normalizedJoinURL(url.absoluteString)
+        }
+        guard url.host?.lowercased() == "join", let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil,
+              parts.path.isEmpty else { return nil }
         let values = (parts.queryItems ?? []).filter { $0.name == "url" }
         guard values.count == 1, let value = values.first?.value else { return nil }
-        return ZoomMeetingLinkParser.validatedURL(value)
+        return ZoomMeetingLinkParser.normalizedJoinURL(value)
+    }
+
+    /// Unsupported Zoom actions may be handed to the official app explicitly.
+    /// Never send an arbitrary scheme or a disguised third-party host there.
+    static func isZoomApplicationURL(_ url: URL) -> Bool {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["zoommtg", "zoomus"].contains(parts.scheme?.lowercased() ?? ""),
+              parts.user == nil, parts.password == nil, parts.port == nil,
+              let host = parts.host?.lowercased() else { return false }
+        return host == "zoom.us" || host.hasSuffix(".zoom.us") || host == "zoom.com" || host.hasSuffix(".zoom.com")
     }
 }

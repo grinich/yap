@@ -89,6 +89,74 @@ struct WhooshForegroundRefreshTests {
         #expect(await fixture.calendar.connectCalls == 0)
     }
 
+    @Test(arguments: [false, true], [GoogleCalendarError.signInExpired, .notConnected, .httpStatus(403), .httpStatus(404)])
+    func delayedStartupCalendarFailurePreservesIndependentJoinDraft(incoming: Bool, failure: GoogleCalendarError) async {
+        let fixture = ForegroundFixture()
+        defer { fixture.cleanUp() }
+        await fixture.calendar.pauseNextCalendars()
+        await fixture.calendar.failCalendars(with: failure)
+        let startup = Task { await fixture.model.start() }
+        await fixture.calendar.waitUntilPaused()
+        let link = fixture.prepareIndependentJoinDraft(incoming: incoming)
+        await fixture.calendar.resumeEvents()
+        await startup.value
+
+        #expect(fixture.model.selectedEvent == nil)
+        #expect(fixture.model.joinLink == link)
+        #expect(fixture.model.showJoinSheet)
+        #expect(!fixture.model.activeCall)
+        #expect(fixture.model.events.isEmpty)
+        #expect(await fixture.calendar.connectCalls == 0)
+    }
+
+    @Test(arguments: [false, true], [GoogleCalendarError.signInExpired, .notConnected])
+    func delayedForegroundAuthorizationFailurePreservesReplacementJoinDraft(incoming: Bool, failure: GoogleCalendarError) async throws {
+        let fixture = ForegroundFixture()
+        defer { fixture.cleanUp() }
+        await fixture.model.start()
+        let event = try #require(fixture.model.events.first)
+        fixture.model.selectedEvent = event
+        fixture.model.joinLink = event.meetingURLs[0].absoluteString
+        fixture.model.showJoinSheet = true
+        await fixture.calendar.pauseNextEvents()
+        await fixture.calendar.failEvents(with: failure)
+        let refresh = Task { await fixture.model.refreshOnForeground() }
+        await fixture.calendar.waitUntilPaused()
+        let link = fixture.prepareIndependentJoinDraft(incoming: incoming)
+        await fixture.calendar.resumeEvents()
+        #expect(!(await refresh.value))
+
+        #expect(fixture.model.selectedEvent == nil)
+        #expect(fixture.model.joinLink == link)
+        #expect(fixture.model.showJoinSheet)
+        #expect(!fixture.model.activeCall)
+        #expect(!fixture.model.isCalendarConnected)
+        #expect(fixture.model.events.isEmpty)
+        #expect(fixture.model.error == nil)
+    }
+
+    @Test func delayedAuthorizationFailureStillClearsCalendarJoinDraft() async throws {
+        let fixture = ForegroundFixture()
+        defer { fixture.cleanUp() }
+        await fixture.model.start()
+        let event = try #require(fixture.model.events.first)
+        await fixture.calendar.pauseNextEvents()
+        await fixture.calendar.failEvents(with: .signInExpired)
+        let refresh = Task { await fixture.model.refreshOnForeground() }
+        await fixture.calendar.waitUntilPaused()
+        fixture.model.selectedEvent = event
+        fixture.model.joinLink = event.meetingURLs[0].absoluteString
+        fixture.model.showJoinSheet = true
+        await fixture.calendar.resumeEvents()
+        #expect(!(await refresh.value))
+
+        #expect(fixture.model.selectedEvent == nil)
+        #expect(fixture.model.joinLink.isEmpty)
+        #expect(!fixture.model.showJoinSheet)
+        #expect(!fixture.model.isCalendarConnected)
+        #expect(fixture.model.events.isEmpty)
+    }
+
     @Test func activationDoesNotBootstrapAnUnloadedAccountOrRefreshDuringStartup() async {
         let fixture = ForegroundFixture()
         defer { fixture.cleanUp() }
@@ -163,6 +231,18 @@ private final class ForegroundFixture {
     }
 
     func cleanUp() { preferences.removePersistentDomain(forName: suite) }
+
+    func prepareIndependentJoinDraft(incoming: Bool) -> String {
+        let link = "https://zoom.us/j/99999999999?pwd=fixture"
+        if incoming {
+            model.receiveMeetingLink(URL(string: "zoommtg://zoom.us/join?action=join&confno=99999999999&pwd=fixture")!)
+        } else {
+            model.selectedEvent = nil
+            model.joinLink = link
+            model.showJoinSheet = true
+        }
+        return link
+    }
 }
 
 private actor ForegroundCalendar: WhooshCalendarServing {
@@ -170,7 +250,9 @@ private actor ForegroundCalendar: WhooshCalendarServing {
     private let listed = [GoogleCalendar(id: "fixture", name: "Fixture", isPrimary: true)]
     private var connected = true
     private var failure: GoogleCalendarError?
+    private var calendarFailure: GoogleCalendarError?
     private var pauseNext = false
+    private var pauseNextCalendarList = false
     private var paused = false
     private var pauseWaiter: CheckedContinuation<Void, Never>?
     private var resumeWaiter: CheckedContinuation<Void, Never>?
@@ -179,7 +261,14 @@ private actor ForegroundCalendar: WhooshCalendarServing {
     private(set) var eventRequests = 0
 
     func hasCredentials() -> Bool { credentialChecks += 1; return connected }
-    func calendars() -> [GoogleCalendar] { listed }
+    func calendars() async throws -> [GoogleCalendar] {
+        if pauseNextCalendarList {
+            pauseNextCalendarList = false
+            await pauseRequest()
+        }
+        if let calendarFailure { throw calendarFailure }
+        return listed
+    }
     func cachedSnapshot() -> CalendarSnapshot? { nil }
     func clearCachedEvents() {}
     func connect(openURL: @escaping @MainActor @Sendable (URL) -> Void) -> [GoogleCalendar] {
@@ -187,21 +276,28 @@ private actor ForegroundCalendar: WhooshCalendarServing {
     }
     func disconnect() { connected = false }
     func pauseNextEvents() { pauseNext = true }
+    func pauseNextCalendars() { pauseNextCalendarList = true }
     func failEvents(with failure: GoogleCalendarError) { self.failure = failure }
+    func failCalendars(with failure: GoogleCalendarError) { calendarFailure = failure }
     func waitUntilPaused() async {
         if paused { return }
         await withCheckedContinuation { pauseWaiter = $0 }
     }
     func resumeEvents() { resumeWaiter?.resume(); resumeWaiter = nil; paused = false }
 
+    private func pauseRequest() async {
+        paused = true
+        await withCheckedContinuation { continuation in
+            resumeWaiter = continuation
+            pauseWaiter?.resume(); pauseWaiter = nil
+        }
+    }
+
     func events(in calendars: [GoogleCalendar], from: Date, to: Date) async throws -> [CalendarEvent] {
         eventRequests += 1
         if pauseNext {
-            pauseNext = false; paused = true
-            await withCheckedContinuation { continuation in
-                resumeWaiter = continuation
-                pauseWaiter?.resume(); pauseWaiter = nil
-            }
+            pauseNext = false
+            await pauseRequest()
         }
         if let failure { throw failure }
         return [CalendarEvent(id: "fixture-event", title: "Fixture meeting", startDate: Date().addingTimeInterval(300),

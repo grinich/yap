@@ -81,6 +81,7 @@ public struct WhooshSettingsView: View {
                 Label("Join with microphone muted and camera off", systemImage: "mic.slash")
                 Text("Turn them on when you’re ready, using the call controls.").font(.caption).foregroundStyle(.secondary)
             }
+            ZoomLinkSettingsView()
             Section("Reminders") {
                 Toggle("Notify me before meetings", isOn: Binding(get: { model.remindersEnabled }, set: { enabled in
                     Task {

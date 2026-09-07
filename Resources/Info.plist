@@ -20,6 +20,16 @@
     <key>NSScreenCaptureUsageDescription</key><string>Zooom shares the window or display you select with people in your Zoom meeting.</string>
     <key>NSHumanReadableCopyright</key><string>Zooom · Personal development build</string>
     <key>CFBundleURLTypes</key>
-    <array><dict><key>CFBundleURLName</key><string>Zooom meeting invitation</string><key>CFBundleURLSchemes</key><array><string>whoosh</string></array></dict></array>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>Zooom meeting invitation</string>
+            <key>CFBundleURLSchemes</key><array><string>whoosh</string></array>
+        </dict>
+        <dict>
+            <key>CFBundleURLName</key><string>Zoom meeting link</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleURLSchemes</key><array><string>zoommtg</string><string>zoomus</string></array>
+        </dict>
+    </array>
 </dict>
 </plist>

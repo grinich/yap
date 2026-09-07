@@ -89,6 +89,7 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
     private var isObservingActions = false
     private var menuBarController: WhooshMenuBarController?
     private var sharingOverlayController: WhooshSharingOverlayController?
+    private let incomingURLs = WhooshIncomingURLRouter()
     private lazy var windowPresenter = WhooshMainWindowPresenter(actions: .init(
         afterMenuTracking: { action in
             RunLoop.main.perform(inModes: [.default]) { MainActor.assumeIsolated { action() } }
@@ -144,6 +145,10 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.addObserver(self, selector: #selector(mainWindowBecameAvailable), name: NSWindow.didDeminiaturizeNotification, object: nil)
             isObservingActions = true
         }
+        incomingURLs.configure { [weak self, weak model] url in
+            model?.receiveMeetingLink(url)
+            self?.presentMainWindow()
+        }
         drainActions()
     }
 
@@ -154,6 +159,14 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
 
     private func presentMainWindow() {
         windowPresenter.request()
+    }
+
+    public func application(_ application: NSApplication, open urls: [URL]) {
+        // Handle URL delivery at the application boundary, including cold launch
+        // before SwiftUI attaches the main window and while Settings is in front.
+        guard !urls.isEmpty else { return }
+        WhooshSystemActions.discardPendingMeetingNavigation()
+        incomingURLs.receive(urls)
     }
 
     func toggleMainWindow() {

@@ -115,9 +115,9 @@ struct MeetingCloudRecordingTests {
         driver.recording(.stopped)
         await model.startCloudRecording()
         #expect(model.isApplyingCloudRecordingControl)
-        // Concurrent main-actor tests can delay both the deadline task and this test.
-        // Wait for the observed transition, while keeping a hard bound on failure.
-        let deadline = ContinuousClock.now + .seconds(1)
+        // Native UI tests can occupy the main actor for over a second on CI.
+        // Allow scheduling slack while still requiring the timeout transition.
+        let deadline = ContinuousClock.now + .seconds(5)
         while model.isApplyingCloudRecordingControl, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }

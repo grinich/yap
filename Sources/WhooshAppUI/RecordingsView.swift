@@ -233,19 +233,26 @@ struct RecordingPlayerView: View {
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                     Spacer(minLength: 0)
                 }
-                Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.chat.setPresented($0) })) {
-                    Label("Chat", systemImage: "bubble")
+                HStack(spacing: 8) {
+                    if !model.isPreview, !meeting.playableVideoFiles.isEmpty {
+                        videoMenu(meeting)
+                        speedMenu
+                    }
+                    Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.chat.setPresented($0) })) {
+                        Label("Chat", systemImage: "bubble")
+                    }
+                    .toggleStyle(.button).labelStyle(.iconOnly).buttonStyle(.borderless)
+                    .frame(width: 32, height: 32)
+                    .background(model.chat.isPresented ? Color.primary.opacity(0.09) : .clear,
+                                in: RoundedRectangle(cornerRadius: 10))
+                    .tint(nil as Color?).foregroundStyle(.primary)
+                    .help("\(model.chat.isPresented ? "Hide" : "Show") chat")
+                    .background(WhooshWindowInteractionRegion())
                 }
-                .toggleStyle(.button).labelStyle(.iconOnly).buttonStyle(.borderless)
-                .frame(width: 32, height: 32)
-                .background(model.chat.isPresented ? Color.primary.opacity(0.09) : .clear,
-                            in: RoundedRectangle(cornerRadius: 10))
-                .tint(nil as Color?).foregroundStyle(.primary)
-                .help("\(model.chat.isPresented ? "Hide" : "Show") chat")
-                .background(WhooshWindowInteractionRegion())
+                .fixedSize()
             }
             // Match the transcript’s leading inset inside the actual chat pane.
-            .frame(width: model.chat.isPresented ? max(32, chatWidth - 14 - 24) : 32)
+            .frame(width: model.chat.isPresented ? max(32, chatWidth - 14 - 24) : nil)
         }
         .padding(24)
         .frame(height: headerHeight)
@@ -287,18 +294,6 @@ struct RecordingPlayerView: View {
             if model.isPreview {
                 emptyPlayer(title: "Recording preview", subtitle: "These are sample meetings. Exit preview and connect Zoom to watch your own cloud recordings.")
             } else if !meeting.playableVideoFiles.isEmpty {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) {
-                        videoPicker(meeting)
-                        speedPicker
-                    }
-                    VStack(spacing: 10) {
-                        videoPicker(meeting)
-                        speedPicker
-                    }
-                }
-                .background(WhooshWindowInteractionRegion())
-                .padding(.horizontal, 24).padding(.bottom, 16)
                 ZStack {
                     NativeRecordingPlayer(player: model.player)
                         .background(.black)
@@ -348,33 +343,68 @@ struct RecordingPlayerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder private func videoPicker(_ meeting: ZoomRecordingMeeting) -> some View {
+    @ViewBuilder private func videoMenu(_ meeting: ZoomRecordingMeeting) -> some View {
         if meeting.playableVideoFiles.count > 1 {
-            Picker("Video", selection: Binding(get: { model.selectedFile?.id ?? "" }, set: { id in
-                if let file = meeting.playableVideoFiles.first(where: { $0.id == id }) { model.play(file) }
-            })) {
-                if model.selectedFile == nil { Text("Choose a video").tag("") }
-                ForEach(meeting.playableVideoFiles) { file in
-                    Text(RecordingFilePresentation.label(for: file, among: meeting.playableVideoFiles)).tag(file.id)
+            let currentLayout = model.selectedFile.map {
+                RecordingFilePresentation.label(for: $0, among: meeting.playableVideoFiles)
+            } ?? "Choose a video"
+            Menu {
+                Picker("Video", selection: Binding(get: { model.selectedFile?.id ?? "" }, set: { id in
+                    if let file = meeting.playableVideoFiles.first(where: { $0.id == id }) { model.play(file) }
+                })) {
+                    if model.selectedFile == nil { Text("Choose a video").tag("") }
+                    ForEach(meeting.playableVideoFiles) { file in
+                        Text(RecordingFilePresentation.label(for: file, among: meeting.playableVideoFiles)).tag(file.id)
+                    }
                 }
+                .pickerStyle(.inline).labelsHidden()
+            } label: {
+                playbackMenuLabel { Image(systemName: "display") }
             }
-            .pickerStyle(.menu).font(.system(size: 12))
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .tint(nil as Color?).foregroundStyle(.primary)
+            .help("Video layout: \(currentLayout)")
+            .accessibilityLabel("Video layout").accessibilityValue(currentLayout)
+            .background(WhooshWindowInteractionRegion())
         }
     }
 
-    private var speedPicker: some View {
-        Picker("Speed", selection: Binding(get: { model.playbackSpeed }, set: { model.setPlaybackSpeed($0) })) {
-            ForEach(RecordingLibraryModel.playbackSpeeds, id: \.self) { speed in
-                Text(speed.formatted(.number.precision(.fractionLength(0...2))) + "×").tag(speed)
+    private var speedMenu: some View {
+        Menu {
+            Picker("Speed", selection: Binding(get: { model.playbackSpeed }, set: { model.setPlaybackSpeed($0) })) {
+                ForEach(RecordingLibraryModel.playbackSpeeds, id: \.self) { speed in
+                    Text(speed.formatted(.number.precision(.fractionLength(0...2))) + "×").tag(speed)
+                }
+                if !RecordingLibraryModel.playbackSpeeds.contains(model.playbackSpeed) {
+                    Text(playbackSpeedLabel).tag(model.playbackSpeed)
+                }
             }
-            if !RecordingLibraryModel.playbackSpeeds.contains(model.playbackSpeed) {
-                Text(model.playbackSpeed.formatted(.number.precision(.fractionLength(0...2))) + "×")
-                    .tag(model.playbackSpeed)
-            }
+            .pickerStyle(.inline).labelsHidden()
+        } label: {
+            playbackMenuLabel { Text(playbackSpeedLabel).monospacedDigit() }
         }
-        .pickerStyle(.menu).font(.system(size: 12)).fixedSize()
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .tint(nil as Color?).foregroundStyle(.primary)
         .disabled(model.selectedFile == nil)
         .help("Playback speed").accessibilityLabel("Playback speed")
+        .accessibilityValue(playbackSpeedLabel)
+        .background(WhooshWindowInteractionRegion())
+    }
+
+    private var playbackSpeedLabel: String {
+        model.playbackSpeed.formatted(.number.precision(.fractionLength(0...2))) + "×"
+    }
+
+    private func playbackMenuLabel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 5) {
+            content()
+            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                .accessibilityHidden(true)
+        }
+        .font(.system(size: 12, weight: .medium))
+        .padding(.horizontal, 9).frame(height: 32)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 
     @ViewBuilder private var downloadStatus: some View {

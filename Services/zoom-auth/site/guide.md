@@ -1,10 +1,10 @@
 # User guide
 
-This guide covers {{brand}} 0.1.1, the candidate being prepared for the first public installer. Packaging and native installation acceptance remain pending, along with Zoom distribution approval. Browser PKCE and authenticated service checks passed at the managed endpoint, but this does not establish native app onboarding. The superseded 0.1.0 draft should not be installed. Check the [release status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md) for availability; the sample interface and source remain available.
+This guide covers Yap 0.1.1, the candidate being prepared for the first public installer. Packaging and native installation acceptance remain pending, along with Zoom distribution approval. Browser PKCE and authenticated service checks passed at the managed endpoint, but this does not establish native app onboarding. The superseded 0.1.0 draft should not be installed. Check the [release status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md) for availability; the sample interface and source remain available.
 
 ## Install and connect
 
-{{brand}} requires **Apple silicon and macOS 26 or newer**. When the release is published, download **Yap.dmg** from the project's [releases](https://github.com/grinich/yap/releases), open it, drag **Yap.app** to **Applications**, eject the disk image and launch Yap from Applications. **Yap-macOS.zip** is the alternative app archive; expand it and move Yap.app to Applications. Both downloads have a matching `.sha256` file. The current candidate is **0.1.1 (build 2)**; its artifacts are not yet available. [Planned artifact and checksum details](https://github.com/grinich/yap/blob/main/Documentation/Releases.md#first-release-v011).
+Yap requires **Apple silicon and macOS 26 or newer**. When the release is published, download **Yap.dmg** from the project's [releases](https://github.com/grinich/yap/releases), open it, drag **Yap.app** to **Applications**, eject the disk image and launch Yap from Applications. **Yap-macOS.zip** is the alternative app archive; expand it and move Yap.app to Applications. Both downloads have a matching `.sha256` file. The current candidate is **0.1.1 (build 2)**; its artifacts are not yet available. [Planned artifact and checksum details](https://github.com/grinich/yap/blob/main/Documentation/Releases.md#first-release-v011).
 
 Quit any older app before switching to Yap. Keep it until you have verified the new app's account access; supported saved accounts and preferences can migrate through normal macOS permissions. See [migration details](https://github.com/grinich/yap/blob/main/Documentation/Bundle-Identity.md). For the SDK-free sample interface and personal developer setup, see the [source README](https://github.com/grinich/yap#try-yap).
 
@@ -50,7 +50,14 @@ Some recordings have no saved chat or transcript. Cloud settings, completion of 
 
 ## Keyboard shortcuts
 
-{{shortcuts}}
+| While watching a recording | Shortcut |
+| --- | --- |
+| Play / pause | Space |
+| Skip backward / forward | ← / → |
+| Cycle playback speed | S |
+| Cycle video layout | V |
+| Toggle fullscreen | F |
+| Show / hide recordings | ⇧⌘R |
 
 Left and Right skip ten seconds at a time. Recording shortcuts apply to the active player and leave search fields and text editing alone.
 

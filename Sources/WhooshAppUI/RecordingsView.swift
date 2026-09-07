@@ -248,15 +248,20 @@ struct RecordingPlayerView: View {
                 .padding(.trailing, model.chat.isPresented ? 24 : 8)
                 HStack(spacing: 0) {
                     if model.chat.isPresented {
-                        Text("Chat")
-                            .font(.headline).lineLimit(1)
-                            .accessibilityAddTraits(.isHeader)
+                        Picker("Recording details", selection: Binding(get: { model.detailTab }, set: { model.setDetailTab($0) })) {
+                            ForEach(RecordingLibraryModel.DetailTab.allCases, id: \.self) { tab in
+                                Text(tab.rawValue).tag(tab)
+                            }
+                        }
+                            .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                            .frame(width: 170)
                             .padding(.leading, 14)
                             .transition(.opacity)
+                            .background(WhooshWindowInteractionRegion())
                         Spacer(minLength: 0)
                     }
-                    Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.chat.setPresented($0) })) {
-                        Label("Chat", systemImage: "bubble")
+                    Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.setDetailPresented($0) })) {
+                        Label("Chat and Transcript", systemImage: "bubble")
                             .labelStyle(.iconOnly)
                             .frame(width: 32, height: 32)
                             .contentShape(RoundedRectangle(cornerRadius: 10))
@@ -266,7 +271,7 @@ struct RecordingPlayerView: View {
                     .toggleStyle(.button).buttonStyle(.plain)
                     .whooshIconHover(isSelected: model.chat.isPresented)
                     .tint(nil as Color?).foregroundStyle(.primary)
-                    .help("\(model.chat.isPresented ? "Hide" : "Show") chat")
+                    .help("\(model.chat.isPresented ? "Hide" : "Show") chat and transcript")
                     .background(WhooshWindowInteractionRegion())
                 }
                 // This group's leading edge follows the chat glass, while the
@@ -303,10 +308,19 @@ struct RecordingPlayerView: View {
     }
 
     private func chatPane(width: CGFloat) -> some View {
-        RecordingChatView(model: model)
+        Group {
+            if model.detailTab == .chat {
+                RecordingChatView(model: model)
+                    .transition(.opacity)
+            } else {
+                RecordingTranscriptView(model: model)
+                    .transition(.opacity)
+            }
+        }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: model.detailTab)
             // Like live meeting chat, the glass extends behind the shared
             // header, whose trailing toggle is the sole open/close control.
-            .padding(.top, headerHeight)
+            .padding(.top, 72)
             .whooshGlassSurface(cornerRadius: 22)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .frame(width: width)

@@ -31,6 +31,7 @@ enum RecordingChatError: Error, LocalizedError, Equatable {
 /// Parsing and presentation happen separately so the original message text remains intact.
 enum RecordingChatLoader {
     static let maximumByteCount = 8 * 1_024 * 1_024
+    static let chatMIMETypes = ["text/plain", "application/octet-stream", "binary/octet-stream"]
 
     @concurrent
     static func load(client: ZoomAccountClient, file: ZoomRecordingFile) async throws -> String {
@@ -44,6 +45,7 @@ enum RecordingChatLoader {
     @concurrent
     static func load(configuration: URLSessionConfiguration = RecordingMediaHTTP.sessionConfiguration(),
                      byteLimit: Int = maximumByteCount,
+                     mimeTypes: [String] = chatMIMETypes,
                      requestProvider: @escaping @Sendable (Bool) async throws -> URLRequest) async throws -> String {
         guard byteLimit > 0, byteLimit <= maximumByteCount else { throw RecordingChatError.invalidResponse }
         let session = URLSession(configuration: configuration, delegate: RecordingMediaRedirects(), delegateQueue: nil)
@@ -52,14 +54,14 @@ enum RecordingChatLoader {
             try Task.checkCancellation()
             var request = try await requestProvider(attempt == 1)
             try Task.checkCancellation()
-            request.setValue("text/plain, application/octet-stream", forHTTPHeaderField: "Accept")
+            request.setValue(mimeTypes.joined(separator: ", "), forHTTPHeaderField: "Accept")
             request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
             request.setValue(nil, forHTTPHeaderField: "Range")
             let (bytes, response) = try await session.bytes(for: request)
             defer { bytes.task.cancel() }
             guard let response = response as? HTTPURLResponse else { throw RecordingChatError.invalidResponse }
             if response.statusCode == 401 && attempt == 0 { continue }
-            try checkResponse(response, byteLimit: byteLimit)
+            try checkResponse(response, byteLimit: byteLimit, mimeTypes: mimeTypes)
             let data: Data = try await withTaskCancellationHandler {
                 var data = Data()
                 let declaredLength = response.expectedContentLength
@@ -77,7 +79,8 @@ enum RecordingChatLoader {
         throw RecordingChatError.unauthorized
     }
 
-    static func checkResponse(_ response: HTTPURLResponse, byteLimit: Int = maximumByteCount) throws {
+    static func checkResponse(_ response: HTTPURLResponse, byteLimit: Int = maximumByteCount,
+                              mimeTypes: [String] = chatMIMETypes) throws {
         switch response.statusCode {
         case 200..<300: break
         case 401: throw RecordingChatError.unauthorized
@@ -91,7 +94,7 @@ enum RecordingChatLoader {
         }
         guard response.expectedContentLength <= byteLimit else { throw RecordingChatError.tooLarge }
         guard let mime = response.mimeType?.lowercased(),
-              ["text/plain", "application/octet-stream", "binary/octet-stream"].contains(mime) else {
+              mimeTypes.contains(mime) else {
             throw RecordingChatError.unsupportedContent
         }
         if let encoding = response.value(forHTTPHeaderField: "Content-Encoding"), encoding.lowercased() != "identity" {

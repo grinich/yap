@@ -164,6 +164,46 @@ struct ZoomRecordingsTests {
         #expect(await server.requests.isEmpty)
     }
 
+    @Test func findsCompletedTrustedAudioTranscriptsInRecordingOrder() throws {
+        let data = Data(#"""
+        {"uuid":"meeting","start_time":"2026-08-18T12:00:00Z","recording_files":[
+          {"id":"late","file_type":"TRANSCRIPT","status":"completed","recording_start":"2026-08-18T12:20:00Z","download_url":"https://zoom.us/rec/download/late"},
+          {"id":"early","file_type":"VTT","recording_type":"audio_transcript","status":"COMPLETED","recording_start":"2026-08-18T12:05:00Z","download_url":"https://us02web.zoom.us/rec/download/early"},
+          {"id":"pending","file_type":"TRANSCRIPT","status":"processing","download_url":"https://zoom.us/rec/download/pending"},
+          {"id":"untrusted","file_type":"TRANSCRIPT","status":"completed","download_url":"https://zoom.us.attacker.example/transcript"},
+          {"id":"missing-download","file_type":"TRANSCRIPT","status":"completed"},
+          {"id":"chat","file_type":"CHAT","status":"completed","download_url":"https://zoom.us/rec/download/chat"},
+          {"id":"caption","file_type":"CC","status":"completed","download_url":"https://zoom.us/rec/download/caption"}
+        ]}
+        """#.utf8)
+        let meeting = try JSONDecoder().decode(ZoomRecordingMeeting.self, from: data)
+        #expect(meeting.transcriptFiles.map(\.id) == ["early", "late"])
+        #expect(meeting.transcriptFiles.first?.displayName == "Transcript")
+        #expect(meeting.chatFiles.map(\.id) == ["chat"])
+        #expect(meeting.playableVideoFiles.isEmpty)
+    }
+
+    @Test(arguments: [("TRANSCRIPT", ""), ("VTT", "audio_transcript")])
+    func authorizesCompletedAudioTranscriptsWithoutAuthorizingOtherFiles(fileType: String, recordingType: String) async throws {
+        let server = RecordingFixtureServer()
+        let client = makeClient(server: server)
+        let url = try #require(URL(string: "https://us02web.zoom.us/rec/download/transcript"))
+        let file = ZoomRecordingFile(id: "transcript", recordingType: recordingType, fileType: fileType, fileSize: 120,
+                                     downloadURL: url, playURL: nil, status: "completed")
+        let request = try await client.recordingMediaRequest(for: file)
+        #expect(request.url == url)
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-access")
+        #expect(!request.httpShouldHandleCookies)
+        for (status, target) in [("processing", url), ("completed", URL(string: "https://attacker.example/transcript")!)] {
+            let unavailable = ZoomRecordingFile(id: "blocked", recordingType: recordingType, fileType: fileType, fileSize: 120,
+                                                downloadURL: target, playURL: nil, status: status)
+            await #expect(throws: ZoomAccountError.recordingUnavailable) {
+                try await client.recordingMediaRequest(for: unavailable)
+            }
+        }
+        #expect(await server.requests.isEmpty)
+    }
+
     @Test func validatesZoomMediaHostsWithoutSuffixOrCredentialTricks() throws {
         for value in ["https://zoom.us/rec/download/video", "https://us02web.zoom.us/rec/download/video?download=1",
                       "https://us06web.zoom.com:443/rec/download/video"] {

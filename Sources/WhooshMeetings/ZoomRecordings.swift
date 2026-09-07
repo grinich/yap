@@ -23,6 +23,13 @@ public struct ZoomRecordingMeeting: Identifiable, Sendable, Equatable, Decodable
 
     public var playableVideoFiles: [ZoomRecordingFile] { files.filter(\.isPlayableVideo) }
     public var chatFiles: [ZoomRecordingFile] { files.filter(\.isChatTranscript) }
+    public var transcriptFiles: [ZoomRecordingFile] {
+        files.filter(\.isAudioTranscript).sorted {
+            let first = $0.recordingStart ?? .distantPast
+            let second = $1.recordingStart ?? .distantPast
+            return first == second ? $0.id < $1.id : first < second
+        }
+    }
 
     /// Prefer the meeting's share page; an individual video page is a fallback.
     /// Download URLs and API authorization tokens are never copied for sharing.
@@ -99,6 +106,12 @@ public struct ZoomRecordingFile: Identifiable, Sendable, Equatable, Decodable {
             && mediaURL != nil
     }
 
+    public var isAudioTranscript: Bool {
+        status.lowercased() == "completed"
+            && (fileType.uppercased() == "TRANSCRIPT" || recordingType.lowercased() == "audio_transcript")
+            && mediaURL != nil
+    }
+
     public var displayName: String {
         switch recordingType {
         case "shared_screen_with_speaker_view": "Screen and speaker"
@@ -109,6 +122,7 @@ public struct ZoomRecordingFile: Identifiable, Sendable, Equatable, Decodable {
         case "shared_screen": "Shared screen"
         case "speaker_view": "Speaker view"
         case "chat_file": "Chat"
+        case "audio_transcript": "Transcript"
         default: recordingType.isEmpty ? "Video" : recordingType.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }

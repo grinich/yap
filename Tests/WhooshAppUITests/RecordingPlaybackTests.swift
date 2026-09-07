@@ -8,6 +8,59 @@ import WhooshMeetings
 
 @Suite("Recording playback switching", .serialized) @MainActor
 struct RecordingPlaybackTests {
+    @Test func transcriptTabsSearchAndViewSwitchesPreserveThePlayerAndTransferToItsWindow() async throws {
+        let fixture = try await RecordingPlaybackFixture.make(duration: 60)
+        defer { fixture.cleanUp() }
+        let fetched = RecordingPlaybackTranscriptFetch()
+        let model = fixture.makeModel(fetchTranscript: { _ in await fetched.load() })
+        defer { model.clear() }
+        let original = fixture.meeting()
+        let file = ZoomRecordingFile(id: "speech", recordingType: "audio_transcript", fileType: "TRANSCRIPT", fileSize: 0,
+                                    downloadURL: URL(string: "https://zoom.us/fixture/transcript"), playURL: nil, status: "completed")
+        let meeting = ZoomRecordingMeeting(id: original.id, topic: original.topic, startTime: original.startTime,
+                                          duration: original.duration, files: original.files + [file])
+        model.select(meeting)
+        try #require(await waitUntil { !model.isPreparing && model.transcript.hasLoaded })
+        model.player.pause()
+        #expect(model.detailTab == .transcript)
+        #expect(model.chat.isPresented)
+        let item = try #require(model.player.currentItem)
+        let cue = try #require(model.transcript.cues.last)
+        model.setPlaybackSpeed(1.75)
+        model.transcript.query = "decision"
+        model.seekToTranscriptCue(cue, followingPlayback: false)
+        try #require(await waitUntil { abs(model.player.currentTime().seconds - 45) < 0.025 })
+
+        for tab in [RecordingLibraryModel.DetailTab.chat, .transcript, .chat, .transcript] { model.setDetailTab(tab) }
+        #expect(model.player.currentItem === item)
+        #expect(abs(model.player.currentTime().seconds - 45) < 0.025)
+        #expect(model.player.rate == 0)
+        #expect(model.player.defaultRate == 1.75)
+        #expect(model.transcript.query == "decision")
+        #expect(!model.transcript.followsPlayback)
+        #expect(await fetched.count == 1)
+        model.play(meeting.playableVideoFiles[1])
+        try #require(await waitUntil { !model.isPreparing })
+        #expect(abs(model.player.currentTime().seconds - 45) < 0.025)
+        #expect(model.transcript.activeCueIDs == [cue.id])
+        #expect(await fetched.count == 1)
+
+        model.setDetailPresented(false)
+        model.openPlayerWindow(for: meeting)
+        let child = try #require(model.playerWindows[meeting.id]?.playback)
+        try #require(await waitUntil { !child.isPreparing })
+        #expect(child.detailTab == .transcript)
+        #expect(child.transcript.query == "decision")
+        #expect(!child.transcript.followsPlayback)
+        #expect(!child.chat.isPresented)
+        #expect(abs(child.player.currentTime().seconds - 45) < 0.025)
+        #expect(child.player.rate == 0)
+        #expect(child.player.defaultRate == 1.75)
+        #expect(child.transcript.cues.last == cue)
+        #expect(model.transcript.cues.isEmpty)
+        #expect(await fetched.count == 1)
+    }
+
     @Test(arguments: [true, false])
     func refreshingChangedRecordingsPreservesPlaybackAndItsCachedViews(_ paused: Bool) async throws {
         let fixture = try await RecordingPlaybackFixture.make(duration: 60)
@@ -927,6 +980,7 @@ struct RecordingPlaybackTests {
     }
 
     func makeModel(fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
+                   fetchTranscript: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
                    beforeDownload: (@Sendable () async -> Void)? = nil,
                    fetchPage: (@Sendable (Date, Date, String) async throws -> ZoomRecordingPage)? = nil) -> RecordingLibraryModel {
         // Every source is local synthetic media. Neither live HTTP nor Keychain is reachable.
@@ -941,7 +995,7 @@ struct RecordingPlaybackTests {
         }, downloadVideo: { [url] _, destination in
             await beforeDownload?()
             try FileManager.default.copyItem(at: url, to: destination)
-        }, fetchChat: fetchChat)
+        }, fetchChat: fetchChat, fetchTranscript: fetchTranscript)
     }
 
     func meeting(id: String = "fixture-meeting") -> ZoomRecordingMeeting {
@@ -962,6 +1016,14 @@ private actor RecordingPlaybackRefreshPages {
     init(meetings: [ZoomRecordingMeeting]) { self.meetings = meetings }
     func replace(with meetings: [ZoomRecordingMeeting]) { self.meetings = meetings }
     func fetch() -> ZoomRecordingPage { .init(meetings: meetings) }
+}
+
+private actor RecordingPlaybackTranscriptFetch {
+    private(set) var count = 0
+    func load() -> String {
+        count += 1
+        return "WEBVTT\n\n00:00:00.000 --> 00:00:10.000\nAda: Opening\n\n00:00:45.000 --> 00:00:50.000\nSam: The decision is ready.\n"
+    }
 }
 
 private actor RecordingPlaybackUnusedStore: ZoomCredentialStore {

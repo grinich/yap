@@ -220,10 +220,10 @@ public actor ZoomAccountClient {
         throw ZoomAccountError.notConnected
     }
 
-    /// Returns an in-memory authorized request for a completed video or saved chat. Never persist
+    /// Returns an in-memory authorized request for a completed video, chat, or audio transcript. Never persist
     /// this request or place its bearer token in a player URL.
     public func recordingMediaRequest(for file: ZoomRecordingFile, forceRefresh: Bool = false) async throws -> URLRequest {
-        guard file.isPlayableVideo || file.isChatTranscript, let url = file.mediaURL else {
+        guard file.isPlayableVideo || file.isChatTranscript || file.isAudioTranscript, let url = file.mediaURL else {
             throw ZoomAccountError.recordingUnavailable
         }
         guard connectionTask == nil else { throw ZoomAccountError.authorizationInProgress }

@@ -56,15 +56,31 @@ struct RecordingMonthWindow: Equatable, Sendable {
 public final class RecordingLibraryModel {
     static let playbackSpeeds: [Float] = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75]
 
+    enum DetailTab: String, CaseIterable { case chat = "Chat", transcript = "Transcript" }
+    var detailTab: DetailTab = .chat
+
     public var isPresented = false
     private(set) var isPreview = false
     var search = ""
     private(set) var meetings: [ZoomRecordingMeeting] = []
     private(set) var selectedMeeting: ZoomRecordingMeeting? {
-        didSet { chat.select(selectedMeeting, isPreview: isPreview) }
+        didSet {
+            if oldValue?.id != selectedMeeting?.id { allowsAutomaticTranscriptPresentation = true }
+            chat.select(selectedMeeting, isPreview: isPreview)
+            transcript.select(selectedMeeting, isPreview: isPreview)
+        }
     }
     private(set) var selectedFile: ZoomRecordingFile? {
-        didSet { chat.setPlaybackActive(selectedFile != nil) }
+        didSet {
+            chat.setPlaybackActive(selectedFile != nil)
+            transcript.setPlaybackActive(selectedFile != nil)
+            if allowsAutomaticTranscriptPresentation, oldValue == nil, selectedFile != nil, let meeting = selectedMeeting,
+               !meeting.transcriptFiles.isEmpty,
+               detailTab == .transcript || meeting.chatFiles.isEmpty {
+                detailTab = .transcript
+                setDetailPresented(true)
+            }
+        }
     }
     private(set) var isLoading = false
     private(set) var isRefreshing = false
@@ -82,12 +98,15 @@ public final class RecordingLibraryModel {
     private(set) var playerWindows: [String: RecordingPlayerWindowController] = [:]
     let player = AVPlayer()
     let chat: RecordingChatModel
+    let transcript: RecordingTranscriptModel
 
     @ObservationIgnored private let client: ZoomAccountClient
     @ObservationIgnored private let fetchPage: @Sendable (Date, Date, String) async throws -> ZoomRecordingPage
     @ObservationIgnored private let makePlaybackSource: @MainActor (ZoomRecordingFile) -> RecordingPlaybackSource
     @ObservationIgnored private let downloadVideo: @Sendable (ZoomRecordingFile, URL) async throws -> Void
     @ObservationIgnored private let fetchChat: @Sendable (ZoomRecordingFile) async throws -> String
+    @ObservationIgnored private let fetchTranscript: @Sendable (ZoomRecordingFile) async throws -> String
+    @ObservationIgnored private var allowsAutomaticTranscriptPresentation = true
     @ObservationIgnored private var nextWindow: RecordingMonthWindow?
     @ObservationIgnored private var pendingLibraryLoad: LibraryLoad?
     @ObservationIgnored private var activeLibraryLoad: LibraryLoad.Kind?
@@ -119,11 +138,15 @@ public final class RecordingLibraryModel {
          fetchPage: (@Sendable (Date, Date, String) async throws -> ZoomRecordingPage)? = nil,
          makePlaybackSource: (@MainActor (ZoomRecordingFile) -> RecordingPlaybackSource)? = nil,
          downloadVideo: (@Sendable (ZoomRecordingFile, URL) async throws -> Void)? = nil,
-         fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil) {
+         fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
+         fetchTranscript: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil) {
         self.client = client
         let fetchChat = fetchChat ?? { file in try await RecordingChatLoader.load(client: client, file: file) }
         self.fetchChat = fetchChat
         chat = RecordingChatModel(fetch: fetchChat)
+        let fetchTranscript = fetchTranscript ?? { file in try await RecordingTranscriptLoader.load(client: client, file: file) }
+        self.fetchTranscript = fetchTranscript
+        transcript = RecordingTranscriptModel(fetch: fetchTranscript)
         self.fetchPage = fetchPage ?? { from, to, token in
             try await client.recordings(from: from, to: to, nextPageToken: token)
         }
@@ -212,6 +235,7 @@ public final class RecordingLibraryModel {
     public func suspendPlayback() {
         pausePlayback()
         chat.setPlaybackActive(false)
+        transcript.setPlaybackActive(false)
     }
 
     /// A selected recording should already have usable native controls when its view appears.
@@ -220,6 +244,7 @@ public final class RecordingLibraryModel {
         guard !isPreview, let meeting = selectedMeeting, playerWindows[meeting.id] == nil else { return }
         if selectedFile != nil {
             chat.setPlaybackActive(true)
+            transcript.setPlaybackActive(true)
             return
         }
         guard !isPreparing, playbackError == nil, let file = meeting.playableVideoFiles.first else { return }
@@ -371,9 +396,21 @@ public final class RecordingLibraryModel {
         if let file = meeting.playableVideoFiles.first { play(file) }
     }
 
+    func setDetailPresented(_ value: Bool) {
+        allowsAutomaticTranscriptPresentation = false
+        chat.setPresented(value)
+        transcript.setPresented(value && detailTab == .transcript)
+    }
+
+    func setDetailTab(_ tab: DetailTab) {
+        detailTab = tab
+        transcript.setPresented(chat.isPresented && tab == .transcript)
+    }
+
     func selectFromList(_ meeting: ZoomRecordingMeeting) {
         if let existing = playerWindows[meeting.id] {
             chat.clear()
+            transcript.clear()
             stopPlayback()
             selectedMeeting = meeting
             existing.present()
@@ -393,6 +430,7 @@ public final class RecordingLibraryModel {
     func openPlayerWindow(for meeting: ZoomRecordingMeeting) {
         if let existing = playerWindows[meeting.id] {
             chat.clear()
+            transcript.clear()
             stopPlayback()
             selectedMeeting = meeting
             existing.present()
@@ -409,13 +447,17 @@ public final class RecordingLibraryModel {
             temporaryVideoFileID = nil
         }
         let playback = RecordingLibraryModel(client: client, makePlaybackSource: makePlaybackSource,
-                                             downloadVideo: downloadVideo, fetchChat: fetchChat)
+                                             downloadVideo: downloadVideo, fetchChat: fetchChat, fetchTranscript: fetchTranscript)
         let transferredSpeed = position.flatMap { $0.rate > 0 ? $0.rate : nil } ?? playbackSpeed
         playback.applyPlaybackSpeed(transferredSpeed)
         playback.isPreview = isPreview
         playback.selectedMeeting = meeting
         playback.chat.adoptState(from: chat)
+        playback.detailTab = detailTab
+        playback.transcript.adoptState(from: transcript)
+        playback.allowsAutomaticTranscriptPresentation = allowsAutomaticTranscriptPresentation
         chat.clear()
+        transcript.clear()
         // Opening a player moves audio out of the library; other windows remain available.
         stopPlayback()
         playerWindows.values.forEach { $0.playback.pausePlayback() }
@@ -439,6 +481,7 @@ public final class RecordingLibraryModel {
             if self.selectedMeeting?.id == meeting.id, self.selectedFile == nil {
                 self.selectedMeeting = nil
                 self.chat.clear()
+                self.transcript.clear()
             }
         }
         playerWindows[meeting.id] = controller
@@ -617,15 +660,23 @@ public final class RecordingLibraryModel {
         isPreparing = false
         playbackError = nil
         chat.synchronize(playerTime: nil, file: nil, duration: nil)
+        transcript.synchronize(playerTime: nil, file: nil, duration: nil)
     }
 
     private func synchronizeChat(at time: CMTime) {
         chat.synchronize(playerTime: time.seconds, file: selectedFile, duration: player.currentItem?.duration.seconds)
+        transcript.synchronize(playerTime: time.seconds, file: selectedFile, duration: player.currentItem?.duration.seconds)
     }
 
     func seekToChatMessage(_ message: ZoomRecordingChatMessage) {
         guard !isPreparing, let seconds = chat.playbackTime(for: message), player.currentItem != nil else { return }
         chat.followsPlayback = true
+        seekManually(to: CMTime(seconds: seconds, preferredTimescale: 600))
+    }
+
+    func seekToTranscriptCue(_ cue: ZoomRecordingTranscriptCue, followingPlayback: Bool = true) {
+        guard !isPreparing, let seconds = transcript.playbackTime(for: cue), player.currentItem != nil else { return }
+        transcript.followsPlayback = followingPlayback
         seekManually(to: CMTime(seconds: seconds, preferredTimescale: 600))
     }
 
@@ -736,6 +787,8 @@ public final class RecordingLibraryModel {
         generation = UUID()
         if closingPlayerWindows { closePlayerWindows() }
         chat.clear()
+        transcript.clear()
+        detailTab = .chat
         stopPlayback()
         meetings = []
         selectedMeeting = nil

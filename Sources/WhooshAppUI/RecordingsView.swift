@@ -13,23 +13,6 @@ struct RecordingSidebar: View {
     var body: some View {
         let filteredMeetings = model.filteredMeetings
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Recordings").font(.system(size: 20, weight: .semibold))
-                    Text("Your Zoom cloud library").font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button { Task { await model.refresh() } } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain).padding(6)
-                .disabled(model.isLoading || isPreview || connection.isBusy)
-                .help("Refresh recordings").accessibilityLabel("Refresh recordings")
-                .background(WhooshWindowInteractionRegion())
-            }
-            .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 18)
-            .overlay(WhooshWindowDragSurface())
-
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
                 TextField("Search titles or dates", text: $model.search)
@@ -42,7 +25,7 @@ struct RecordingSidebar: View {
                 }
             }
             .padding(9).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 14).padding(.bottom, 12)
+            .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 12)
             .background(WhooshWindowInteractionRegion())
 
             ScrollView {
@@ -66,10 +49,7 @@ struct RecordingSidebar: View {
                                 .textSelection(.enabled)
                             HStack {
                                 Button("Retry") {
-                                    Task {
-                                        if model.hasLoadedInitial { await model.loadOlder() }
-                                        else { await model.loadInitial() }
-                                    }
+                                    Task { await model.retryLoading() }
                                 }
                                 Button("Zoom settings", action: openSettings)
                             }.controlSize(.small)
@@ -89,7 +69,7 @@ struct RecordingSidebar: View {
                                 .font(.system(size: 12)).frame(maxWidth: .infinity).padding(.vertical, 8)
                         }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .disabled(model.isLoading || connection.isBusy).padding(.top, 10)
+                        .disabled(model.isLoading || model.isRefreshing || connection.isBusy).padding(.top, 10)
                     }
                 }.padding(.horizontal, 8).padding(.bottom, 20)
             }

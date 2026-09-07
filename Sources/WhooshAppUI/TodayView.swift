@@ -58,16 +58,6 @@ public struct WhooshRootView: View {
         .onChange(of: model.activeCall) { _, active in
             if active { model.recordings.dismiss() }
         }
-        .onChange(of: model.zoomConnection.isBusy) { _, busy in
-            if !busy, model.recordings.isPresented, !model.isPreview {
-                Task { await model.recordings.loadInitial() }
-            }
-        }
-        .onChange(of: model.zoomConnection.accountRevision) {
-            if !model.zoomConnection.isBusy, model.recordings.isPresented, !model.isPreview {
-                Task { await model.recordings.loadInitial() }
-            }
-        }
         .sheet(isPresented: $model.showJoinSheet) { JoinMeetingSheet(model: model) }
         .confirmationDialog(model.meeting.isHost ? "Leave or end this meeting?" : "Leave this meeting?", isPresented: $model.showLeaveConfirmation, titleVisibility: .visible) {
             Button("Leave meeting", role: .destructive) { Task { await model.leaveMeeting() } }
@@ -119,6 +109,18 @@ public struct WhooshRootView: View {
 struct TodayView: View {
     @Bindable var model: WhooshModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private struct RecordingPresentation: Equatable {
+        let isAvailable: Bool
+        let accountRevision: UUID
+    }
+
+    private var recordingPresentation: RecordingPresentation {
+        RecordingPresentation(
+            isAvailable: model.recordings.isPresented && !model.isPreview && !model.zoomConnection.isBusy,
+            accountRevision: model.zoomConnection.accountRevision)
+    }
+
     var body: some View {
         GeometryReader { available in
             let compact = available.size.width < 560
@@ -166,10 +168,9 @@ struct TodayView: View {
             }
         }
         .ignoresSafeArea(.container, edges: .top)
-        .task(id: model.recordings.isPresented) {
-            if model.recordings.isPresented, !model.isPreview, !model.zoomConnection.isBusy {
-                await model.recordings.loadInitial()
-            }
+        .task(id: recordingPresentation) {
+            guard recordingPresentation.isAvailable else { return }
+            await model.recordings.refreshForPresentation()
         }
         .onDisappear { model.recordings.suspendPlayback() }
     }

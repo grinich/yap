@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Observation
 import Testing
 import WhooshMeetings
 @testable import WhooshAppUI
@@ -33,6 +34,10 @@ struct RecordingLibraryTests {
         model.select(sample)
         model.downloadSelected()
         await model.loadInitial()
+        await model.refreshForPresentation()
+        await model.refresh()
+        await model.loadOlder()
+        await model.retryLoading()
         #expect(model.selectedFile != nil)
         #expect(model.chat.isPresented)
         #expect(!model.chat.messages.isEmpty)
@@ -246,6 +251,200 @@ struct RecordingLibraryTests {
         #expect(model.hasLoadedInitial)
     }
 
+    @Test func refreshUpsertsCompletePagesWithoutReplacingTheSelectedSnapshotOrSearch() async throws {
+        let original = try meeting("selected", date: "2026-09-03T09:00:00Z", topic: "Original")
+        let updated = try meeting("selected", date: "2026-09-03T09:00:00Z", topic: "Updated")
+        let new = try meeting("new", date: "2026-09-06T09:00:00Z")
+        let historical = try meeting("historical", date: "2026-07-04T09:00:00Z")
+        let fixture = RecordingLibraryPages(pages: [
+            .init(meetings: [original]), .init(meetings: []), .init(meetings: [historical]),
+            .init(meetings: [new], nextPageToken: "refresh-page-2"),
+            .init(meetings: [updated]), .init(meetings: []), .init(meetings: [])
+        ])
+        let model = makeModel(fixture)
+        defer { model.clear() }
+        let now = try date("2026-09-07T12:00:00Z")
+        await model.refreshForPresentation(now: now)
+        model.select(original)
+        model.search = "Original"
+        await model.refreshForPresentation(now: now)
+
+        #expect(model.meetings == [new, updated, historical])
+        #expect(model.selectedMeeting == original)
+        #expect(model.selectedFile == nil)
+        #expect(model.search == "Original")
+        #expect(model.oldestLoadedDate == (try date("2026-07-01T00:00:00Z")))
+        #expect(model.hasLoadedInitial)
+        #expect(!model.isLoading && !model.isRefreshing)
+        #expect(model.error == nil)
+        #expect(await fixture.calls.map(\.token) == ["", "", "", "", "refresh-page-2", "", ""])
+    }
+
+    @Test func unchangedOrAbsentRefreshResultsDoNotRepublishTheMeetingArray() async throws {
+        let current = try meeting("current", date: "2026-09-03T09:00:00Z")
+        let fixture = RecordingLibraryPages(pages: [
+            .init(meetings: [current]), .init(meetings: []), .init(meetings: []),
+            .init(meetings: [current]), .init(meetings: []), .init(meetings: [])
+        ])
+        let model = makeModel(fixture)
+        let now = try date("2026-09-07T12:00:00Z")
+        await model.loadInitial(now: now)
+        let changes = RecordingLibraryChangeCounter()
+        withObservationTracking { _ = model.meetings } onChange: { changes.increment() }
+        await model.refresh(now: now)
+        #expect(model.meetings == [current])
+        #expect(changes.value == 0)
+    }
+
+    @Test func refreshIncludesOlderLoadedMonthsAndANewMonthWithoutMovingTheOlderCursor() async throws {
+        let historical = try meeting("june", date: "2026-06-03T09:00:00Z", topic: "Original")
+        let updated = try meeting("june", date: "2026-06-03T09:00:00Z", topic: "Changed in June")
+        let newest = try meeting("october", date: "2026-10-02T09:00:00Z")
+        let fixture = RecordingLibraryPages(pages: [
+            .init(meetings: []), .init(meetings: []), .init(meetings: []), .init(meetings: [historical]),
+            .init(meetings: [newest]), .init(meetings: []), .init(meetings: []), .init(meetings: []),
+            .init(meetings: [updated]), .init(meetings: [])
+        ])
+        let model = makeModel(fixture)
+        await model.loadInitial(now: try date("2026-09-07T12:00:00Z"))
+        await model.loadOlder()
+        let now = try date("2026-10-04T12:00:00Z")
+        await model.refresh(now: now)
+        #expect(model.meetings == [newest, updated])
+        #expect(model.oldestLoadedDate == (try date("2026-06-01T00:00:00Z")))
+        await model.loadOlder()
+
+        let calls = await fixture.calls
+        #expect(calls.dropFirst(4).map(\.from) == (try [
+            date("2026-10-01T00:00:00Z"), date("2026-09-01T00:00:00Z"),
+            date("2026-08-01T00:00:00Z"), date("2026-07-01T00:00:00Z"),
+            date("2026-06-01T00:00:00Z"), date("2026-05-01T00:00:00Z")
+        ]))
+        #expect(calls[4].to == now)
+        #expect(calls[5].to == (try date("2026-09-30T00:00:00Z")))
+        #expect(model.oldestLoadedDate == (try date("2026-05-01T00:00:00Z")))
+    }
+
+    @Test func failedRefreshRetainsHistoryAndRetriesTheIncompleteMonthBeforeContinuing() async throws {
+        let historical = try meeting("history", date: "2026-07-03T09:00:00Z")
+        let newest = try meeting("new", date: "2026-09-06T09:00:00Z")
+        let partial = try meeting("partial", date: "2026-08-03T09:00:00Z")
+        let fixture = RecordingLibraryPages(pages: [
+            .init(meetings: []), .init(meetings: []), .init(meetings: [historical]),
+            .init(meetings: [newest]), .init(meetings: [partial], nextPageToken: "failing-page"),
+            .init(meetings: []), .init(meetings: [partial]), .init(meetings: []), .init(meetings: [])
+        ], failedRequests: [6])
+        let model = makeModel(fixture)
+        let now = try date("2026-09-07T12:00:00Z")
+        await model.loadInitial(now: now)
+        await model.refresh(now: now)
+        #expect(model.meetings == [newest, historical])
+        #expect(model.error != nil)
+        #expect(model.hasLoadedInitial)
+        #expect(!model.isRefreshing)
+        #expect(model.oldestLoadedDate == (try date("2026-07-01T00:00:00Z")))
+
+        await model.retryLoading()
+        #expect(model.meetings == [newest, partial, historical])
+        #expect(model.error == nil)
+        await model.loadOlder()
+        let calls = await fixture.calls
+        #expect(calls.count == 9)
+        #expect(calls[6].from == calls[4].from)
+        #expect(calls[6].token.isEmpty)
+        #expect(calls[7].from == (try date("2026-07-01T00:00:00Z")))
+        #expect(calls[8].from == (try date("2026-06-01T00:00:00Z")))
+    }
+
+    @Test func initialAndOlderRetriesResumeTheFailedWindowWithoutSkippingOrAddingMonths() async throws {
+        let fixture = RecordingLibraryPages(pages: Array(repeating: .init(meetings: []), count: 7),
+                                            failedRequests: [2, 5])
+        let model = makeModel(fixture)
+        await model.loadInitial(now: try date("2026-09-07T12:00:00Z"))
+        #expect(!model.hasLoadedInitial)
+        #expect(model.oldestLoadedDate == (try date("2026-09-01T00:00:00Z")))
+        await model.retryLoading()
+        #expect(model.hasLoadedInitial)
+        #expect(model.oldestLoadedDate == (try date("2026-07-01T00:00:00Z")))
+        await model.loadOlder()
+        #expect(model.error != nil)
+        await model.retryLoading()
+        #expect(model.error == nil)
+        #expect(model.oldestLoadedDate == (try date("2026-06-01T00:00:00Z")))
+        await model.loadOlder()
+        #expect(await fixture.calls.map(\.from) == (try [
+            date("2026-09-01T00:00:00Z"), date("2026-08-01T00:00:00Z"),
+            date("2026-08-01T00:00:00Z"), date("2026-07-01T00:00:00Z"),
+            date("2026-06-01T00:00:00Z"), date("2026-06-01T00:00:00Z"), date("2026-05-01T00:00:00Z")
+        ]))
+    }
+
+    @Test(arguments: [false, true])
+    func concurrentPresentationsShareSuccessfulLoadsAndRetryCancelledRefreshes(cancel: Bool) async throws {
+        let historical = try meeting("history", date: "2026-07-03T09:00:00Z")
+        let partial = try meeting("partial", date: "2026-09-05T09:00:00Z")
+        let newest = try meeting("new", date: "2026-09-06T09:00:00Z")
+        let fixture = RecordingLibraryPages(pages: [
+            .init(meetings: []), .init(meetings: []), .init(meetings: [historical]),
+            .init(meetings: [partial], nextPageToken: "last-page"), .init(meetings: []),
+            .init(meetings: [newest]), .init(meetings: []), .init(meetings: [])
+        ], pausedRequests: [5])
+        let model = makeModel(fixture)
+        let now = try date("2026-09-07T12:00:00Z")
+        await model.refreshForPresentation(now: now)
+        let first = Task { await model.refreshForPresentation(now: now) }
+        await fixture.waitForPause(5)
+        #expect(model.isRefreshing)
+        #expect(model.meetings == [historical])
+        if cancel { first.cancel() }
+        let arrived = AsyncStream<Void>.makeStream()
+        let second = Task {
+            arrived.continuation.yield()
+            await model.refreshForPresentation(now: now)
+        }
+        for await _ in arrived.stream { break }
+        #expect(await fixture.calls.count == 5)
+        await fixture.resume(5)
+        await first.value
+        await second.value
+
+        #expect(await fixture.calls.count == (cancel ? 8 : 7))
+        #expect(model.meetings == (cancel ? [newest, historical] : [newest, partial, historical]))
+        #expect(model.oldestLoadedDate == (try date("2026-07-01T00:00:00Z")))
+        #expect(model.hasLoadedInitial)
+        #expect(!model.isLoading && !model.isRefreshing)
+        #expect(model.error == nil)
+    }
+
+    @Test func staleRefreshCannotMergeIntoOrFinishANewAccountsLoad() async throws {
+        let stale = try meeting("old-account", date: "2026-09-03T09:00:00Z")
+        let current = try meeting("current-account", date: "2026-09-04T09:00:00Z")
+        let fixture = RecordingLibraryPages(pages: [
+            .init(meetings: [stale]), .init(meetings: []), .init(meetings: []), .init(meetings: [stale]),
+            .init(meetings: [current]), .init(meetings: []), .init(meetings: [])
+        ], pausedRequests: [4, 5])
+        let model = makeModel(fixture)
+        let now = try date("2026-09-07T12:00:00Z")
+        await model.loadInitial(now: now)
+        let oldRefresh = Task { await model.refresh(now: now) }
+        await fixture.waitForPause(4)
+        model.clear()
+        let currentLoad = Task { await model.refreshForPresentation(now: now) }
+        await fixture.waitForPause(5)
+        await fixture.resume(4)
+        await oldRefresh.value
+        #expect(model.meetings.isEmpty)
+        #expect(model.isLoading)
+        #expect(!model.isRefreshing)
+        #expect(!model.hasLoadedInitial)
+        await fixture.resume(5)
+        await currentLoad.value
+        #expect(model.meetings == [current])
+        #expect(model.hasLoadedInitial)
+        #expect(!model.isLoading && !model.isRefreshing)
+        #expect(model.error == nil)
+    }
+
     private func makeModel(_ fixture: RecordingLibraryPages) -> RecordingLibraryModel {
         // Neither Keychain nor live HTTP is reachable from these fixtures.
         let client = ZoomAccountClient(store: RecordingLibraryUnusedStore(), transport: ZoomHTTPTransport { _ in
@@ -274,13 +473,15 @@ private actor RecordingLibraryPages {
 
     private let pages: [ZoomRecordingPage]
     private let pausedRequests: Set<Int>
+    private let failedRequests: Set<Int>
     private var gates: [Int: CheckedContinuation<Void, Never>] = [:]
     private var waiters: [Int: CheckedContinuation<Void, Never>] = [:]
     private(set) var calls: [Call] = []
 
-    init(pages: [ZoomRecordingPage], pausedRequests: Set<Int> = []) {
+    init(pages: [ZoomRecordingPage], pausedRequests: Set<Int> = [], failedRequests: Set<Int> = []) {
         self.pages = pages
         self.pausedRequests = pausedRequests
+        self.failedRequests = failedRequests
     }
 
     func fetch(from: Date, to: Date, token: String) async throws -> ZoomRecordingPage {
@@ -293,6 +494,7 @@ private actor RecordingLibraryPages {
                 waiters.removeValue(forKey: request)?.resume()
             }
         }
+        if failedRequests.contains(request) { throw ZoomAccountError.invalidResponse }
         return pages[request - 1]
     }
 
@@ -302,6 +504,13 @@ private actor RecordingLibraryPages {
     }
 
     func resume(_ request: Int) { gates.removeValue(forKey: request)?.resume() }
+}
+
+private final class RecordingLibraryChangeCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() { lock.withLock { count += 1 } }
 }
 
 private actor RecordingLibraryUnusedStore: ZoomCredentialStore {

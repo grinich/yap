@@ -8,6 +8,76 @@ import WhooshMeetings
 
 @Suite("Recording playback switching", .serialized) @MainActor
 struct RecordingPlaybackTests {
+    @Test(arguments: [true, false])
+    func refreshingChangedRecordingsPreservesPlaybackAndItsCachedViews(_ paused: Bool) async throws {
+        let fixture = try await RecordingPlaybackFixture.make(duration: 60)
+        defer { fixture.cleanUp() }
+        let now = Date(timeIntervalSince1970: 1_788_739_200)
+        let original = fixture.meeting()
+        let chatFile = ZoomRecordingFile(id: "refresh-chat", recordingType: "chat_file", fileType: "CHAT", fileSize: 0,
+                                        downloadURL: URL(string: "https://zoom.us/fixture/chat"), playURL: nil, status: "completed")
+        let meeting = ZoomRecordingMeeting(id: original.id, topic: original.topic, startTime: now.addingTimeInterval(-3_600),
+                                          duration: original.duration, files: original.files + [chatFile])
+        let pages = RecordingPlaybackRefreshPages(meetings: [meeting])
+        let model = fixture.makeModel(fetchChat: { _ in "00:00:00\tAda: Opening\n00:00:50\tSam: Later" },
+                                      fetchPage: { _, _, _ in await pages.fetch() })
+        defer { model.clear() }
+        await model.loadInitial(now: now)
+        model.select(meeting)
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay && model.chat.hasLoaded })
+        model.player.pause()
+        let firstItem = try #require(model.player.currentItem)
+        model.play(meeting.files[1])
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        let selectedItem = try #require(model.player.currentItem)
+        #expect(await model.player.seek(to: time(20), toleranceBefore: .zero, toleranceAfter: .zero))
+        model.setPlaybackSpeed(1.5)
+        model.chat.setPresented(true)
+        model.chat.followsPlayback = false
+        model.search = "Synthetic"
+        if !paused { model.player.playImmediately(atRate: 1.5) }
+        let selectedFile = model.selectedFile
+        let messages = model.chat.messages
+        let sourceIDs = fixture.createdIDs
+        let before = model.player.currentTime().seconds
+        let started = ContinuousClock.now
+        let updated = ZoomRecordingMeeting(id: meeting.id, topic: "Updated title", startTime: meeting.startTime,
+                                          duration: 2, files: [fixture.file("new-view")])
+        await pages.replace(with: [updated])
+
+        await model.refresh(now: now)
+
+        #expect(model.meetings == [updated])
+        #expect(model.selectedMeeting == meeting)
+        #expect(model.selectedFile == selectedFile)
+        #expect(model.player.currentItem === selectedItem)
+        #expect(model.player.rate == (paused ? 0 : 1.5))
+        #expect(model.player.defaultRate == 1.5)
+        #expect(model.playbackSpeed == 1.5)
+        let after = model.player.currentTime().seconds
+        let elapsed = started.duration(to: .now)
+        let elapsedSeconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        #expect(after >= before - 0.025)
+        #expect(after <= before + (paused ? 0.025 : elapsedSeconds * 1.5 + 0.1))
+        #expect(model.chat.messages == messages)
+        #expect(model.chat.isPresented)
+        #expect(model.chat.hasLoaded)
+        #expect(!model.chat.followsPlayback)
+        #expect(model.search == "Synthetic")
+        #expect(!model.isPreparing)
+        #expect(!model.isRefreshing)
+        #expect(model.playbackError == nil)
+        #expect(fixture.createdIDs == sourceIDs)
+
+        model.player.pause()
+        let pausedPosition = model.player.currentTime().seconds
+        model.play(meeting.files[0])
+        try #require(await waitUntil { !model.isPreparing && model.selectedFile?.id == meeting.files[0].id })
+        #expect(model.player.currentItem === firstItem)
+        #expect(fixture.createdIDs == sourceIDs)
+        #expect(abs(model.player.currentTime().seconds - pausedPosition) < 0.025)
+    }
+
     @Test(arguments: [Float(1.75), 2.25, 2.5])
     func changingSpeedWhilePausedKeepsThePositionAndResumesAtThatSpeed(_ speed: Float) async throws {
         let fixture = try await RecordingPlaybackFixture.make()
@@ -857,12 +927,13 @@ struct RecordingPlaybackTests {
     }
 
     func makeModel(fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
-                   beforeDownload: (@Sendable () async -> Void)? = nil) -> RecordingLibraryModel {
+                   beforeDownload: (@Sendable () async -> Void)? = nil,
+                   fetchPage: (@Sendable (Date, Date, String) async throws -> ZoomRecordingPage)? = nil) -> RecordingLibraryModel {
         // Every source is local synthetic media. Neither live HTTP nor Keychain is reachable.
         let client = ZoomAccountClient(store: RecordingPlaybackUnusedStore(), transport: ZoomHTTPTransport { _ in
             throw URLError(.unsupportedURL)
         })
-        return RecordingLibraryModel(client: client, fetchPage: { _, _, _ in .init(meetings: []) },
+        return RecordingLibraryModel(client: client, fetchPage: fetchPage ?? { _, _, _ in .init(meetings: []) },
                                      makePlaybackSource: { [self] file in
             createdIDs.append(file.id)
             let asset: AVAsset = file.id == "short-view" ? shortAsset : fullAsset
@@ -886,6 +957,13 @@ struct RecordingPlaybackTests {
     func cleanUp() { try? FileManager.default.removeItem(at: url) }
 }
 
+private actor RecordingPlaybackRefreshPages {
+    private var meetings: [ZoomRecordingMeeting]
+    init(meetings: [ZoomRecordingMeeting]) { self.meetings = meetings }
+    func replace(with meetings: [ZoomRecordingMeeting]) { self.meetings = meetings }
+    func fetch() -> ZoomRecordingPage { .init(meetings: meetings) }
+}
+
 private actor RecordingPlaybackUnusedStore: ZoomCredentialStore {
     func loadConfiguration() -> ZoomPersonalConfiguration? { nil }
     func saveConfiguration(_ value: ZoomPersonalConfiguration) {}
@@ -896,4 +974,4 @@ private actor RecordingPlaybackUnusedStore: ZoomCredentialStore {
 }
 
 // Two seconds of 32×32 black H.264 video generated locally; no external recording data.
-private let recordingPlaybackMP4Fixture = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMxbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAB9AAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlx0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAB9AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAACAAAAAgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAfQAAAAAAABAAAAAAHUbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAgABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABf21pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAT9zdGJsAAAAv3N0c2QAAAAAAAAAAQAAAK9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAACAAIABIAAAASAAAAAAAAAABFExhdmM2My4xLjEwMSBsaWJ4MjY0AAAAAAAAAAAAAAAAGP//AAAANWF2Y0MBZAAK/+EAGGdkAAqs2UlsBEAAAAMAQAAAAwCDxIllgAEABmjr48siwP34+AAAAAAQcGFzcAAAAAEAAAABAAAAFGJ0cnQAAAAAAAAAmAAAAAAAAAAYc3R0cwAAAAAAAAABAAAAAgAAQAAAAAAUc3RzcwAAAAAAAAABAAAAAQAAABxzdHNjAAAAAAAAAAEAAAABAAAAAgAAAAEAAAAcc3RzegAAAAAAAAAAAAAAAgAAABkAAAANAAAAFHN0Y28AAAAAAAAAAQAAA2EAAABhdWR0YQAAAFltZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAACxpbHN0AAAAJKl0b28AAAAcZGF0YQAAAAEAAAAATGF2ZjYzLjEuMTAxAAAACGZyZWUAAAAubWRhdAAAABVliIQAFv/+99M/zLLsmiS144e/t/8AAAAJQZohbEFf/tbg"
+let recordingPlaybackMP4Fixture = "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMxbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAB9AAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlx0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAB9AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAACAAAAAgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAfQAAAAAAABAAAAAAHUbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAgABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABf21pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAT9zdGJsAAAAv3N0c2QAAAAAAAAAAQAAAK9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAACAAIABIAAAASAAAAAAAAAABFExhdmM2My4xLjEwMSBsaWJ4MjY0AAAAAAAAAAAAAAAAGP//AAAANWF2Y0MBZAAK/+EAGGdkAAqs2UlsBEAAAAMAQAAAAwCDxIllgAEABmjr48siwP34+AAAAAAQcGFzcAAAAAEAAAABAAAAFGJ0cnQAAAAAAAAAmAAAAAAAAAAYc3R0cwAAAAAAAAABAAAAAgAAQAAAAAAUc3RzcwAAAAAAAAABAAAAAQAAABxzdHNjAAAAAAAAAAEAAAABAAAAAgAAAAEAAAAcc3RzegAAAAAAAAAAAAAAAgAAABkAAAANAAAAFHN0Y28AAAAAAAAAAQAAA2EAAABhdWR0YQAAAFltZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAACxpbHN0AAAAJKl0b28AAAAcZGF0YQAAAAEAAAAATGF2ZjYzLjEuMTAxAAAACGZyZWUAAAAubWRhdAAAABVliIQAFv/+99M/zLLsmiS144e/t/8AAAAJQZohbEFf/tbg"

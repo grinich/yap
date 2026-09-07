@@ -67,6 +67,7 @@ public final class RecordingLibraryModel {
         didSet { chat.setPlaybackActive(selectedFile != nil) }
     }
     private(set) var isLoading = false
+    private(set) var isRefreshing = false
     private(set) var hasLoadedInitial = false
     private(set) var oldestLoadedDate: Date?
     private(set) var error: String?
@@ -87,6 +88,9 @@ public final class RecordingLibraryModel {
     @ObservationIgnored private let downloadVideo: @Sendable (ZoomRecordingFile, URL) async throws -> Void
     @ObservationIgnored private let fetchChat: @Sendable (ZoomRecordingFile) async throws -> String
     @ObservationIgnored private var nextWindow: RecordingMonthWindow?
+    @ObservationIgnored private var pendingLibraryLoad: LibraryLoad?
+    @ObservationIgnored private var activeLibraryLoad: LibraryLoad.Kind?
+    @ObservationIgnored private var libraryLoadWaiters: [CheckedContinuation<Bool, Never>] = []
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var mediaLoader: RecordingMediaLoader?
     @ObservationIgnored private var itemObservation: NSKeyValueObservation?
@@ -219,30 +223,85 @@ public final class RecordingLibraryModel {
         play(file, resuming: RecordingPlaybackPosition(time: .zero, rate: 0))
     }
 
+    private struct LibraryLoad {
+        enum Kind { case initial, older, refresh }
+        let kind: Kind
+        var windows: [RecordingMonthWindow]
+    }
+
     func loadInitial(now: Date = .now) async {
-        guard !isPreview, !hasLoadedInitial, !isLoading else { return }
-        let expected = generation
-        if nextWindow == nil { nextWindow = .containing(now) }
-        await loadMonths(3)
-        if expected == generation, error == nil, !Task.isCancelled { hasLoadedInitial = true }
+        guard !isPreview, !hasLoadedInitial, activeLibraryLoad == nil else { return }
+        if let pendingLibraryLoad, pendingLibraryLoad.kind == .initial {
+            await load(pendingLibraryLoad)
+        } else {
+            let current = RecordingMonthWindow.containing(now)
+            await load(.init(kind: .initial, windows: [current, current.previous, current.previous.previous]))
+        }
     }
 
-    func loadOlder() async { await loadMonths(1) }
-
-    func refresh() async {
-        resetLibrary(closingPlayerWindows: false)
-        await loadInitial()
+    func loadOlder() async {
+        guard !isPreview, activeLibraryLoad == nil else { return }
+        guard hasLoadedInitial, let nextWindow else { await loadInitial(); return }
+        await load(.init(kind: .older, windows: [nextWindow]))
     }
 
-    private func loadMonths(_ count: Int) async {
-        guard !isLoading, !Task.isCancelled else { return }
+    /// Reopening refreshes metadata without changing any playback or selection state.
+    func refreshForPresentation(now: Date = .now) async { await refresh(now: now) }
+
+    func refresh(now: Date = .now) async {
+        guard !isPreview, !Task.isCancelled else { return }
         let expected = generation
-        isLoading = true
+        if let activeLibraryLoad {
+            // Presentation tasks can overlap when a view is quickly hidden and
+            // reopened. Share a successful fetch, but retry a cancelled fetch.
+            let cancelled = await withCheckedContinuation { libraryLoadWaiters.append($0) }
+            guard expected == generation, !Task.isCancelled, !isPreview else { return }
+            if !cancelled, activeLibraryLoad != .older { return }
+            await refresh(now: now)
+            return
+        }
+        guard hasLoadedInitial else { await loadInitial(now: now); return }
+        var window = RecordingMonthWindow.containing(now)
+        let oldest = oldestLoadedDate ?? window.previous.previous.from
+        var windows = [window]
+        while window.from > oldest {
+            window = window.previous
+            windows.append(window)
+        }
+        await load(.init(kind: .refresh, windows: windows))
+    }
+
+    func retryLoading() async {
+        guard !isPreview, activeLibraryLoad == nil else { return }
+        if let pendingLibraryLoad { await load(pendingLibraryLoad) }
+        else if !hasLoadedInitial { await loadInitial() }
+        else { await refresh() }
+    }
+
+    private func load(_ request: LibraryLoad) async {
+        guard !isPreview, activeLibraryLoad == nil, !Task.isCancelled else { return }
+        let expected = generation
+        activeLibraryLoad = request.kind
+        isRefreshing = request.kind == .refresh
+        isLoading = !isRefreshing
         error = nil
-        defer { if expected == generation { isLoading = false } }
+        pendingLibraryLoad = request
+        var wasCancelled = false
+        defer {
+            if expected == generation {
+                isLoading = false
+                isRefreshing = false
+                activeLibraryLoad = nil
+                let waiters = libraryLoadWaiters
+                libraryLoadWaiters = []
+                for waiter in waiters { waiter.resume(returning: Task.isCancelled || wasCancelled) }
+            }
+        }
         do {
-            for _ in 0..<count {
-                guard let window = nextWindow else { break }
+            for (index, window) in request.windows.enumerated() {
+                try Task.checkCancellation()
+                guard generation == expected else { return }
+                pendingLibraryLoad = .init(kind: request.kind, windows: Array(request.windows[index...]))
                 var token = ""
                 var seenTokens: Set<String> = []
                 var batch: [ZoomRecordingMeeting] = []
@@ -256,18 +315,30 @@ public final class RecordingLibraryModel {
                         throw ZoomAccountError.invalidResponse
                     }
                 } while !token.isEmpty
-                var byID = Dictionary(meetings.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
-                for meeting in batch { byID[meeting.id] = meeting }
-                meetings = byID.values.sorted {
-                    $0.startTime == $1.startTime ? $0.id < $1.id : $0.startTime > $1.startTime
+                merge(batch)
+                if oldestLoadedDate == nil || window.from < oldestLoadedDate! {
+                    oldestLoadedDate = window.from
+                    nextWindow = window.previous
                 }
-                oldestLoadedDate = window.from
-                nextWindow = window.previous
             }
+            pendingLibraryLoad = nil
+            if request.kind == .initial { hasLoadedInitial = true }
         } catch is CancellationError {
+            wasCancelled = true
         } catch {
             if generation == expected, !Task.isCancelled { self.error = error.localizedDescription }
         }
+    }
+
+    private func merge(_ batch: [ZoomRecordingMeeting]) {
+        // Missing records are retained: a partial API response is not evidence
+        // of deletion, and selected playback owns its existing immutable snapshot.
+        var byID = Dictionary(meetings.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+        for meeting in batch { byID[meeting.id] = meeting }
+        let merged = byID.values.sorted {
+            $0.startTime == $1.startTime ? $0.id < $1.id : $0.startTime > $1.startTime
+        }
+        if merged != meetings { meetings = merged }
     }
 
     func select(_ meeting: ZoomRecordingMeeting) {
@@ -647,6 +718,12 @@ public final class RecordingLibraryModel {
         search = ""
         error = nil
         isLoading = false
+        isRefreshing = false
+        activeLibraryLoad = nil
+        pendingLibraryLoad = nil
+        let waiters = libraryLoadWaiters
+        libraryLoadWaiters = []
+        for waiter in waiters { waiter.resume(returning: false) }
         hasLoadedInitial = false
         oldestLoadedDate = nil
         nextWindow = nil

@@ -82,6 +82,9 @@ public struct WhooshCommands: Commands {
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(!model.isCalendarConnected || model.isRefreshing || model.isPreview || model.activeCall)
         }
+        CommandGroup(replacing: .help) {
+            Link("Report a Bug", destination: URL(string: "https://github.com/grinich/zooom/issues/new/choose")!)
+        }
         CommandMenu("Meeting") {
             Button(model.meeting.isMicrophoneMuted ? "Unmute microphone" : "Mute microphone") { Task { await model.meeting.setMicrophoneMuted(!model.meeting.isMicrophoneMuted) } }
                 .keyboardShortcut("a", modifiers: [.command, .shift]).disabled(!model.meeting.isConnected || model.meeting.isApplyingControl)

@@ -20,6 +20,8 @@ concurrency:
 jobs:
   release:
     runs-on: macos-26
+    permissions:
+      contents: write
     timeout-minutes: 120
     environment: release
     env:
@@ -36,13 +38,10 @@ jobs:
           persist-credentials: false
       - name: Validate release configuration and tag
         env:
-          GH_TOKEN: ${{ secrets.ZOOOM_RELEASE_TOKEN }}
-          ZOOM_SDK_ASSET_ID: ${{ vars.ZOOM_SDK_ASSET_ID }}
+          GH_TOKEN: ${{ env.ZOOOM_RELEASE_REPOSITORY == github.repository && github.token || secrets.ZOOOM_RELEASE_TOKEN }}
         run: |
-          test -n "$ZOOM_SDK_ASSET_ID"
           test -n "$GH_TOKEN"
           test -n "$ZOOOM_RELEASE_REPOSITORY"
-          test "$ZOOOM_RELEASE_REPOSITORY" != "$GITHUB_REPOSITORY"
           test "$(gh api "repos/$ZOOOM_RELEASE_REPOSITORY" --jq .visibility)" = public
           test "$ZOOOM_UPDATE_FEED_URL" = "https://github.com/$ZOOOM_RELEASE_REPOSITORY/releases/latest/download/appcast.xml"
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
@@ -54,11 +53,11 @@ jobs:
           python3 Scripts/validate-release-version.py
       - name: Download and verify private Zoom SDK
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ZOOM_SDK_READ_TOKEN }}
+          ZOOM_SDK_REPOSITORY: ${{ vars.ZOOM_SDK_REPOSITORY }}
           ZOOM_SDK_ASSET_ID: ${{ vars.ZOOM_SDK_ASSET_ID }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$ZOOM_SDK_ASSET_ID" \
-            -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/zoom-sdk.zip"
+          python3 Scripts/download-zoom-sdk.py "$RUNNER_TEMP/zoom-sdk.zip"
           sdk_path=$(python3 Scripts/prepare-zoom-sdk.py "$RUNNER_TEMP/zoom-sdk.zip" "$RUNNER_TEMP/zoom-sdk")
           echo "WHOOSH_ZOOM_SDK_PATH=$sdk_path" >> "$GITHUB_ENV"
       - name: Resolve locked dependencies and run tests with Zoom SDK
@@ -96,10 +95,12 @@ jobs:
       - name: Publish installers and feed together
         if: github.event_name == 'push' || inputs.publish
         env:
-          GH_TOKEN: ${{ secrets.ZOOOM_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ env.ZOOOM_RELEASE_REPOSITORY == github.repository && github.token || secrets.ZOOOM_RELEASE_TOKEN }}
         run: /bin/bash Scripts/publish-release.sh
-      - name: Remove temporary signing credentials
+      - name: Remove temporary signing credentials and SDK
         if: always()
         run: |
+          rm -f "$RUNNER_TEMP/zoom-sdk.zip"
+          rm -rf "$RUNNER_TEMP/zoom-sdk"
           if [ -n "${ZOOOM_NOTARY_KEYCHAIN:-}" ]; then security delete-keychain "$ZOOOM_NOTARY_KEYCHAIN"; fi
           rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/sparkle-key.txt"

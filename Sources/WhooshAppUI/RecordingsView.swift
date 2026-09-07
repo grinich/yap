@@ -206,7 +206,11 @@ struct RecordingPlayerView: View {
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
             copiedLink = nil
         }
-        .onChange(of: model.selectedMeeting?.id) { _, _ in copiedLink = nil }
+        .onAppear { model.prepareForPresentation() }
+        .onChange(of: model.selectedMeeting?.id) { _, _ in
+            copiedLink = nil
+            model.prepareForPresentation()
+        }
     }
 
     private func playerHeader(_ meeting: ZoomRecordingMeeting, chatWidth: CGFloat) -> some View {
@@ -234,7 +238,7 @@ struct RecordingPlayerView: View {
                     Spacer(minLength: 0)
                 }
                 HStack(spacing: 8) {
-                    if !model.isPreview, !meeting.playableVideoFiles.isEmpty {
+                    if !model.isPreview, model.selectedFile != nil {
                         videoMenu(meeting)
                         speedMenu
                     }
@@ -293,6 +297,14 @@ struct RecordingPlayerView: View {
         VStack(spacing: 0) {
             if model.isPreview {
                 emptyPlayer(title: "Recording preview", subtitle: "These are sample meetings. Exit preview and connect Zoom to watch your own cloud recordings.")
+            } else if model.selectedFile == nil, model.playerWindows[meeting.id] != nil {
+                VStack(spacing: 12) {
+                    Text("Open in a separate window").foregroundStyle(.secondary)
+                    Button("Show player window", systemImage: "arrow.up.right.square") {
+                        model.openPlayerWindow(for: meeting)
+                    }.buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !meeting.playableVideoFiles.isEmpty {
                 ZStack {
                     NativeRecordingPlayer(player: model.player)
@@ -313,19 +325,6 @@ struct RecordingPlayerView: View {
                         }
                         .padding(24).frame(maxWidth: 320)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-                    } else if model.selectedFile == nil {
-                        if model.playerWindows[meeting.id] != nil {
-                            VStack(spacing: 12) {
-                                Text("Open in a separate window").foregroundStyle(.secondary)
-                                Button("Show player window", systemImage: "arrow.up.right.square") {
-                                    model.openPlayerWindow(for: meeting)
-                                }.buttonStyle(.borderedProminent)
-                            }
-                        } else {
-                            Button("Play recording", systemImage: "play.fill") {
-                                if let file = meeting.playableVideoFiles.first { model.play(file) }
-                            }.buttonStyle(.borderedProminent)
-                        }
                     }
                 }
                 .background(WhooshWindowInteractionRegion())

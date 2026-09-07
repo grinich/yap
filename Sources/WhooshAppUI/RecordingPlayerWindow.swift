@@ -44,8 +44,8 @@ final class RecordingPlayerWindowController: NSWindowController, NSWindowDelegat
     }
 
     func windowWillClose(_ notification: Notification) {
-        playback.stopPlayback()
-        playback.chat.clear()
+        // Clear selection too: a closing SwiftUI view must not prepare another player item.
+        playback.clear()
         onClose?()
         onClose = nil
     }

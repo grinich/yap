@@ -162,12 +162,33 @@ public final class RecordingLibraryModel {
 
     public func toggle() {
         if isPresented { dismiss() }
-        else { isPresented = true }
+        else {
+            isPresented = true
+            prepareForPresentation()
+        }
     }
 
     public func dismiss() {
         isPresented = false
-        stopPlayback()
+        suspendPlayback()
+    }
+
+    /// Hiding a view pauses it without discarding the item, seek position, or downloaded fallback.
+    public func suspendPlayback() {
+        pausePlayback()
+        chat.setPlaybackActive(false)
+    }
+
+    /// A selected recording should already have usable native controls when its view appears.
+    /// Recovery stays paused and never competes with a dedicated player for the same meeting.
+    func prepareForPresentation() {
+        guard !isPreview, let meeting = selectedMeeting, playerWindows[meeting.id] == nil else { return }
+        if selectedFile != nil {
+            chat.setPlaybackActive(true)
+            return
+        }
+        guard !isPreparing, playbackError == nil, let file = meeting.playableVideoFiles.first else { return }
+        play(file, resuming: RecordingPlaybackPosition(time: .zero, rate: 0))
     }
 
     func loadInitial(now: Date = .now) async {
@@ -289,7 +310,14 @@ public final class RecordingLibraryModel {
             } else { playback.play(video, resuming: position) }
         }
         let controller = RecordingPlayerWindowController(playback: playback, meeting: meeting)
-        controller.onClose = { [weak self] in self?.playerWindows.removeValue(forKey: meeting.id) }
+        controller.onClose = { [weak self] in
+            guard let self else { return }
+            self.playerWindows.removeValue(forKey: meeting.id)
+            if self.selectedMeeting?.id == meeting.id, self.selectedFile == nil {
+                self.selectedMeeting = nil
+                self.chat.clear()
+            }
+        }
         playerWindows[meeting.id] = controller
         controller.present()
     }

@@ -205,6 +205,8 @@ struct RecordingPlaybackTests {
 
         model.selectFromList(meeting)
         model.selectFromList(meeting)
+        model.prepareForPresentation()
+        model.prepareForPresentation()
 
         #expect(model.player.currentItem === originalItem)
         #expect(abs(model.player.currentTime().seconds - 1.2) < 0.025)
@@ -262,8 +264,13 @@ struct RecordingPlaybackTests {
         let item = child.player.currentItem
         model.selectFromList(meeting)
         model.openPlayerWindow(for: meeting)
+        model.prepareForPresentation()
+        model.dismiss()
+        model.toggle()
         #expect(child.player.currentItem === item)
         #expect(abs(child.player.currentTime().seconds - 1.2) < 0.025)
+        #expect(model.player.currentItem == nil)
+        #expect(model.selectedFile == nil)
     }
 
     @Test func aDownloadedFallbackMovesToItsWindowWithoutRestreamingOrDeletingTheFile() async throws {
@@ -281,6 +288,13 @@ struct RecordingPlaybackTests {
         let fallbackURL = try #require((model.player.currentItem?.asset as? AVURLAsset)?.url)
         model.player.pause()
         #expect(await model.player.seek(to: time(1.2), toleranceBefore: .zero, toleranceAfter: .zero))
+        let fallbackItem = model.player.currentItem
+        model.suspendPlayback()
+        model.prepareForPresentation()
+        #expect(model.player.currentItem === fallbackItem)
+        #expect(abs(model.player.currentTime().seconds - 1.2) < 0.025)
+        #expect(model.player.rate == 0)
+        #expect(FileManager.default.fileExists(atPath: fallbackURL.path))
 
         model.openPlayerWindow(for: meeting)
         let child = try #require(model.playerWindows[meeting.id]?.playback)
@@ -414,7 +428,7 @@ struct RecordingPlaybackTests {
         #expect(model.playbackError == nil)
     }
 
-    @Test func dismissDuringASwitchCannotRestartPlaybackAndReopeningStartsFresh() async throws {
+    @Test func dismissDuringASwitchKeepsItsPositionAndReopensWithUsablePausedControls() async throws {
         let fixture = try await RecordingPlaybackFixture.make()
         defer { fixture.cleanUp() }
         let model = fixture.makeModel()
@@ -425,23 +439,175 @@ struct RecordingPlaybackTests {
         try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
         model.player.pause()
         #expect(await model.player.seek(to: time(1.3), toleranceBefore: .zero, toleranceAfter: .zero))
+        model.setPlaybackSpeed(1.75)
+        model.player.play()
 
         model.play(meeting.files[1])
         model.dismiss()
-        try await Task.sleep(for: .milliseconds(100))
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
         #expect(!model.isPresented)
-        #expect(!model.isPreparing)
+        #expect(model.selectedFile?.id == "view-b")
+        #expect(abs(model.player.currentTime().seconds - 1.3) < 0.05)
+        #expect(model.player.rate == 0)
+        let pausedItem = model.player.currentItem
+
+        model.toggle()
+        model.prepareForPresentation()
+        #expect(model.isPresented)
+        #expect(model.player.currentItem === pausedItem)
+        #expect(model.player.currentItem?.status == .readyToPlay)
+        #expect(model.playbackSpeed == 1.75)
+        #expect(model.player.defaultRate == 1.75)
+        #expect(model.player.rate == 0)
+        #expect(fixture.createdIDs == ["view-a", "view-b"])
+        model.play(meeting.files[0])
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        #expect(abs(model.player.currentTime().seconds - 1.3) < 0.05)
+        #expect(fixture.createdIDs == ["view-a", "view-b"])
+        #expect(model.player.rate == 0)
+        #expect(model.playbackError == nil)
+    }
+
+    @Test func disappearingAndReappearingRetainsTheReadyItemAndPausesAudio() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.player.pause()
+        #expect(await model.player.seek(to: time(0.4), toleranceBefore: .zero, toleranceAfter: .zero))
+        model.setPlaybackSpeed(1.5)
+        model.player.play()
+        let original = model.player.currentItem
+        model.suspendPlayback()
+        let pausedAt = model.player.currentTime().seconds
+        model.prepareForPresentation()
+        model.prepareForPresentation()
+        #expect(model.player.currentItem === original)
+        #expect(model.player.currentItem?.status == .readyToPlay)
+        #expect(model.player.rate == 0)
+        #expect(abs(model.player.currentTime().seconds - pausedAt) < 0.025)
+        #expect(model.playbackSpeed == 1.5)
+        #expect(fixture.createdIDs == ["view-a"])
+        model.player.play()
+        #expect(model.player.rate == 1.5)
+    }
+
+    @Test func presentationRepairsATornDownSelectionOnlyOnceAndKeepsItPaused() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.setPlaybackSpeed(2)
+        model.stopPlayback()
+        #expect(model.selectedMeeting != nil)
+        #expect(model.selectedFile == nil)
+        model.prepareForPresentation()
+        model.prepareForPresentation()
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        #expect(model.selectedFile?.id == "view-a")
+        #expect(model.player.rate == 0)
+        #expect(model.player.defaultRate == 2)
+        #expect(fixture.createdIDs == ["view-a", "view-a"])
+    }
+
+    @Test func hidingDuringADownloadInstallsTheFallbackPausedAndRetainsItForReappearance() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.player.pause()
+        #expect(await model.player.seek(to: time(0.4), toleranceBefore: .zero, toleranceAfter: .zero))
+        model.setPlaybackSpeed(1.5)
+        model.player.play()
+        model.downloadSelected()
+        #expect(model.isDownloading)
+        model.suspendPlayback()
+        try #require(await waitUntil { !model.isDownloading && !model.isPreparing })
+        let fallback = try #require(model.player.currentItem)
+        let url = try #require((fallback.asset as? AVURLAsset)?.url)
+        #expect(fallback.status == .readyToPlay)
+        #expect(model.player.rate == 0)
+        #expect(abs(model.player.currentTime().seconds - 0.4) < 0.05)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        model.prepareForPresentation()
+        #expect(model.player.currentItem === fallback)
+        #expect(model.player.rate == 0)
+        #expect(model.playbackSpeed == 1.5)
+        #expect(fixture.createdIDs == ["view-a"])
+    }
+
+    @Test(arguments: [false, true])
+    func closingADedicatedPlayerClearsOrphanedSelectionWithoutRevivingEitherPlayer(closeAll: Bool) async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        let meeting = fixture.meeting()
+        model.openPlayerWindow(for: meeting)
+        let controller = try #require(model.playerWindows[meeting.id])
+        let child = controller.playback
+        try #require(await waitUntil { !child.isPreparing && child.player.currentItem?.status == .readyToPlay })
+        if closeAll { model.closePlayerWindows() } else { controller.close() }
+        model.prepareForPresentation()
+        child.prepareForPresentation()
+        #expect(model.playerWindows.isEmpty)
+        #expect(model.selectedMeeting == nil)
+        #expect(model.selectedFile == nil)
+        #expect(model.player.currentItem == nil)
+        #expect(child.selectedMeeting == nil)
+        #expect(child.selectedFile == nil)
+        #expect(child.player.currentItem == nil)
+        #expect(child.player.rate == 0)
+        #expect(fixture.createdIDs == ["view-a"])
+    }
+
+    @Test func closingAnotherPlayerWindowLeavesCurrentInlinePlaybackAlone() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        let first = fixture.meeting(id: "first")
+        model.openPlayerWindow(for: first)
+        let controller = try #require(model.playerWindows[first.id])
+        try #require(await waitUntil { !controller.playback.isPreparing })
+        model.selectFromList(fixture.meeting(id: "second"))
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.player.pause()
+        let currentItem = model.player.currentItem
+        controller.close()
+        model.prepareForPresentation()
+        #expect(model.selectedMeeting?.id == "second")
+        #expect(model.player.currentItem === currentItem)
+        #expect(model.player.currentItem?.status == .readyToPlay)
+        #expect(model.playerWindows.isEmpty)
+        #expect(fixture.createdIDs == ["view-a", "view-a"])
+    }
+
+    @Test func clearingWhilePreparingCannotBeReactivatedByPresentationHooks() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel()
+        defer { model.clear() }
+        model.select(fixture.meeting())
+        model.play(fixture.file("view-b"))
+        #expect(model.isPreparing)
+        model.clear()
+        model.prepareForPresentation()
+        model.toggle()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(model.selectedMeeting == nil)
         #expect(model.selectedFile == nil)
         #expect(model.player.currentItem == nil)
         #expect(model.player.rate == 0)
-
-        model.isPresented = true
-        model.play(meeting.files[0])
-        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
-        model.player.pause()
-        #expect(model.player.currentTime().seconds < 0.15)
-        #expect(fixture.createdIDs.filter { $0 == "view-a" }.count == 2)
-        #expect(model.playbackError == nil)
+        #expect(!model.isPreparing)
+        #expect(model.playerWindows.isEmpty)
+        #expect(fixture.createdIDs == ["view-a", "view-b"])
     }
 
     private func time(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 600) }

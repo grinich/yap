@@ -178,6 +178,7 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
             return
         }
         windowPresenter.cancel()
+        model?.recordings.suspendPlayback()
         window.attachedSheet?.orderOut(nil)
         window.orderOut(nil)
     }
@@ -194,6 +195,9 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func mainWindowBecameAvailable(_ notification: Notification) {
         guard notification.object as? NSWindow === model?.sharingPresentation.mainWindow else { return }
+        if let recordings = model?.recordings, recordings.isPresented {
+            recordings.prepareForPresentation()
+        }
         windowPresenter.windowOrActivationChanged()
     }
 
@@ -346,7 +350,7 @@ struct WindowBehavior: NSViewRepresentable {
                 model.showLeaveConfirmation = true
                 return false
             }
-            model.recordings.stopPlayback()
+            model.recordings.suspendPlayback()
             // The menu-bar app keeps one main window. Hiding it directly avoids
             // SwiftUI's close/recreation lifecycle and preserves the window to
             // reopen from the menu bar. Cancel an outstanding reveal first.

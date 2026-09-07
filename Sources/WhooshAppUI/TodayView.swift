@@ -171,7 +171,7 @@ struct TodayView: View {
                 await model.recordings.loadInitial()
             }
         }
-        .onDisappear { model.recordings.stopPlayback() }
+        .onDisappear { model.recordings.suspendPlayback() }
     }
 
     private var windowHeader: some View {

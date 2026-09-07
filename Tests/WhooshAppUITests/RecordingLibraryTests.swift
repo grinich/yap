@@ -24,7 +24,7 @@ struct RecordingLibraryTests {
         #expect(!app.recordings.hasLoadedInitial)
     }
 
-    @Test func previewSelectionNeverRequestsCloudMediaAndDismissStopsThePlayer() async throws {
+    @Test func previewSelectionNeverRequestsCloudMediaAndDismissRetainsTheSelection() async throws {
         let fixture = RecordingLibraryPages(pages: [])
         let model = makeModel(fixture)
         model.enterPreview()
@@ -41,7 +41,10 @@ struct RecordingLibraryTests {
         #expect(await fixture.calls.isEmpty)
         model.dismiss()
         #expect(!model.isPresented)
-        #expect(model.selectedFile == nil)
+        #expect(model.selectedFile == sample.playableVideoFiles.first)
+        model.toggle()
+        #expect(model.isPresented)
+        #expect(model.selectedFile == sample.playableVideoFiles.first)
     }
 
     @Test func startingARecordingLoadsAndOpensItsChatWithoutAToggle() async throws {

@@ -42,6 +42,8 @@ The Developer ID must belong to team `VSVHNQP588`, matching existing Zooom insta
 
 ## First-release acceptance
 
+The **Apple Signing** workflow independently checks the saved GitHub credentials. It runs manually or when its workflow/signing scripts change on a trusted source branch. It uses the same temporary-keychain import as a release, then signs, notarizes, staples, and checks a disposable app with Gatekeeper. This needs no Zoom SDK upload or public distribution repository. It does not publish or install anything. Its report distinguishes successful credential validation from notarization of the actual Zooom/Zoom/Sparkle bundle.
+
 The current personal install predates a configured update feed, so it needs a one-time normal install of the first notarized updater-enabled release. No bundle-ID migration is required for installations already on `com.grinich.zooom`. Older `com.grinich.woosh` builds require the existing explicit migration installer; Sparkle does not change application identity.
 
 Before calling the updater live, install version N from the DMG, publish N+1, and verify manual update, automatic discovery, on-quit installation, relaunch, retained accounts/preferences, call-in-progress veto, offline errors, and denied folder-write access. The GitHub workflow, Apple's notarization service, and an actual N → N+1 installation have **not yet run**. Local checks prove app packaging, signature generation/tamper rejection, and the meeting update gate, not end-to-end delivery.

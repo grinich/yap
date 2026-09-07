@@ -123,10 +123,18 @@ struct RecordingSidebar: View {
                     Text(meeting.topic.isEmpty ? "Untitled meeting" : meeting.topic)
                         .font(.system(size: 12, weight: .medium)).lineLimit(2)
                         .multilineTextAlignment(.leading)
-                    Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                    Text(count == 0 ? "No video available" : "\(meeting.duration) min\(count > 1 ? " · \(count) videos" : "")")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    HStack(spacing: 4) {
+                        Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
+                            .lineLimit(1)
+                        if count > 0 {
+                            Text("· \(meeting.duration) min").fixedSize()
+                        }
+                    }
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    if count == 0 {
+                        Text("No video available")
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    }
                 }
                 Spacer(minLength: 0)
             }

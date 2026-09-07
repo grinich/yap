@@ -12,7 +12,6 @@ class NativeVideoHost: NSView {
 
     private var mount: UInt64 = 0
     private var renderer: NSView?
-    private var preservesRendererSize = false
     private var isDismantled = false
     private var isReconciling = false
     private var lastDeferred: Bool?
@@ -24,11 +23,8 @@ class NativeVideoHost: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
 
-    func setRenderer(_ next: NSView?, preservesSize: Bool = false) {
+    func setRenderer(_ next: NSView?) {
         guard !isDismantled else { return }
-        let resumesNormalSizing = preservesRendererSize && !preservesSize
-        preservesRendererSize = preservesSize
-        if resumesNormalSizing { super.setBoundsSize(frame.size) }
         if renderer !== next {
             releaseRenderer()
             renderer = next
@@ -70,18 +66,9 @@ class NativeVideoHost: NSView {
         // from its attached replacement. A detached owner has no lasting claim.
         if let owner = lease.owner, owner !== self,
            owner.hasUsableAttachment, owner.mount > mount { return }
-        if preservesRendererSize {
-            // PiP scales the existing video surface in AppKit. Resizing the SDK
-            // renderer down to a thumbnail and back can interrupt its frames
-            // and renegotiate resolution even while its subscription survives.
-            let size = lease.renderSize ?? renderer.bounds.size
-            if size.width.isFinite && size.height.isFinite && size.width >= 1 && size.height >= 1,
-               abs(bounds.width - size.width) > 0.001 || abs(bounds.height - size.height) > 0.001 {
-                super.setBoundsSize(size)
-            }
-        } else if bounds.width >= 1 && bounds.height >= 1 {
-            lease.renderSize = bounds.size
-        }
+        // Always deliver the actual viewport to the SDK. Keeping a large
+        // logical bounds rectangle in a tiny host can clip native video layers
+        // instead of scaling them. The renderer and subscription remain alive.
         if lease.owner !== self { lease.owner?.releaseOwnedRenderer() }
         lease.owner = self
         if renderer.superview !== self {
@@ -129,12 +116,11 @@ class NativeVideoHost: NSView {
     }
 
     private func log(_ phase: String) {
-        Self.logger.info("host=\(phase, privacy: .public) mount=\(self.mount) window=\(self.window != nil) usable=\(self.hasUsableAttachment) renderer=\(self.renderer != nil) owned=\(self.renderer?.superview === self) width=\(Double(self.bounds.width)) height=\(Double(self.bounds.height)) displayWidth=\(Double(self.frame.width)) displayHeight=\(Double(self.frame.height)) scaled=\(self.preservesRendererSize)")
+        Self.logger.info("host=\(phase, privacy: .public) mount=\(self.mount) window=\(self.window != nil) usable=\(self.hasUsableAttachment) renderer=\(self.renderer != nil) owned=\(self.renderer?.superview === self) width=\(Double(self.bounds.width)) height=\(Double(self.bounds.height)) displayWidth=\(Double(self.frame.width)) displayHeight=\(Double(self.frame.height))")
     }
 }
 
 @MainActor
 private final class NativeVideoLease {
     weak var owner: NativeVideoHost?
-    var renderSize: NSSize?
 }

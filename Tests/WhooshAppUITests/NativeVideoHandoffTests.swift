@@ -5,68 +5,28 @@ import Testing
 @Suite("Native video branch handoff")
 @MainActor
 struct NativeVideoHandoffTests {
-    @Test func pictureInPictureScalesTheExistingSurfaceWithoutChangingRendererGeometry() {
-        let video = NSView()
+    @Test func pictureInPictureUsesActualViewportAndKeepsRendererAcrossResizeAndReturn() {
+        let video = MoveCountingVideo()
         let canvas = AttachedVideoHost(frame: NSRect(x: 0, y: 0, width: 1280, height: 720))
         canvas.setRenderer(video)
-        let originalBounds = video.bounds
-        let pip = AttachedVideoHost(frame: NSRect(x: 0, y: 0, width: 112, height: 63))
-        pip.setRenderer(video, preservesSize: true)
+        let pip = AttachedVideoHost(frame: NSRect(x: 0, y: 0, width: 384, height: 216))
+        pip.setRenderer(video)
         #expect(video.superview === pip)
-        #expect(sameSize(video.bounds.size, originalBounds.size))
-        #expect(pip.frame.size == NSSize(width: 112, height: 63))
-        #expect(pip.convert(video.bounds, from: video) == pip.bounds)
-        #expect(sameSize(pip.convert(pip.bounds, to: nil).size, pip.frame.size))
+        #expect(video.bounds.size == pip.frame.size)
         canvas.dismantle()
-        pip.setFrameSize(NSSize(width: 160, height: 90))
-        #expect(sameSize(video.bounds.size, originalBounds.size))
+        let moves = video.moves
+        for size in [NSSize(width: 640, height: 360), NSSize(width: 216, height: 384)] {
+            pip.setFrameSize(size)
+            #expect(video.bounds.size == size)
+            #expect(pip.bounds.size == size)
+            #expect(video.moves == moves)
+        }
         pip.dismantle()
         let restored = AttachedVideoHost(frame: NSRect(x: 0, y: 0, width: 1280, height: 720))
         restored.setRenderer(video)
         #expect(video.superview === restored)
-        #expect(sameSize(video.bounds.size, originalBounds.size))
+        #expect(video.bounds.size == restored.frame.size)
         restored.dismantle()
-    }
-
-    @Test func repeatedPictureInPictureTripsRetainTheLatestCanvasSizePerVideo() {
-        let video = NSView()
-        for size in [NSSize(width: 640, height: 360), NSSize(width: 1280, height: 720)] {
-            let canvas = AttachedVideoHost(frame: NSRect(origin: .zero, size: size))
-            canvas.setRenderer(video)
-            let pip = AttachedVideoHost(frame: NSRect(x: 0, y: 0, width: 112, height: 63))
-            pip.setRenderer(video, preservesSize: true)
-            canvas.setRenderer(video) // A late main-window update cannot resize PiP.
-            #expect(video.superview === pip)
-            #expect(sameSize(video.bounds.size, size))
-            canvas.dismantle()
-            pip.dismantle()
-        }
-    }
-
-    @Test func cameraEnabledInPictureInPictureUsesItsInitialSurfaceThenAdoptsMainSize() {
-        let video = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 180))
-        let pip = AttachedVideoHost(frame: NSRect(x: 0, y: 0, width: 112, height: 63))
-        pip.setRenderer(video, preservesSize: true)
-        #expect(sameSize(video.bounds.size, NSSize(width: 320, height: 180)))
-        pip.dismantle()
-        let main = AttachedVideoHost(frame: NSRect(x: 0, y: 0, width: 960, height: 540))
-        main.setRenderer(video)
-        #expect(video.bounds.size == main.bounds.size)
-        main.dismantle()
-    }
-
-    @Test func switchingScaledHostToAnotherVideoDoesNotReuseTheFirstVideosSize() {
-        let first = NSView(frame: NSRect(x: 0, y: 0, width: 1280, height: 720))
-        let second = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 180))
-        let pip = AttachedVideoHost(frame: NSRect(x: 0, y: 0, width: 112, height: 63))
-        pip.setRenderer(first, preservesSize: true)
-        pip.setRenderer(second, preservesSize: true)
-        #expect(first.superview == nil)
-        #expect(sameSize(second.bounds.size, NSSize(width: 320, height: 180)))
-        #expect(pip.frame.size == NSSize(width: 112, height: 63))
-        pip.setRenderer(second)
-        #expect(second.bounds.size == pip.frame.size)
-        pip.dismantle()
     }
 
     @Test func lateGalleryUpdateCannotStealFocusedRenderer() {

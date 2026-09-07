@@ -1,5 +1,7 @@
 # Connect Whoosh to real Zoom meetings
 
+**September 7 update:** the bundle ID is now `com.grinich.zooom`; the current identity migration is documented in [Bundle Identity](Bundle-Identity.md). The Whoosh identity and launch evidence below are historical.
+
 **Final installed checkpoint — September 6, 2026:** 247 automated tests passed. The final Developer ID build loaded saved accounts and hosted without permission prompts. A native Zoom second endpoint received the selected animated test window; minimizing presented the PiP, handle, and chat. Stop sharing ended the receiver share, restored the main window onscreen, and removed chat. Both endpoints then left normally and companion panels closed. Native synthetic QA verified drag and pointer fade. Persistent physical foreground activation under CUA, repeated live renderer transitions, and full-display panel exclusion remain unverified. The 200 ms renderer handoff passed native fixtures; this final live sequence logged detach-pending but did not log handoff-preserved. See [sharing companions](Sharing-Companions.md) for current evidence. Earlier records below retain their original test boundaries.
 
 **Status: active integration testing.** The official Apple silicon Meeting SDK **7.1.5 (84750)** is downloaded under `Vendor/Zoom/zoom-sdk-macos-7.1.5.84750/ZoomSDK`. The Objective-C bridge and Swift `ZoomMeetingDriver` compile against those actual headers, and the SDK-enabled app launches.

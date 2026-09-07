@@ -63,6 +63,7 @@ public final class WhooshModel {
     public var meeting: MeetingCoordinator
     public let sharingPresentation = WhooshSharingPresentation()
     public let zoomConnection: ZoomConnectionModel
+    public let recordings: RecordingLibraryModel
     public private(set) var events: [CalendarEvent] = []
     public private(set) var calendars: [GoogleCalendar] = []
     public var selectedCalendarIDs: Set<String> = []
@@ -87,7 +88,10 @@ public final class WhooshModel {
     public var error: String?
     public var selectedEvent: CalendarEvent?
     public var sidebar: MeetingSidebar?
-    public var focusedParticipantID: String?
+    public var focusedParticipantID: String? {
+        get { meeting.pinnedParticipantID }
+        set { meeting.setPinnedParticipant(newValue) }
+    }
     /// Zero is the picker’s “Show all” selection, not a zero-sized page.
     public var gridLimit: Int { meeting.showsAllParticipants ? 0 : meeting.pageSize }
     public var previewPeople = 6
@@ -131,6 +135,9 @@ public final class WhooshModel {
         self.reminderMinutes = max(1, preferences.integer(forKey: "reminderMinutes") == 0 ? 2 : preferences.integer(forKey: "reminderMinutes"))
         let zoomConnection = zoomConnection ?? ZoomConnectionModel()
         self.zoomConnection = zoomConnection
+        let recordings = RecordingLibraryModel(client: zoomConnection.client)
+        self.recordings = recordings
+        zoomConnection.onAccountWillChange = { [weak recordings] in recordings?.clear() }
         let liveMeeting = meeting ?? MeetingCoordinator(driver: makeZoomMeetingDriver(accountClient: zoomConnection.client))
         self.meeting = liveMeeting
         self.liveMeeting = liveMeeting
@@ -141,7 +148,10 @@ public final class WhooshModel {
         self.loadGoogleConfiguration = loadGoogleConfiguration ?? WhooshConfigurationStore.loadGoogle
         self.makeConfiguredCalendarClient = makeConfiguredCalendarClient ?? { Self.makeCalendarClient(configuration: $0) }
         self.selectedCalendarIDs = Set(preferences.stringArray(forKey: "selectedCalendarIDs") ?? [])
-        if preview { enterPreview() }
+        if preview {
+            enterPreview()
+            if ProcessInfo.processInfo.arguments.contains("--recordings-preview") { recordings.isPresented = true }
+        }
     }
 
     public var googleConfigured: Bool { calendarClient.isConfigured }
@@ -638,6 +648,7 @@ public final class WhooshModel {
         selectedEvent = nil; joinLink = ""; showJoinSheet = false
         invalidateCalendarOperations()
         isPreview = true
+        recordings.enterPreview()
         meeting = MeetingCoordinator(driver: DemoMeetingDriver(participantCount: previewPeople))
         events = Self.sampleEvents(now: .now)
     }
@@ -647,6 +658,7 @@ public final class WhooshModel {
         invalidateCalendarOperations()
         selectedEvent = nil; joinLink = ""; showJoinSheet = false
         isPreview = false
+        recordings.clear()
         meeting = liveMeeting
         events = liveCalendarEvents.filter { selectedCalendarIDs.contains($0.calendarID) }
         liveCalendarEvents = []

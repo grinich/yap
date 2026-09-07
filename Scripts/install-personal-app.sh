@@ -11,7 +11,7 @@ WHOOSH_PREVIOUS_PATH=""
 WHOOSH_STAGE=""
 WHOOSH_COMMITTED=0
 WHOOSH_MIGRATE=0
-WHOOSH_BUNDLE_ID="com.grinich.woosh"
+WHOOSH_BUNDLE_ID="com.grinich.zooom"
 WHOOSH_TEAM_ID="VSVHNQP588"
 WHOOSH_MIGRATION_IDENTITY="9E5ACA63C3AA07131DF1644F56AC1C9EAA6E794F"
 WHOOSH_LEGACY_REQUIREMENT='identifier "app.whoosh.personal" and certificate leaf = H"b2a226828a24564805a129b57b95be93784191f2"'
@@ -19,16 +19,26 @@ WHOOSH_LEGACY_REQUIREMENT='identifier "app.whoosh.personal" and certificate leaf
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 if [[ $# -eq 1 && "$1" == --migrate-from-personal ]]; then
     WHOOSH_MIGRATE=1
+elif [[ $# -eq 1 && "$1" == --migrate-from-woosh ]]; then
+    WHOOSH_MIGRATE=2
 elif [[ $# -ne 0 ]]; then
-    fail 'Usage: install-personal-app.sh [--migrate-from-personal]'
+    fail 'Usage: install-personal-app.sh [--migrate-from-personal | --migrate-from-woosh]'
 fi
 
 require_stopped() {
-    if /usr/bin/pgrep -x Whoosh >/dev/null; then
-        fail 'Quit Zooom (or the previous Whoosh version) before installing or updating it.'
-    else
-        [[ $? -eq 1 ]] || fail 'Could not check whether the app is running.'
-    fi
+    local matching_pids lookup_status process_id executable
+    matching_pids="$(/usr/bin/pgrep -x Whoosh)" && lookup_status=0 || lookup_status=$?
+    [[ "$lookup_status" -eq 1 ]] && return 0
+    [[ "$lookup_status" -eq 0 ]] || fail 'Could not check whether the app is running.'
+    while IFS= read -r process_id; do
+        executable="$(/bin/ps -p "$process_id" -o comm=)" || fail 'Could not inspect a Zooom process. Retry the update.'
+        # Isolated previews share the executable name. Only the installed
+        # bundle being replaced (or migrated) must be stopped.
+        case "$executable" in
+            "$WHOOSH_DESTINATION/"*|"$WHOOSH_PREVIOUS_NAME/"*)
+                fail 'Quit the installed Zooom app before installing or updating it.' ;;
+        esac
+    done <<< "$matching_pids"
 }
 
 WHOOSH_IDENTITY="$(python3 "$WHOOSH_ROOT/Scripts/resolve-signing-identity.py" "$WHOOSH_ROOT")"
@@ -38,6 +48,8 @@ WHOOSH_IDENTITY="$(printf '%s' "$WHOOSH_IDENTITY" | /usr/bin/tr '[:lower:]' '[:u
 # normal designated requirement stable when a Developer ID certificate renews.
 WHOOSH_STANDARD_REQUIREMENT="$(/usr/bin/csreq -r "=identifier \"$WHOOSH_BUNDLE_ID\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$WHOOSH_TEAM_ID\"" -t)"
 WHOOSH_REQUIREMENT="$WHOOSH_STANDARD_REQUIREMENT and certificate leaf = H\"$WHOOSH_IDENTITY\""
+WHOOSH_PREVIOUS_BUNDLE_ID="com.grinich.woosh"
+WHOOSH_PREVIOUS_REQUIREMENT="$(/usr/bin/csreq -r "=identifier \"$WHOOSH_PREVIOUS_BUNDLE_ID\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$WHOOSH_TEAM_ID\"" -t)"
 if [[ "$WHOOSH_MIGRATE" -eq 1 ]]; then
     [[ "$WHOOSH_IDENTITY" == "$WHOOSH_MIGRATION_IDENTITY" ]] || fail 'The one-time migration requires the explicitly approved Developer ID certificate.'
 fi
@@ -64,7 +76,7 @@ verify_destination() {
     WHOOSH_PREVIOUS_PATH=""
     if [[ -e "$WHOOSH_DESTINATION" || -L "$WHOOSH_DESTINATION" ]]; then
         [[ ! -e "$WHOOSH_PREVIOUS_NAME" && ! -L "$WHOOSH_PREVIOUS_NAME" ]] || fail 'Both ~/Applications/Zooom.app and Whoosh.app exist. Resolve the duplicate before updating.'
-        [[ "$WHOOSH_MIGRATE" -eq 0 ]] || fail 'The one-time personal identity migration only applies to ~/Applications/Whoosh.app.'
+        [[ "$WHOOSH_MIGRATE" -ne 1 ]] || fail 'The one-time personal identity migration only applies to ~/Applications/Whoosh.app.'
         WHOOSH_PREVIOUS_PATH="$WHOOSH_DESTINATION"
     elif [[ -e "$WHOOSH_PREVIOUS_NAME" || -L "$WHOOSH_PREVIOUS_NAME" ]]; then
         WHOOSH_PREVIOUS_PATH="$WHOOSH_PREVIOUS_NAME"
@@ -73,6 +85,9 @@ verify_destination() {
         if [[ "$WHOOSH_MIGRATE" -eq 1 ]]; then
             verify_bundle "$WHOOSH_PREVIOUS_PATH" app.whoosh.personal "$WHOOSH_LEGACY_REQUIREMENT"
             [[ "$(designated_requirement "$WHOOSH_PREVIOUS_PATH")" == "$WHOOSH_LEGACY_REQUIREMENT" ]] || fail 'The existing app is not the approved original personal identity.'
+        elif [[ "$WHOOSH_MIGRATE" -eq 2 ]]; then
+            verify_bundle "$WHOOSH_PREVIOUS_PATH" "$WHOOSH_PREVIOUS_BUNDLE_ID" "$WHOOSH_PREVIOUS_REQUIREMENT"
+            [[ "$(designated_requirement "$WHOOSH_PREVIOUS_PATH")" == "$WHOOSH_PREVIOUS_REQUIREMENT" ]] || fail 'The existing app is not the expected Apple Developer ID Whoosh identity.'
         else
             # Validate the existing build against the source's stable Apple/team
             # requirement, allowing a configured certificate renewal in this team.
@@ -81,6 +96,8 @@ verify_destination() {
         fi
     elif [[ "$WHOOSH_MIGRATE" -eq 1 ]]; then
         fail 'The one-time migration requires the original personal app at ~/Applications/Whoosh.app.'
+    elif [[ "$WHOOSH_MIGRATE" -eq 2 ]]; then
+        fail 'The bundle migration requires an existing com.grinich.woosh app.'
     fi
 }
 

@@ -1,5 +1,11 @@
 import Foundation
 
+public enum MeetingLayout: String, CaseIterable, Sendable {
+    case gallery, activeSpeaker
+    public var title: String { self == .gallery ? "Gallery View" : "Active Speaker" }
+    public var symbol: String { self == .gallery ? "square.grid.2x2" : "rectangle.inset.filled" }
+}
+
 public enum MeetingStatus: String, Sendable, Equatable {
     case idle, connecting, waitingForHost, waitingRoom, inMeeting, reconnecting, leaving, failed
 
@@ -24,6 +30,32 @@ public enum MeetingStatus: String, Sendable, Equatable {
     }
 }
 
+/// A local image supplied by the Meeting SDK. The revision changes even when
+/// Zoom replaces the image at the same path during a meeting.
+public struct MeetingAvatar: Sendable, Hashable {
+    public let path: String
+    public let revision: Int
+
+    public init?(path: String, revision: Int = 0) {
+        guard path.hasPrefix("/"), !path.hasPrefix("//"), !path.contains("\0") else { return nil }
+        self.path = path
+        self.revision = revision
+    }
+}
+
+public struct MeetingVideoSize: Sendable, Equatable {
+    public let width: Double
+    public let height: Double
+    public var aspectRatio: Double { width / height }
+
+    public init?(width: Double, height: Double) {
+        guard width.isFinite, height.isFinite, (1...16_384).contains(width),
+              (1...16_384).contains(height), (0.125...8).contains(width / height) else { return nil }
+        self.width = width
+        self.height = height
+    }
+}
+
 public struct MeetingParticipant: Identifiable, Sendable, Equatable {
     public let id: String
     public var name: String
@@ -33,10 +65,14 @@ public struct MeetingParticipant: Identifiable, Sendable, Equatable {
     public var isCameraEnabled: Bool
     public var isSpeaking: Bool
     public let avatarSeed: Int
+    public var avatar: MeetingAvatar?
+    public var videoSize: MeetingVideoSize?
+    public var tileAspectRatio: Double { isCameraEnabled ? videoSize?.aspectRatio ?? 16 / 9 : 16 / 9 }
 
     public init(id: String, name: String, isSelf: Bool = false, isHost: Bool = false,
                 isMuted: Bool = true, isCameraEnabled: Bool = false,
-                isSpeaking: Bool = false, avatarSeed: Int = 0) {
+                isSpeaking: Bool = false, avatarSeed: Int = 0, avatar: MeetingAvatar? = nil,
+                videoSize: MeetingVideoSize? = nil) {
         self.id = id
         self.name = name
         self.isSelf = isSelf
@@ -45,6 +81,8 @@ public struct MeetingParticipant: Identifiable, Sendable, Equatable {
         self.isCameraEnabled = isCameraEnabled
         self.isSpeaking = isSpeaking
         self.avatarSeed = avatarSeed
+        self.avatar = avatar
+        self.videoSize = videoSize
     }
 
     public var initials: String {

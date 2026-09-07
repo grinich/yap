@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      WHOOSH_ZOOM_SDK_PATH: /tmp/zooom-ci-without-proprietary-sdk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve locked dependencies
+        run: swift package resolve --force-resolved-versions
+      - name: Test application and release safety
+        run: |
+          /bin/bash Scripts/test.sh
+          python3 -m unittest discover -s Scripts/tests -v
+          python3 Scripts/test-update-signatures.py
+      - name: Build standalone app and validate nested signatures
+        env:
+          WHOOSH_SIGNING_IDENTITY: '-'
+        run: /bin/bash Scripts/build-app.sh release

@@ -1,16 +1,20 @@
 import SwiftUI
 import WhooshAppUI
 import WhooshSystem
+import WhooshUpdates
 import AppIntents
 
 @main
 struct WhooshApplication: App {
     @NSApplicationDelegateAdaptor(WhooshApplicationDelegate.self) private var delegate
     @State private var model: WhooshModel
+    @StateObject private var updater: ZooomUpdater
 
     init() {
         WhooshPreferenceMigration.migrateStandardPreferencesIfNeeded()
-        _model = State(initialValue: WhooshModel())
+        let model = WhooshModel()
+        _model = State(initialValue: model)
+        _updater = StateObject(wrappedValue: ZooomUpdater(isMeetingActive: { model.activeCall }))
     }
 
     var body: some Scene {
@@ -21,7 +25,10 @@ struct WhooshApplication: App {
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
-        .commands { WhooshCommands(model: model) }
+        .commands {
+            WhooshCommands(model: model)
+            ZooomUpdateCommands(updater: updater, meetingActive: model.activeCall)
+        }
 
         Settings { WhooshSettingsView(model: model) }
 

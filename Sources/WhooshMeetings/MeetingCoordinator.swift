@@ -24,6 +24,10 @@ public final class MeetingCoordinator {
     public private(set) var lastError: String?
     public private(set) var sessionID: UUID?
     public private(set) var pageIndex = 0
+    public private(set) var layout: MeetingLayout = .gallery
+    public private(set) var pinnedParticipantID: String?
+    public private(set) var activeSpeakerID: String?
+    private var galleryOrder: [String]?
     public private(set) var showsAllParticipants = false
     private var limitedPageSize = 100
     /// “Show all” follows the roster; this layout choice does not assert that
@@ -52,11 +56,36 @@ public final class MeetingCoordinator {
     public var selectedReceivedShare: ReceivedMeetingShare? {
         receivedShares.first { $0.id == selectedReceivedShareID }
     }
-    public var pageCount: Int { max(1, (participants.count + pageSize - 1) / pageSize) }
+    public var presentationParticipant: MeetingParticipant? {
+        let identifier = pinnedParticipantID ?? (layout == .activeSpeaker ? activeSpeakerID : nil)
+        return participants.first { $0.id == identifier }
+    }
+    public var oneToOneParticipants: (local: MeetingParticipant, remote: MeetingParticipant)? {
+        guard selectedReceivedShareID == nil, participants.count == 2,
+              let local = participants.first(where: \.isSelf),
+              let remote = participants.first(where: { !$0.isSelf }),
+              pinnedParticipantID != local.id else { return nil }
+        return (local, remote)
+    }
+    public var pageCount: Int {
+        layout == .activeSpeaker || pinnedParticipantID != nil || oneToOneParticipants != nil ? 1 : max(1, (participants.count + pageSize - 1) / pageSize)
+    }
+    /// Local to this meeting; never changes Zoom's roster or anyone else's view.
+    public var galleryParticipants: [MeetingParticipant] {
+        guard let galleryOrder else { return participants }
+        let byID = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+        return galleryOrder.compactMap { byID[$0] }
+    }
     public var visibleParticipants: [MeetingParticipant] {
+        if let pair = oneToOneParticipants { return [pair.remote, pair.local] }
+        if let primary = presentationParticipant {
+            // Keep subscriptions aligned with the large tile and its thumbnail
+            // strip, including a speaker outside the former gallery page.
+            return [primary] + participants.filter { $0.id != primary.id }.prefix(6)
+        }
         let start = min(pageIndex * pageSize, participants.count)
         let end = min(start + pageSize, participants.count)
-        return Array(participants[start..<end])
+        return Array(galleryParticipants[start..<end])
     }
 
     public func join(url: URL, displayName: String, title: String = "Zoom meeting") async {
@@ -331,6 +360,61 @@ public final class MeetingCoordinator {
 
     public func dismissError() { lastError = nil }
 
+    public func setLayout(_ layout: MeetingLayout) {
+        self.layout = layout
+        pinnedParticipantID = nil
+        pageIndex = 0
+        reconcileActiveSpeaker()
+        selectReceivedShare(nil)
+        updateVisibleSubscriptions()
+    }
+
+    /// Insert at the target's current slot, shifting the intervening tiles.
+    /// A drag from an ended meeting must not reorder a replacement meeting.
+    @discardableResult
+    public func moveGalleryParticipant(_ identifier: String, to targetID: String, sessionID expectedSessionID: UUID) -> Bool {
+        guard sessionID == expectedSessionID, isConnected, layout == .gallery,
+              pinnedParticipantID == nil, selectedReceivedShareID == nil,
+              oneToOneParticipants == nil else { return false }
+        var order = galleryParticipants.map(\.id)
+        guard let source = order.firstIndex(of: identifier), let target = order.firstIndex(of: targetID),
+              source != target else { return false }
+        order.insert(order.remove(at: source), at: target)
+        galleryOrder = order
+        updateVisibleSubscriptions()
+        return true
+    }
+
+    private func reconcileGalleryOrder() {
+        guard let galleryOrder else { return }
+        let present = Set(participants.map(\.id))
+        var retained = galleryOrder.filter { present.contains($0) }
+        let known = Set(retained)
+        retained.append(contentsOf: participants.lazy.map(\.id).filter { !known.contains($0) })
+        self.galleryOrder = retained
+    }
+
+    public func setPinnedParticipant(_ identifier: String?) {
+        pinnedParticipantID = identifier.flatMap { id in participants.contains { $0.id == id } ? id : nil }
+        pageIndex = 0
+        if pinnedParticipantID != nil { selectReceivedShare(nil) }
+        updateVisibleSubscriptions()
+    }
+
+    private func reconcileActiveSpeaker() {
+        if let pinnedParticipantID, !participants.contains(where: { $0.id == pinnedParticipantID }) {
+            self.pinnedParticipantID = nil
+        }
+        // Like a conversation view, show the other participants while they are
+        // present; keep self available in the strip and as the solo fallback.
+        let others = participants.filter { !$0.isSelf }
+        let candidates = others.isEmpty ? participants : others
+        let current = candidates.first { $0.id == activeSpeakerID }
+        if let current, current.isSpeaking && !current.isMuted { return }
+        activeSpeakerID = candidates.first(where: { $0.isSpeaking && !$0.isMuted })?.id
+            ?? current?.id ?? candidates.first(where: \.isCameraEnabled)?.id ?? candidates.first?.id
+    }
+
     public func setPageSize(_ size: Int) {
         showsAllParticipants = false
         limitedPageSize = max(1, min(size, 1_000))
@@ -382,6 +466,8 @@ public final class MeetingCoordinator {
         case .participants(let updated):
             var seen: Set<String> = []
             participants = updated.filter { seen.insert($0.id).inserted }
+            reconcileGalleryOrder()
+            reconcileActiveSpeaker()
             if let local = participants.first(where: \.isSelf) {
                 isHost = local.isHost
                 isMicrophoneMuted = local.isMuted
@@ -445,6 +531,9 @@ public final class MeetingCoordinator {
         sessionID = nil
         status = .idle
         participants = []
+        galleryOrder = nil
+        pinnedParticipantID = nil
+        activeSpeakerID = nil
         chatMessages = []
         chatLegalNotice = nil
         meetingIndicators = []

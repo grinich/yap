@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 import WhooshSystem
 
-private let whooshMainWindowAttached = Notification.Name("com.grinich.woosh.main-window-attached")
+private let whooshMainWindowAttached = Notification.Name("com.grinich.zooom.main-window-attached")
+private let whooshMainWindowWillHide = Notification.Name("com.grinich.zooom.main-window-will-hide")
 
 public struct WhooshMenuBarView: View {
     @Bindable var model: WhooshModel
@@ -54,6 +55,12 @@ public struct WhooshCommands: Commands {
             Button("Start a meeting") { openWindow(id: "main"); Task { await model.hostMeeting() } }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(model.activeCall)
         }
         CommandGroup(after: .toolbar) {
+            Button(model.recordings.isPresented ? "Hide Recordings" : "Show Recordings") {
+                openWindow(id: "main")
+                model.recordings.toggle()
+            }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(model.activeCall)
             Button("Refresh Calendar") { Task { await model.refresh() } }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(!model.isCalendarConnected || model.isRefreshing || model.isPreview || model.activeCall)
@@ -132,6 +139,7 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
         if !isObservingActions {
             NotificationCenter.default.addObserver(self, selector: #selector(systemActionRequested), name: WhooshSystemActions.notificationName, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(mainWindowAttached), name: whooshMainWindowAttached, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(mainWindowWillHide), name: whooshMainWindowWillHide, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(mainWindowBecameAvailable), name: NSWindow.didBecomeKeyNotification, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(mainWindowBecameAvailable), name: NSWindow.didDeminiaturizeNotification, object: nil)
             isObservingActions = true
@@ -166,6 +174,11 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
         windowPresenter.windowOrActivationChanged()
     }
 
+    @objc private func mainWindowWillHide(_ notification: Notification) {
+        guard notification.object as? WhooshModel === model else { return }
+        windowPresenter.cancel()
+    }
+
     @objc private func mainWindowBecameAvailable(_ notification: Notification) {
         guard notification.object as? NSWindow === model?.sharingPresentation.mainWindow else { return }
         windowPresenter.windowOrActivationChanged()
@@ -185,6 +198,9 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     public func applicationWillTerminate(_ notification: Notification) {
+        model?.recordings.stopPlayback()
+        model?.recordings.closePlayerWindows()
+        model?.recordings.chat.clear()
         windowPresenter.cancel()
         sharingOverlayController?.stop()
         menuBarController?.stop()
@@ -286,10 +302,8 @@ struct WindowBehavior: NSViewRepresentable {
             }
         }
         @objc private func closeWindow() {
-            guard let window, windowShouldClose(window) else { return }
-            // This replacement control must not depend on AppKit's hidden
-            // standard close button. Keep the delegate veto and close lifecycle.
-            window.close()
+            guard let window else { return }
+            _ = windowShouldClose(window)
         }
         func attach(to window: NSWindow) {
             guard window.delegate !== self else { return }
@@ -315,8 +329,17 @@ struct WindowBehavior: NSViewRepresentable {
             return super.forwardingTarget(for: selector)
         }
         func windowShouldClose(_ sender: NSWindow) -> Bool {
-            guard model.activeCall else { return originalDelegate?.windowShouldClose?(sender) ?? true }
-            model.showLeaveConfirmation = true
+            if model.activeCall {
+                model.showLeaveConfirmation = true
+                return false
+            }
+            model.recordings.stopPlayback()
+            // The menu-bar app keeps one main window. Hiding it directly avoids
+            // SwiftUI's close/recreation lifecycle and preserves the window to
+            // reopen from the menu bar. Cancel an outstanding reveal first.
+            NotificationCenter.default.post(name: whooshMainWindowWillHide, object: model)
+            sender.attachedSheet?.orderOut(nil)
+            sender.orderOut(nil)
             return false
         }
     }

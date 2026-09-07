@@ -15,6 +15,8 @@ public final class ZoomConnectionModel {
     public private(set) var hasLoadedStatus = false
     public private(set) var statusError: String?
     public var error: String?
+    public private(set) var accountRevision = UUID()
+    @ObservationIgnored var onAccountWillChange: (() -> Void)?
     // Reading saved status is separate from a mutation. A background refresh
     // must not prevent an already-connected account from joining a meeting.
     public var isBusy: Bool { isConnecting || isUpdatingConfiguration }
@@ -139,11 +141,21 @@ public final class ZoomConnectionModel {
         } catch is CancellationError {
         } catch {
             guard operationID == currentOperation, !Task.isCancelled else { return }
-            self.error = error.localizedDescription
+            let disconnectError = error.localizedDescription
+            // Removing the active vault record can succeed before cleanup of
+            // an older Keychain item fails. Reconcile the saved connection so
+            // the user can sign in again, while still reporting that failure.
+            await refreshStatus(for: currentOperation)
+            guard operationID == currentOperation, !Task.isCancelled else { return }
+            self.error = disconnectError
         }
     }
 
     private func beginOperation() -> UUID {
+        // Invalidate account-owned recordings synchronously. A fast mutation may
+        // finish between SwiftUI frames, so observing only isBusy can miss it.
+        onAccountWillChange?()
+        accountRevision = UUID()
         operationID = UUID()
         statusRequestID = UUID()
         isLoadingStatus = false

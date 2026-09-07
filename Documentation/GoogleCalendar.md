@@ -1,5 +1,7 @@
 # Google Calendar connection
 
+**September 7 update:** the bundle ID is now `com.grinich.zooom`; the current identity migration is documented in [Bundle Identity](Bundle-Identity.md). The Whoosh identity and launch evidence below are historical.
+
 Whoosh is now installed with the requested `com.grinich.woosh` bundle ID and existing Apple-issued Developer ID Team `VSVHNQP588`. First-launch background configuration loading is waiting for normal macOS authorization of the existing credential vault. Real account loading and calendar refresh under this new identity are not yet verified. The live results below belong to the previous identity. Credential service names remain compatible, and their existing protection is preserved. [Credential access status](Credential-Storage.md).
 
 Whoosh reads selected Google calendars directly from the Mac. It does not create events, send invitations, change RSVPs, or send calendar data to a Whoosh server. This integration uses the owner's Google desktop OAuth configuration.

@@ -20,7 +20,7 @@ public struct WhooshRootView: View {
             if model.activeCall { MeetingView(model: model) }
             else { TodayView(model: model) }
         }
-        .frame(minWidth: 320, minHeight: 240)
+        .frame(minWidth: model.recordings.isPresented && !model.activeCall ? 700 : 320, minHeight: 240)
         .tint(WhooshTheme.accent)
         .navigationTitle(windowTitle)
         .background {
@@ -34,17 +34,19 @@ public struct WhooshRootView: View {
         .containerBackground(windowBackground, for: .window)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar(removing: .title)
-        .toolbar {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.isPreview {
-                ToolbarItem(placement: .principal) {
+                HStack {
                     Text("Preview · no live connection")
                         .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if !model.activeCall {
+                        Button("Exit preview") { Task { await model.exitPreview() } }
+                            .controlSize(.small)
+                    }
                 }
-            }
-            if !model.activeCall, model.isPreview {
-                ToolbarItem(placement: .secondaryAction) {
-                    Button("Exit preview") { Task { await model.exitPreview() } }
-                }
+                .padding(.horizontal, 18).padding(.vertical, 10)
+                .background(.thinMaterial)
             }
         }
         .onChange(of: model.showSettings, initial: true) { _, requested in
@@ -52,6 +54,19 @@ public struct WhooshRootView: View {
             model.showSettings = false
             openSettings()
             NSApplication.shared.activate()
+        }
+        .onChange(of: model.activeCall) { _, active in
+            if active { model.recordings.dismiss() }
+        }
+        .onChange(of: model.zoomConnection.isBusy) { _, busy in
+            if !busy, model.recordings.isPresented, !model.isPreview {
+                Task { await model.recordings.loadInitial() }
+            }
+        }
+        .onChange(of: model.zoomConnection.accountRevision) {
+            if !model.zoomConnection.isBusy, model.recordings.isPresented, !model.isPreview {
+                Task { await model.recordings.loadInitial() }
+            }
         }
         .sheet(isPresented: $model.showJoinSheet) { JoinMeetingSheet(model: model) }
         .confirmationDialog(model.meeting.isHost ? "Leave or end this meeting?" : "Leave this meeting?", isPresented: $model.showLeaveConfirmation, titleVisibility: .visible) {
@@ -87,12 +102,14 @@ public struct WhooshRootView: View {
             let title = model.meeting.meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             return title.isEmpty ? "Meeting" : title
         }
+        if model.recordings.isPresented { return "Recordings" }
         return model.isPreview ? "Agenda Preview" : "Agenda"
     }
 }
 
 struct TodayView: View {
     @Bindable var model: WhooshModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         GeometryReader { available in
             let compact = available.size.width < 560
@@ -100,6 +117,22 @@ struct TodayView: View {
                 let upcoming = AgendaRules.upcoming(model.events, now: context.date)
                 VStack(spacing: 0) {
                     HStack {
+                        Button {
+                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
+                                model.recordings.toggle()
+                            }
+                        } label: {
+                            Label("Recordings", systemImage: "sidebar.left")
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .background(model.recordings.isPresented ? WhooshTheme.accent.opacity(0.15) : .clear, in: Capsule())
+                                .foregroundStyle(model.recordings.isPresented ? WhooshTheme.accent : .primary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Recordings")
+                        .accessibilityValue(model.recordings.isPresented ? "Open" : "Closed")
+                        .help("Show or hide recordings · ⇧⌘R")
+                        .background(WhooshWindowInteractionRegion(isEnabled: true))
                         Spacer(minLength: 0)
                         meetingActions
                             .background(WhooshWindowInteractionRegion(isEnabled: true))
@@ -108,30 +141,49 @@ struct TodayView: View {
                     .padding(.trailing, 12)
                     .padding(.vertical, 12)
 
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: compact ? 18 : 28) {
-                            if let next = upcoming.first {
-                                nextMeetingCard(next, now: context.date, compact: compact)
-                                let items = Array(upcoming.dropFirst().prefix(8))
-                                if !items.isEmpty { agenda(items, now: context.date, compact: compact) }
-                            } else if model.isCalendarConnected {
-                                emptyAgenda
-                            } else {
-                                welcome(compact: compact)
+                    HStack(spacing: 0) {
+                        if model.recordings.isPresented {
+                            RecordingSidebar(model: model.recordings, connection: model.zoomConnection,
+                                             isPreview: model.isPreview, openSettings: { model.showSettings = true })
+                                .frame(width: 260)
+                                .transition(.move(edge: .leading).combined(with: .opacity))
+                            Divider()
+                            RecordingPlayerView(model: model.recordings)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: compact ? 18 : 28) {
+                                    if let next = upcoming.first {
+                                        nextMeetingCard(next, now: context.date, compact: compact)
+                                        let items = Array(upcoming.dropFirst().prefix(8))
+                                        if !items.isEmpty { agenda(items, now: context.date, compact: compact) }
+                                    } else if model.isCalendarConnected {
+                                        emptyAgenda
+                                    } else {
+                                        welcome(compact: compact)
+                                    }
+                                }
+                                .padding(.horizontal, compact ? 16 : 24)
+                                .padding(.top, compact ? 4 : 12)
+                                .padding(.bottom, compact ? 16 : 24)
+                                .frame(maxWidth: 960)
+                                .frame(maxWidth: .infinity)
                             }
+                            .scrollEdgeEffectStyle(.soft, for: .top)
+                            .background(Color.clear)
                         }
-                        .padding(.horizontal, compact ? 16 : 24)
-                        .padding(.top, compact ? 4 : 12)
-                        .padding(.bottom, compact ? 16 : 24)
-                        .frame(maxWidth: 960)
-                        .frame(maxWidth: .infinity)
                     }
-                    .scrollEdgeEffectStyle(.soft, for: .top)
-                    .background(Color.clear)
+                    .clipped()
                 }
             }
         }
         .ignoresSafeArea(.container, edges: .top)
+        .task(id: model.recordings.isPresented) {
+            if model.recordings.isPresented, !model.isPreview, !model.zoomConnection.isBusy {
+                await model.recordings.loadInitial()
+            }
+        }
+        .onDisappear { model.recordings.stopPlayback() }
     }
 
     private var meetingActions: some View {

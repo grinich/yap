@@ -4,7 +4,7 @@
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>Whoosh</string>
-    <key>CFBundleIdentifier</key><string>com.grinich.woosh</string>
+    <key>CFBundleIdentifier</key><string>com.grinich.zooom</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Zooom</string>
     <key>CFBundleDisplayName</key><string>Zooom</string>

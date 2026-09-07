@@ -24,6 +24,7 @@ public struct ZoomPersonalConfiguration: Codable, Sendable, CustomStringConverti
     public var debugDescription: String { description }
     public static let requiredScope = "user:read:zak"
     public static let hostingScope = "meeting:write:meeting"
+    public static let recordingsScope = "cloud_recording:read:list_user_recordings"
     public static let registeredRedirectURI = "http://127.0.0.1/callback"
 }
 
@@ -63,6 +64,7 @@ public enum ZoomAccountError: LocalizedError, Sendable, Equatable {
     case localCallbackUnavailable
     case authorizationDenied, authorizationTimedOut, authorizationInProgress, missingScope
     case missingHostingScope, meetingCreationUnconfirmed
+    case missingRecordingScope, invalidRecordingDateRange, recordingUnavailable
     case keychain(Int32), network, rateLimited, rejected(Int)
 
     public var errorDescription: String? {
@@ -78,6 +80,9 @@ public enum ZoomAccountError: LocalizedError, Sendable, Equatable {
         case .authorizationInProgress: "A Zoom sign-in is already in progress."
         case .missingScope: "Enable the user:read:zak scope in your Zoom app, then connect again."
         case .missingHostingScope: "Enable the meeting:write:meeting scope in your Zoom app, then disconnect and connect Zoom again to host meetings."
+        case .missingRecordingScope: "Enable the cloud_recording:read:list_user_recordings scope in your Zoom app, then disconnect and connect Zoom again to view recordings."
+        case .invalidRecordingDateRange: "Choose a recording date range of one month or less."
+        case .recordingUnavailable: "This recording does not have a completed video available to play."
         case .meetingCreationUnconfirmed: "Zoom did not confirm whether it created the meeting. Check your Zoom meetings before reconnecting and trying again; Zooom has stopped automatic retries."
         case .keychain: "Zooom couldn’t securely access your Zoom connection in Keychain."
         case .network: "Zooom couldn’t reach Zoom. Check your connection and try again."

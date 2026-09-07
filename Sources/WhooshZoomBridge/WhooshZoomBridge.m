@@ -1,6 +1,7 @@
 #import "WhooshZoomBridge.h"
 #import <ZoomSDK/ZoomSDK.h>
 #import <os/log.h>
+#import <math.h>
 #import "WHZoomRenderHost.h"
 #import "WHZoomVideoDetachGrace.h"
 #import "WHZoomCloudRecordingPolicy.h"
@@ -65,11 +66,16 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, ZoomSDKNormalVideoElement *> *videos;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, WHZoomRenderHost *> *videoHosts;
 @property(nonatomic, strong) NSMutableSet<NSString *> *subscribedVideos;
+@property(nonatomic, strong) NSMutableSet<NSNumber *> *requestedAvatars;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *avatarRevisions;
+@property(nonatomic, strong) NSNumber *profilePicturesHidden;
 @property(nonatomic, strong) WHZoomVideoDetachGrace *videoDetachGrace;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *videoRetryAttempts;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSUUID *> *videoRetryTokens;
 @property(nonatomic, strong) NSMutableSet<NSString *> *videoRetryExhausted;
 @property(nonatomic, strong) NSTimer *videoStatisticsTimer;
+@property(nonatomic, strong) NSTimer *videoSizeTimer;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSValue *> *participantVideoSizes;
 @property(nonatomic, strong) ZoomSDKShareElement *shareElement;
 @property(nonatomic, strong) WHZoomRenderHost *shareHost;
 @property(nonatomic, copy) NSString *selectedShareID;
@@ -86,6 +92,8 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     if ((self = [super init])) {
         _videos = [NSMutableDictionary dictionary]; _videoHosts = [NSMutableDictionary dictionary];
         _subscribedVideos = [NSMutableSet set];
+        _requestedAvatars = [NSMutableSet set]; _avatarRevisions = [NSMutableDictionary dictionary];
+        _participantVideoSizes = [NSMutableDictionary dictionary];
         _videoDetachGrace = [WHZoomVideoDetachGrace new];
         _videoRetryAttempts = [NSMutableDictionary dictionary];
         _videoRetryTokens = [NSMutableDictionary dictionary]; _videoRetryExhausted = [NSMutableSet set];
@@ -334,11 +342,15 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (void)resetNative {
+    [self.requestedAvatars removeAllObjects]; [self.avatarRevisions removeAllObjects];
+    self.profilePicturesHidden = nil;
     self.cloudRecordingStartRequest = nil; self.cloudRecordingRequesterID = 0;
     self.lastCloudRecordingPayload = nil;
     self.localShareActive = NO; self.awaitingShareSource = NO; self.shareSourceRevision += 1;
     self.requestedShareWindowID = 0; self.requestedShareDisplayID = 0;
     [self.videoStatisticsTimer invalidate]; self.videoStatisticsTimer = nil;
+    [self.videoSizeTimer invalidate]; self.videoSizeTimer = nil;
+    [self.participantVideoSizes removeAllObjects];
     [self cancelConnectionWatchdog];
     self.leaveWatchdogArmed = NO; self.leaveWatchdogRevision += 1;
     [self setVisibleParticipants:@[]]; [self selectReceivedShare:nil];
@@ -418,21 +430,81 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     }
 }
 
+- (NSValue *)videoSizeForUser:(unsigned int)userID cameraEnabled:(BOOL)enabled {
+    NSNumber *identifier = @(userID);
+    if (!enabled) { [self.participantVideoSizes removeObjectForKey:identifier]; return nil; }
+    CGSize size = [self.meeting getUserVideoSize:userID];
+    if (isfinite(size.width) && isfinite(size.height) && size.width >= 1 && size.height >= 1 &&
+        size.width <= 16384 && size.height <= 16384 && size.width / size.height >= 0.125 && size.width / size.height <= 8) {
+        self.participantVideoSizes[identifier] = [NSValue valueWithSize:size];
+    }
+    // Zoom may briefly report zero while a stream starts or rotates. Preserve
+    // the last usable dimensions until new frames arrive or the camera stops.
+    return self.participantVideoSizes[identifier];
+}
+- (void)refreshVisibleVideoSizes {
+    if (!self.hasEnteredMeeting || !self.sessionID || self.ending) return;
+    BOOL changed = NO;
+    ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
+    for (NSString *identifier in self.subscribedVideos.allObjects) {
+        unsigned int userID = identifier.intValue;
+        NSValue *previous = self.participantVideoSizes[@(userID)];
+        NSValue *current = [self videoSizeForUser:userID cameraEnabled:[[action getUserByUserID:userID] isVideoOn]];
+        if (previous != current && ![previous isEqual:current]) changed = YES;
+    }
+    if (changed) [self refreshParticipants];
+}
 - (void)refreshParticipants {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ [self refreshParticipants]; }); return; }
     if (!self.meeting || self.ending) return;
     ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
     NSMutableArray *people = [NSMutableArray array];
-    for (NSNumber *identifier in [action getParticipantsList] ?: @[]) {
+    NSArray<NSNumber *> *identifiers = [action getParticipantsList] ?: @[];
+    NSSet *currentIDs = [NSSet setWithArray:identifiers];
+    [self.requestedAvatars intersectSet:currentIDs];
+    for (NSNumber *identifier in self.avatarRevisions.allKeys) {
+        if (![currentIDs containsObject:identifier]) [self.avatarRevisions removeObjectForKey:identifier];
+    }
+    for (NSNumber *identifier in self.participantVideoSizes.allKeys) {
+        if (![currentIDs containsObject:identifier]) [self.participantVideoSizes removeObjectForKey:identifier];
+    }
+    BOOL picturesHidden = self.profilePicturesHidden ? self.profilePicturesHidden.boolValue : [action isParticipantProfilePicturesHidden];
+    NSMutableArray<NSNumber *> *avatarRequests = [NSMutableArray array];
+    for (NSNumber *identifier in identifiers) {
         ZoomSDKUserInfo *user = [action getUserByUserID:identifier.unsignedIntValue];
         if (!user) continue;
         ZoomSDKAudioStatus audio = [user getAudioStatus];
         BOOL muted = !(audio == ZoomSDKAudioStatus_UnMuted || audio == ZoomSDKAudioStatus_UnMutedByHost || audio == ZoomSDKAudioStatus_UnMutedAllByHost);
-        [people addObject:@{@"id":@([user getUserID]).stringValue, @"name":[user getUserName] ?: @"Participant",
+        NSMutableDictionary *person = [@{@"id":@([user getUserID]).stringValue, @"name":[user getUserName] ?: @"Participant",
                            @"isSelf":@([user isMySelf]), @"isHost":@([user isHost]), @"isMuted":@(muted),
-                           @"isCameraEnabled":@([user isVideoOn]), @"isSpeaking":@([user isTalking])}];
+                           @"isCameraEnabled":@([user isVideoOn]), @"isSpeaking":@([user isTalking])} mutableCopy];
+        NSValue *videoSize = [self videoSizeForUser:identifier.unsignedIntValue cameraEnabled:[user isVideoOn]];
+        if (videoSize) {
+            person[@"videoWidth"] = @(videoSize.sizeValue.width);
+            person[@"videoHeight"] = @(videoSize.sizeValue.height);
+        }
+        if (!picturesHidden) {
+            NSString *path = [user getAvatarPath];
+            if (path.length) {
+                person[@"avatarPath"] = path;
+                person[@"avatarRevision"] = self.avatarRevisions[identifier] ?: @0;
+            }
+            if (self.hasEnteredMeeting && ![self.requestedAvatars containsObject:identifier]) {
+                // Mark before requesting: the SDK may synchronously call back.
+                [self.requestedAvatars addObject:identifier];
+                [avatarRequests addObject:identifier];
+            }
+        }
+        [people addObject:person];
     }
     [self emit:@"participants" object:people];
+    // Emit first so a synchronous avatar callback cannot be overwritten by
+    // the older roster. Zoom owns downloading; we only consume its local file.
+    for (NSNumber *identifier in avatarRequests) {
+        if (self.ending || self.profilePicturesHidden.boolValue) break;
+        ZoomSDKError result = [action requestAvatarForUser:identifier.unsignedIntValue];
+        [self logConnection:"avatar-request" code:result status:0 reason:0];
+    }
 }
 - (void)onUserJoin:(NSArray *)array { [self refreshParticipants]; }
 - (void)onUserLeft:(NSArray *)array { [self refreshParticipants]; [self refreshShares]; }
@@ -486,6 +558,13 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     self.videoStatisticsTimer = [NSTimer scheduledTimerWithTimeInterval:5 repeats:YES block:^(NSTimer *timer) {
         [weakSelf refreshVideoStatistics];
     }];
+    // The native renderer has no dimension-change callback. Query only mounted
+    // streams and emit a new roster only on a change (for example phone rotation).
+    self.videoSizeTimer = [NSTimer timerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer) {
+        [weakSelf refreshVisibleVideoSizes];
+    }];
+    self.videoSizeTimer.tolerance = 0.1;
+    [NSRunLoop.mainRunLoop addTimer:self.videoSizeTimer forMode:NSRunLoopCommonModes];
     [self refreshVideoStatistics];
 }
 - (void)refreshVideoStatistics {
@@ -1136,9 +1215,24 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 - (void)onMeetingLockStatus:(BOOL)isLock { /* This feature is not offered by Whoosh. No state or permission is changed. */ }
 - (void)onRequestLocalRecordingPrivilegeChanged:(ZoomSDKLocalRecordingRequestPrivilegeStatus)status { /* This feature is not offered by Whoosh. No state or permission is changed. */ }
 - (void)onAllowParticipantsRequestCloudRecording:(BOOL)allow { /* This feature is not offered by Whoosh. No state or permission is changed. */ }
-- (void)onInMeetingUserAvatarPathUpdated:(unsigned int)userID { /* This feature is not offered by Whoosh. No state or permission is changed. */ }
+- (void)onInMeetingUserAvatarPathUpdated:(unsigned int)userID {
+    [self onMain:^{
+        if (!self.sessionID || self.ending) return;
+        NSNumber *identifier = @(userID);
+        self.avatarRevisions[identifier] = @(self.avatarRevisions[identifier].integerValue + 1);
+        [self logConnection:"avatar-updated" code:0 status:0 reason:0];
+        [self refreshParticipants];
+    }];
+}
 - (void)onAICompanionActiveChangeNotice:(BOOL)active { /* This feature is not offered by Whoosh. No state or permission is changed. */ }
-- (void)onParticipantProfilePictureStatusChange:(BOOL)hidden { /* This feature is not offered by Whoosh. No state or permission is changed. */ }
+- (void)onParticipantProfilePictureStatusChange:(BOOL)hidden {
+    [self onMain:^{
+        if (!self.sessionID || self.ending) return;
+        if (!hidden && self.profilePicturesHidden.boolValue) [self.requestedAvatars removeAllObjects];
+        self.profilePicturesHidden = @(hidden);
+        [self refreshParticipants];
+    }];
+}
 - (void)onVideoAlphaChannelStatusChanged:(BOOL)isAlphaModeOn { /* This feature is not offered by Whoosh. No state or permission is changed. */ }
 - (void)onFocusModeStateChanged:(BOOL)on { /* This feature is not offered by Whoosh. No state or permission is changed. */ }
 - (void)onFocusModeShareTypeChanged:(ZoomSDKFocusModeShareType)shareType { /* This feature is not offered by Whoosh. No state or permission is changed. */ }

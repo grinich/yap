@@ -196,7 +196,11 @@ public final class ZoomMeetingDriver: MeetingDriver {
                 return MeetingParticipant(id: identifier, name: item["name"] as? String ?? "Participant",
                     isSelf: item["isSelf"] as? Bool ?? false, isHost: item["isHost"] as? Bool ?? false,
                     isMuted: item["isMuted"] as? Bool ?? true, isCameraEnabled: item["isCameraEnabled"] as? Bool ?? false,
-                    isSpeaking: item["isSpeaking"] as? Bool ?? false, avatarSeed: Int(identifier) ?? 0)
+                    isSpeaking: item["isSpeaking"] as? Bool ?? false, avatarSeed: Int(identifier) ?? 0,
+                    avatar: (item["avatarPath"] as? String).flatMap {
+                        MeetingAvatar(path: $0, revision: item["avatarRevision"] as? Int ?? 0)
+                    }, videoSize: MeetingVideoSize(width: item["videoWidth"] as? Double ?? 0,
+                                                  height: item["videoHeight"] as? Double ?? 0))
             }
             onEvent?(id, .participants(people))
         case "chat", "chatEdited":

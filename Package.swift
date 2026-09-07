@@ -20,17 +20,21 @@ let package = Package(
     name: "Whoosh",
     platforms: [.macOS("26.0")],
     products: [.executable(name: "Whoosh", targets: ["Whoosh"])],
+    dependencies: [.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")],
     targets: [
         .target(name: "WhooshCredentials"),
         .target(name: "WhooshCalendar", dependencies: ["WhooshCredentials"]),
         .target(name: "WhooshMeetings", dependencies: meetingDependencies),
         .target(name: "WhooshSystem"),
+        .target(name: "WhooshUpdates", dependencies: [.product(name: "Sparkle", package: "Sparkle")]),
         .target(name: "WhooshAppUI", dependencies: ["WhooshCalendar", "WhooshMeetings", "WhooshSystem", "WhooshCredentials"]),
-        .executableTarget(name: "Whoosh", dependencies: ["WhooshAppUI", "WhooshSystem"]),
+        .executableTarget(name: "Whoosh", dependencies: ["WhooshAppUI", "WhooshSystem", "WhooshUpdates"],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
         .testTarget(name: "WhooshCredentialsTests", dependencies: ["WhooshCredentials"]),
         .testTarget(name: "WhooshCalendarTests", dependencies: ["WhooshCalendar"]),
         .testTarget(name: "WhooshMeetingsTests", dependencies: ["WhooshMeetings"]),
         .testTarget(name: "WhooshSystemTests", dependencies: ["WhooshSystem"]),
+        .testTarget(name: "WhooshUpdatesTests", dependencies: ["WhooshUpdates"]),
         .testTarget(name: "WhooshAppUITests", dependencies: ["WhooshAppUI", "WhooshCalendar", "WhooshMeetings"])
     ] + zoomTargets
 )

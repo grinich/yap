@@ -6,19 +6,26 @@ import WhooshMeetings
 @Suite("Replacement window close control", .serialized) @MainActor
 struct WhooshWindowCloseTests {
     @Test(arguments: [true, false])
-    func hiddenNativeButtonStillPreservesDelegateVetoAndCloseNotification(_ permitsClose: Bool) throws {
+    func welcomeCloseHidesTheRetainedWindowEvenWhenTheFrameworkVetoesClosing(_ permitsClose: Bool) throws {
         let fixture = WindowCloseFixture()
         defer { fixture.cleanUp() }
         fixture.originalDelegate.permitsClose = permitsClose
         let button = try #require(fixture.closeButton)
         #expect(fixture.window.standardWindowButton(.closeButton)?.isHidden == true)
-        #expect(!fixture.window.isVisible)
+        #expect(fixture.window.hideCount == 0)
+        #expect(button.acceptsFirstMouse(for: nil))
+        #expect(!button.mouseDownCanMoveWindow)
 
         button.performClick(nil)
 
-        #expect(fixture.originalDelegate.shouldCloseCount == 1)
-        #expect(fixture.originalDelegate.willCloseCount == (permitsClose ? 1 : 0))
+        #expect(!fixture.window.isVisible)
+        #expect(fixture.window.hideCount == 1)
+        #expect(fixture.model.sharingPresentation.mainWindow === fixture.window)
+        #expect(fixture.originalDelegate.shouldCloseCount == 0)
+        #expect(fixture.originalDelegate.willCloseCount == 0)
         #expect(!fixture.model.showLeaveConfirmation)
+        button.performClick(nil)
+        #expect(fixture.window.hideCount == 2)
     }
 
     @Test func activeMeetingRequestsConfirmationWithoutClosingOrLeaving() async throws {
@@ -34,6 +41,7 @@ struct WhooshWindowCloseTests {
         #expect(fixture.model.showLeaveConfirmation)
         #expect(fixture.model.meeting.sessionID == sessionID)
         #expect(fixture.model.meeting.isConnected)
+        #expect(fixture.window.hideCount == 0)
         #expect(fixture.originalDelegate.shouldCloseCount == 0)
         #expect(fixture.originalDelegate.willCloseCount == 0)
     }
@@ -60,8 +68,9 @@ struct WhooshWindowCloseTests {
         let handledCommandW = button.performKeyEquivalent(with: commandW)
         #expect(handledCommandW)
         #expect(fixture.model.showLeaveConfirmation == activeMeeting)
-        #expect(fixture.originalDelegate.shouldCloseCount == (activeMeeting ? 0 : 1))
-        #expect(fixture.originalDelegate.willCloseCount == (activeMeeting ? 0 : 1))
+        #expect(fixture.window.hideCount == (activeMeeting ? 0 : 1))
+        #expect(fixture.originalDelegate.shouldCloseCount == 0)
+        #expect(fixture.originalDelegate.willCloseCount == 0)
     }
 }
 
@@ -70,7 +79,7 @@ private final class WindowCloseFixture {
     let suite = "WhooshWindowCloseTests.\(UUID())"
     let preferences: UserDefaults
     let model: WhooshModel
-    let window: NSWindow
+    let window: CloseTrackingWindow
     let originalDelegate = CloseDelegate()
     let coordinator: WindowBehavior.Coordinator
 
@@ -80,7 +89,7 @@ private final class WindowCloseFixture {
         model = WhooshModel(preview: true, preferences: preferences,
                             meeting: MeetingCoordinator(driver: DemoMeetingDriver()),
                             reminders: WhooshReminderActions(requestAuthorization: { false }, synchronize: { _, _ in }, disable: {}))
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 540),
+        window = CloseTrackingWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 540),
                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.delegate = originalDelegate
@@ -98,6 +107,15 @@ private final class WindowCloseFixture {
         window.delegate = nil
         window.close()
         preferences.removePersistentDomain(forName: suite)
+    }
+}
+
+@MainActor
+private final class CloseTrackingWindow: NSWindow {
+    private(set) var hideCount = 0
+    override func orderOut(_ sender: Any?) {
+        hideCount += 1
+        super.orderOut(sender)
     }
 }
 

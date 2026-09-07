@@ -36,7 +36,7 @@ toolchain_dir="$(dirname "$(dirname "$(dirname "$(xcrun --find swiftc)")")")"
 xcode_version="$(xcodebuild -version | awk '/Build version/ { print $3 }')"
 deployment_target="${WHOOSH_DEPLOYMENT_TARGET:-26.0}"
 target_triple="arm64-apple-macosx${deployment_target}"
-bundle_identifier="${WHOOSH_BUNDLE_ID:-com.grinich.woosh}"
+bundle_identifier="${WHOOSH_BUNDLE_ID:-com.grinich.zooom}"
 if [[ -f "$(dirname "$resources")/Info.plist" ]]; then
     bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$(dirname "$resources")/Info.plist")"
 fi
@@ -60,6 +60,11 @@ if [[ "$binary_libraries" == *"ZoomSDK.framework/"* ]]; then
 fi
 
 # These are the protocol conformances currently used by Whoosh's intents.
+if [[ "$binary_libraries" == *"Sparkle.framework/"* ]]; then
+    test -f "$(dirname "$binary")/Sparkle.framework/Sparkle"
+    native_dependencies+=(-F "$(dirname "$binary")")
+fi
+
 cat > "$scratch/protocols.json" <<'JSON'
 ["AppIntent", "AppEntity", "AppEnum", "AppShortcutsProvider", "AppIntentsPackage", "EntityQuery", "AppIntentOptionsProvider"]
 JSON

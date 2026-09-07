@@ -21,6 +21,14 @@ struct NativeVideoFillTests {
         #expect(NativeVideoContainer.rendererSize(for: arbitrary, fillsFrame: false) == arbitrary)
     }
 
+    @Test func portraitFillUsesTheIncomingVideoRatio() {
+        for available in [CGSize(width: 320, height: 750), CGSize(width: 960, height: 680)] {
+            let filled = NativeVideoContainer.rendererSize(for: available, fillsFrame: true, aspectRatio: 9.0 / 16.0)
+            #expect(filled.width >= available.width && filled.height >= available.height)
+            #expect(abs(filled.width / filled.height - 9.0 / 16.0) < 0.000_001)
+        }
+    }
+
     @Test(arguments: [CGSize.zero, CGSize(width: 0, height: 100), CGSize(width: 100, height: 0),
                       CGSize(width: CGFloat.infinity, height: 100), CGSize(width: 100, height: CGFloat.nan)])
     func unusableProposalsNeverMountAnOversizedRenderer(_ available: CGSize) {

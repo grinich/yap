@@ -1,5 +1,8 @@
 import Foundation
+import Security
+import Synchronization
 import Testing
+import WhooshCredentials
 import WhooshMeetings
 @testable import WhooshAppUI
 
@@ -64,6 +67,70 @@ struct ZoomConnectionTests {
         #expect(model.isConfigured)
         #expect(!model.hasSavedConnection)
         #expect(!model.isBusy)
+    }
+
+    @Test(arguments: [false, true])
+    func failedDisconnectRefreshesActualVaultStateWithoutHidingKeychainFailure(denyLegacyCleanup: Bool) async throws {
+        let configurationKey = CredentialKey(service: "app.whoosh.zoom-personal", account: "configuration")
+        let tokensKey = CredentialKey(service: "app.whoosh.zoom-personal", account: "oauth-tokens")
+        let tokens = ZoomOAuthTokens(clientID: configuration.oauthPublicClientID, accessToken: "fixture-access",
+                                    refreshToken: "fixture-refresh", expiresAt: Date().addingTimeInterval(3_600))
+        let storage = ZoomDisconnectCredentialStorage(records: [
+            configurationKey: try JSONEncoder().encode(configuration),
+            tokensKey: try JSONEncoder().encode(tokens)
+        ])
+        let vault = CredentialVault(storage: storage)
+        let client = ZoomAccountClient(store: KeychainZoomCredentialStore(vault: vault))
+        let model = ZoomConnectionModel(client: client, openURL: { _ in })
+        await model.loadStatus()
+        #expect(model.hasSavedConnection)
+        storage.denyNextDisconnect(legacyCleanup: denyLegacyCleanup)
+
+        await model.disconnect()
+
+        #expect(model.hasLoadedStatus)
+        #expect(model.isConfigured)
+        #expect(model.hasSavedConnection == !denyLegacyCleanup)
+        #expect(!model.isBusy)
+        #expect(model.statusError == nil)
+        #expect(model.error == ZoomAccountError.keychain(errSecAuthFailed).localizedDescription)
+        // Check the durable result through a fresh vault. A failed legacy delete
+        // leaves its old item intact, but the committed tombstone must win.
+        let nextLaunch = CredentialVault(storage: storage)
+        #expect((try nextLaunch.load(tokensKey) == nil) == denyLegacyCleanup)
+        #expect(storage.contains(tokensKey))
+    }
+}
+
+private final class ZoomDisconnectCredentialStorage: CredentialStorage, Sendable {
+    private struct State {
+        var records: [CredentialKey: Data]
+        var denyWrite = false
+        var denyDelete = false
+    }
+    private let state: Mutex<State>
+
+    init(records: [CredentialKey: Data]) { state = Mutex(State(records: records)) }
+
+    func denyNextDisconnect(legacyCleanup: Bool) {
+        state.withLock {
+            $0.denyWrite = !legacyCleanup
+            $0.denyDelete = legacyCleanup
+        }
+    }
+    func contains(_ key: CredentialKey) -> Bool { state.withLock { $0.records[key] != nil } }
+    func load(_ key: CredentialKey) -> Data? { state.withLock { $0.records[key] } }
+    func save(_ data: Data, for key: CredentialKey) throws {
+        try state.withLock {
+            if $0.denyWrite { throw CredentialVaultError.keychain(errSecAuthFailed) }
+            $0.records[key] = data
+        }
+    }
+    func delete(_ key: CredentialKey) throws {
+        try state.withLock {
+            if $0.denyDelete { throw CredentialVaultError.keychain(errSecAuthFailed) }
+            $0.records.removeValue(forKey: key)
+        }
     }
 }
 

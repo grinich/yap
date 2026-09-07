@@ -1,26 +1,32 @@
 import Foundation
 import CoreFoundation
 
-/// The bundle identity changes once; the personal preference values do not.
+/// Preserve supported preferences across the app's bundle identity changes.
 /// Credential keys, macOS permissions, login items, and SDK state are separate.
 @MainActor
 public enum WhooshPreferenceMigration {
-    static let currentBundleIdentifier = "com.grinich.woosh"
-    static let legacyBundleIdentifier = "app.whoosh.personal"
-    static let completionKey = "whoosh.migratedPersonalPreferences.v1"
+    static let currentBundleIdentifier = "com.grinich.zooom"
+    static let legacyBundleIdentifiers = ["com.grinich.woosh", "app.whoosh.personal"]
+    static let completionKey = "zooom.migratedPreferences.v1"
 
     /// Call from the app entry point before constructing WhooshModel. This
     /// cannot run in a preview/test executable or against an injected suite.
     public static func migrateStandardPreferencesIfNeeded() {
         guard Bundle.main.bundleIdentifier == currentBundleIdentifier else { return }
         migrate(preferences: .standard, currentDomain: currentBundleIdentifier,
-                legacyDomain: legacyBundleIdentifier)
+                legacyDomains: legacyBundleIdentifiers)
     }
 
     static func migrate(preferences: UserDefaults, currentDomain: String, legacyDomain: String) {
+        migrate(preferences: preferences, currentDomain: currentDomain, legacyDomains: [legacyDomain])
+    }
+
+    static func migrate(preferences: UserDefaults, currentDomain: String, legacyDomains: [String]) {
         let current = preferences.persistentDomain(forName: currentDomain) ?? [:]
         guard current[completionKey] as? Bool != true else { return }
-        let legacy = preferences.persistentDomain(forName: legacyDomain) ?? [:]
+        // Use the most recent existing domain as a whole. Falling back per key
+        // could restore a preference the user removed in the newer app.
+        let legacy = legacyDomains.lazy.compactMap { preferences.persistentDomain(forName: $0) }.first ?? [:]
         preferences.setPersistentDomain(merging(current: current, legacy: legacy), forName: currentDomain)
     }
 

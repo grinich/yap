@@ -125,6 +125,9 @@ for path in [main] + machos:
         commands(path),
     )
     for dependency in dependencies:
+        if path == main and dependency == "@rpath/Sparkle.framework/Versions/B/Sparkle":
+            # Embedded and verified separately after the Zoom-only signing pass.
+            continue
         if dependency.startswith(("/System/Library/", "/usr/lib/")):
             continue
         if dependency.startswith("@rpath/"):

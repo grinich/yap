@@ -78,16 +78,14 @@ enum WhooshSharingOverlayLayout {
         return participants.first(where: \.isSelf).map { [$0] } ?? []
     }
 
-    static func stripFrame(in screen: CGRect, count: Int) -> CGRect {
-        let count = max(1, min(6, count))
-        let maximumWidth = max(1, screen.width * 0.6)
-        let spacing: CGFloat = 8
-        let padding: CGFloat = 8
-        let tileWidth = max(1, min(112, (maximumWidth - padding * 2 - spacing * CGFloat(count - 1)) / CGFloat(count)))
-        let width = min(maximumWidth, tileWidth * CGFloat(count) + spacing * CGFloat(count - 1) + padding * 2)
-        let height = min(screen.height, tileWidth * 9 / 16 + padding * 2)
-        return CGRect(x: screen.midX - width / 2, y: max(screen.minY, screen.maxY - height - 12),
-                      width: width, height: height)
+    static func stripFrame(in screen: CGRect, aspectRatios: [Double]) -> CGRect {
+        let single = aspectRatios.count <= 1
+        let ratio = aspectRatios.first.flatMap { $0.isFinite && (0.125...8).contains($0) ? $0 : nil } ?? 16 / 9
+        let videoHeight = single ? min(384 / ratio, screen.height * 0.5 - 32) : min(380, screen.height * 0.5 - 32)
+        let width = single ? min(384, videoHeight * ratio) + 16 : min(720, screen.width * 0.65)
+        let size = CGSize(width: min(screen.width, max(200, width)), height: min(screen.height, max(140, videoHeight + 32)))
+        return clampedStripFrame(CGRect(x: screen.maxX - size.width - 20, y: screen.maxY - size.height - 20,
+                                       width: size.width, height: size.height), in: screen)
     }
 
     static func chatFrame(in screen: CGRect) -> CGRect {
@@ -96,28 +94,14 @@ enum WhooshSharingOverlayLayout {
                       y: min(screen.maxY - size.height, screen.minY + 20), width: size.width, height: size.height)
     }
 
-    static func handleFrame(for strip: CGRect) -> CGRect {
-        CGRect(x: strip.midX - 22, y: strip.minY - 18, width: 44, height: 14)
-    }
-
-    static func stripFrame(forHandle handle: CGRect, stripSize: CGSize) -> CGRect {
-        CGRect(x: handle.midX - stripSize.width / 2, y: handle.maxY + 4,
-               width: stripSize.width, height: stripSize.height)
-    }
-
     static func clampedStripFrame(_ frame: CGRect, in screen: CGRect) -> CGRect {
-        let width = min(frame.width, screen.width)
-        let height = min(frame.height, max(1, screen.height - 18))
+        let width = min(max(1, frame.width), screen.width)
+        let height = min(max(1, frame.height), screen.height)
         return CGRect(x: min(max(frame.minX, screen.minX), screen.maxX - width),
-                      y: min(max(frame.minY, screen.minY + 18), screen.maxY - height),
+                      y: min(max(frame.minY, screen.minY), screen.maxY - height),
                       width: width, height: height)
     }
 
-    static func pointerHidesStrip(_ point: CGPoint, frame: CGRect, wasHidden: Bool,
-                                 handleFrame: CGRect? = nil, isDragging: Bool = false) -> Bool {
-        guard !isDragging, handleFrame?.insetBy(dx: -4, dy: -4).contains(point) != true else { return false }
-        return frame.insetBy(dx: wasHidden ? -32 : -14, dy: wasHidden ? -32 : -14).contains(point)
-    }
 }
 
 struct WhooshSharingChatPlacement {
@@ -146,22 +130,6 @@ struct WhooshSharingStopTransition {
     }
 }
 
-struct WhooshOverlayDrag {
-    private var pointerOrigin: CGPoint?
-    private var windowOrigin: CGPoint?
-
-    mutating func begin(pointer: CGPoint, windowOrigin: CGPoint) {
-        pointerOrigin = pointer
-        self.windowOrigin = windowOrigin
-    }
-    func translatedOrigin(pointer: CGPoint) -> CGPoint? {
-        guard let pointerOrigin, let windowOrigin else { return nil }
-        return CGPoint(x: windowOrigin.x + pointer.x - pointerOrigin.x,
-                       y: windowOrigin.y + pointer.y - pointerOrigin.y)
-    }
-    mutating func end() { pointerOrigin = nil; windowOrigin = nil }
-}
-
 /// Keeps participants visible when a connected meeting is in the background,
 /// using self view until another visible participant joins.
 /// These windows are not guaranteed to be excluded from Zoom's display capture.
@@ -171,15 +139,11 @@ public final class WhooshSharingOverlayController: NSObject, NSWindowDelegate {
     private let openMainWindow: () -> Void
     private var stripPanel: NSPanel?
     private var chatPanel: NSPanel?
-    private var handlePanel: NSPanel?
-    private var isDragging = false
-    private var isPositioningHandle = false
-    private var customStripAnchor: CGPoint?
-    private var layoutSessionID: UUID?
+    private var isInteracting = false
+    private var isPositioningStrip = false
+    private var customStripFrame: CGRect?
     private var timer: Timer?
     private var stopped = false
-    private var pointerHidden = false
-    private var stripTargetAlpha: CGFloat?
     private var presentedSessionID: UUID?
     private var chatPlacement = WhooshSharingChatPlacement()
     private var stopTransition = WhooshSharingStopTransition()
@@ -227,10 +191,6 @@ public final class WhooshSharingOverlayController: NSObject, NSWindowDelegate {
                                                            isSharing: meeting.sharing.isSharing,
                                                            isConnected: meeting.isConnected && !model.isPreview)
         presentation.synchronize(sessionID: meeting.sessionID, isSharing: meeting.sharing.isSharing)
-        if layoutSessionID != meeting.sessionID {
-            layoutSessionID = meeting.sessionID
-            customStripAnchor = nil
-        }
         if meeting.isConnected && !model.isPreview {
             if timer == nil {
                 timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
@@ -274,86 +234,58 @@ public final class WhooshSharingOverlayController: NSObject, NSWindowDelegate {
         return model.sharingPresentation.mainWindow?.screen ?? NSScreen.main
     }
 
-    private func updateStrip(on screen: NSScreen) {
+    private func updateStrip(on fallbackScreen: NSScreen) {
         let participants = WhooshSharingOverlayLayout.participants(from: model.meeting.visibleParticipants)
         guard !participants.isEmpty else { dismissStrip(); return }
-        var frame = WhooshSharingOverlayLayout.stripFrame(in: screen.visibleFrame, count: participants.count)
-        if let customStripAnchor {
-            frame.origin = CGPoint(x: customStripAnchor.x - frame.width / 2, y: customStripAnchor.y - frame.height)
-        }
-        frame = WhooshSharingOverlayLayout.clampedStripFrame(frame, in: screen.visibleFrame)
-        if isDragging, let stripPanel { frame = stripPanel.frame }
+        // Remember the user's display as well as their position. Moving a PiP
+        // to another monitor must not snap it back to the main meeting's display.
+        let screen = customStripFrame.flatMap { frame in
+            NSScreen.screens.max { lhs, rhs in
+                Self.intersectionArea(frame, lhs.visibleFrame) < Self.intersectionArea(frame, rhs.visibleFrame)
+            }.flatMap { Self.intersectionArea(frame, $0.visibleFrame) > 0 ? $0 : nil }
+        } ?? fallbackScreen
+        let proposed = customStripFrame ?? WhooshSharingOverlayLayout.stripFrame(in: screen.visibleFrame,
+            aspectRatios: participants.map(\.tileAspectRatio))
+        let frame = WhooshSharingOverlayLayout.clampedStripFrame(proposed, in: screen.visibleFrame)
         if stripPanel == nil {
-            let panel = SharingPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
-                                     backing: .buffered, defer: false)
+            let panel = SharingPictureInPicturePanel(contentRect: frame,
+                styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
             configure(panel)
-            panel.ignoresMouseEvents = true
-            panel.isMovable = false
-            let content = NSHostingView(rootView: SharingParticipantStrip(model: model))
-            content.sizingOptions = []
+            panel.title = "Picture in picture"
+            panel.setAccessibilityLabel("Picture in picture")
+            panel.isMovable = true
+            panel.minSize = NSSize(width: min(200, screen.visibleFrame.width), height: min(140, screen.visibleFrame.height))
+            panel.delegate = self
+            let content = SharingPictureInPictureView(rootView: SharingParticipantStrip(model: model))
+            content.interactionChanged = { [weak self] active in
+                self?.isInteracting = active
+                if !active { self?.refresh() }
+            }
             panel.contentView = content
             stripPanel = panel
         }
         guard let panel = stripPanel else { return }
-        if panel.frame != frame { panel.setFrame(frame, display: true) }
-        updateHandle(for: frame)
-        let hidden = WhooshSharingOverlayLayout.pointerHidesStrip(NSEvent.mouseLocation, frame: frame,
-            wasHidden: pointerHidden, handleFrame: handlePanel?.frame, isDragging: isDragging)
-        pointerHidden = hidden
-        let alpha: CGFloat = hidden ? 0 : NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? 1 : 0.90
-        if stripTargetAlpha != alpha {
-            let initialPresentation = stripTargetAlpha == nil
-            stripTargetAlpha = alpha
-            if initialPresentation || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                panel.alphaValue = alpha
-            } else {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.14
-                    panel.animator().alphaValue = alpha
-                }
-            }
+        panel.maxSize = screen.visibleFrame.size
+        if !isInteracting, !panel.inLiveResize, panel.frame != frame {
+            isPositioningStrip = true
+            panel.setFrame(frame, display: true)
+            isPositioningStrip = false
         }
+        customStripFrame = panel.frame
+        panel.alphaValue = 1
         if !panel.isVisible { panel.orderFrontRegardless() }
     }
 
-    private func updateHandle(for strip: CGRect, duringDrag: Bool = false) {
-        guard !isDragging || duringDrag else { return }
-        let frame = WhooshSharingOverlayLayout.handleFrame(for: strip)
-        if handlePanel == nil {
-            let panel = SharingHandlePanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
-                                           backing: .buffered, defer: false)
-            configure(panel)
-            panel.delegate = self
-            panel.isMovable = true
-            let content = SharingDragHandleView(frame: CGRect(origin: .zero, size: frame.size))
-            content.dragChanged = { [weak self] dragging in
-                if !dragging { self?.synchronizeStripWithHandle() }
-                self?.isDragging = dragging
-                self?.refresh()
-            }
-            panel.contentView = content
-            handlePanel = panel
-        }
-        guard let panel = handlePanel else { return }
-        isPositioningHandle = true
-        if panel.frame != frame { panel.setFrame(frame, display: true) }
-        isPositioningHandle = false
-        if !panel.isVisible { panel.orderFrontRegardless() }
+    private static func intersectionArea(_ first: CGRect, _ second: CGRect) -> CGFloat {
+        let intersection = first.intersection(second)
+        return intersection.isNull ? 0 : intersection.width * intersection.height
     }
 
-    public func windowDidMove(_ notification: Notification) {
-        guard !isPositioningHandle, let handle = handlePanel,
-              notification.object as? NSWindow === handle else { return }
-        synchronizeStripWithHandle()
-    }
-
-    private func synchronizeStripWithHandle() {
-        guard let handle = handlePanel, let strip = stripPanel, let screen = sharingScreen() else { return }
-        let proposed = WhooshSharingOverlayLayout.stripFrame(forHandle: handle.frame, stripSize: strip.frame.size)
-        let frame = WhooshSharingOverlayLayout.clampedStripFrame(proposed, in: screen.visibleFrame)
-        customStripAnchor = CGPoint(x: frame.midX, y: frame.maxY)
-        strip.setFrame(frame, display: true)
-        updateHandle(for: frame, duringDrag: true)
+    public func windowDidMove(_ notification: Notification) { rememberStripFrame(notification) }
+    public func windowDidResize(_ notification: Notification) { rememberStripFrame(notification) }
+    private func rememberStripFrame(_ notification: Notification) {
+        guard !isPositioningStrip, let panel = stripPanel, notification.object as? NSWindow === panel else { return }
+        customStripFrame = panel.frame
     }
 
     private func updateChat(on screen: NSScreen) {
@@ -403,13 +335,8 @@ public final class WhooshSharingOverlayController: NSObject, NSWindowDelegate {
         stripPanel?.orderOut(nil)
         stripPanel?.contentView = nil
         stripPanel = nil
-        handlePanel?.orderOut(nil)
-        handlePanel?.contentView = nil
-        handlePanel?.delegate = nil
-        handlePanel = nil
-        isDragging = false
-        pointerHidden = false
-        stripTargetAlpha = nil
+        isInteracting = false
+
     }
 
     private func dismissPanels() {
@@ -440,67 +367,30 @@ private final class SharingPanel: NSPanel {
 }
 
 @MainActor
-private final class SharingHandlePanel: NSPanel {
+private final class SharingPictureInPicturePanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
-}
-
-@MainActor
-private final class SharingDragHandleView: NSView {
-    var dragChanged: ((Bool) -> Void)?
-    private var drag = WhooshOverlayDrag()
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        let content = NSHostingView(rootView:
-            Capsule().fill(.secondary).frame(width: 20, height: 3)
-                .frame(width: 44, height: 14)
-                .modifier(SharingGlass())
-                .allowsHitTesting(false))
-        content.sizingOptions = []
-        content.frame = bounds
-        content.autoresizingMask = [.width, .height]
-        addSubview(content)
-        toolTip = "Drag to move the participant strip"
-        setAccessibilityElement(true)
-        setAccessibilityRole(.handle)
-        setAccessibilityLabel("Move participant strip")
-    }
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        addCursorRect(bounds, cursor: .openHand)
-    }
-    override func hitTest(_ point: NSPoint) -> NSView? { bounds.contains(convert(point, from: superview)) ? self : nil }
-    override func mouseDown(with event: NSEvent) {
-        guard let window else { return }
-        drag.begin(pointer: window.convertPoint(toScreen: event.locationInWindow), windowOrigin: window.frame.origin)
-        dragChanged?(true)
-    }
-    override func mouseDragged(with event: NSEvent) {
-        guard let window,
-              let origin = drag.translatedOrigin(pointer: window.convertPoint(toScreen: event.locationInWindow)) else { return }
-        window.setFrameOrigin(origin)
-    }
-    override func mouseUp(with event: NSEvent) {
-        drag.end()
-        dragChanged?(false)
-    }
 }
 
 private struct SharingParticipantStrip: View {
     @Bindable var model: WhooshModel
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(WhooshSharingOverlayLayout.participants(from: model.meeting.visibleParticipants)) { participant in
-                ParticipantTile(participant: participant, meeting: model.meeting, preservesRendererSize: true)
-                    .aspectRatio(16 / 9, contentMode: .fit)
+        let people = WhooshSharingOverlayLayout.participants(from: model.meeting.visibleParticipants)
+        MeetingTileLayout(aspectRatios: people.map(\.tileAspectRatio), spacing: 8) {
+            ForEach(people) { participant in
+                ParticipantTile(participant: participant, meeting: model.meeting)
             }
         }
-        .padding(8)
+        .padding(8).padding(.bottom, 16)
         .modifier(SharingGlass())
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.16), lineWidth: 0.75))
+        .overlay(alignment: .bottomTrailing) {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.7))
+                .frame(width: 24, height: 24).accessibilityHidden(true)
+        }
+        .environment(\.colorScheme, .dark)
         .allowsHitTesting(false)
     }
 }

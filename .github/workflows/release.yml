@@ -1,0 +1,105 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing source tag matching the app version (v0.1.0)
+        required: true
+        type: string
+      publish:
+        description: Publish the verified installers and update feed
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: zooom-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 120
+    environment: release
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      ZOOOM_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      ZOOOM_RELEASE_REPOSITORY: ${{ vars.ZOOOM_RELEASE_REPOSITORY }}
+      ZOOOM_UPDATE_FEED_URL: ${{ vars.ZOOOM_UPDATE_FEED_URL }}
+      ZOOOM_UPDATE_PUBLIC_KEY: ${{ vars.ZOOOM_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.ZOOOM_RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release configuration and tag
+        env:
+          GH_TOKEN: ${{ secrets.ZOOOM_RELEASE_TOKEN }}
+          ZOOM_SDK_ASSET_ID: ${{ vars.ZOOM_SDK_ASSET_ID }}
+        run: |
+          test -n "$ZOOM_SDK_ASSET_ID"
+          test -n "$GH_TOKEN"
+          test -n "$ZOOOM_RELEASE_REPOSITORY"
+          test "$ZOOOM_RELEASE_REPOSITORY" != "$GITHUB_REPOSITORY"
+          test "$(gh api "repos/$ZOOOM_RELEASE_REPOSITORY" --jq .visibility)" = public
+          test "$ZOOOM_UPDATE_FEED_URL" = "https://github.com/$ZOOOM_RELEASE_REPOSITORY/releases/latest/download/appcast.xml"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+          test "$ZOOOM_RELEASE_TAG" = "v$version"
+          git rev-parse --verify "refs/tags/$ZOOOM_RELEASE_TAG"
+          git merge-base --is-ancestor HEAD origin/main
+          cp Resources/Info.plist "$RUNNER_TEMP/preflight-info.plist"
+          ZOOOM_RELEASE=1 python3 Scripts/configure-updates.py "$RUNNER_TEMP/preflight-info.plist"
+          python3 Scripts/validate-release-version.py
+      - name: Download and verify private Zoom SDK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZOOM_SDK_ASSET_ID: ${{ vars.ZOOM_SDK_ASSET_ID }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$ZOOM_SDK_ASSET_ID" \
+            -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/zoom-sdk.zip"
+          sdk_path=$(python3 Scripts/prepare-zoom-sdk.py "$RUNNER_TEMP/zoom-sdk.zip" "$RUNNER_TEMP/zoom-sdk")
+          echo "WHOOSH_ZOOM_SDK_PATH=$sdk_path" >> "$GITHUB_ENV"
+      - name: Resolve locked dependencies and run tests with Zoom SDK
+        run: |
+          swift package resolve --force-resolved-versions
+          /bin/bash Scripts/test.sh
+          python3 -m unittest discover -s Scripts/tests -v
+          python3 Scripts/test-update-signatures.py
+      - name: Import release signing credentials
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: /bin/bash Scripts/ci-signing-setup.sh
+      - name: Build signed and notarized release
+        env:
+          WHOOSH_SIGNING_IDENTITY: 'Developer ID Application: Michael Grinich (VSVHNQP588)'
+          ZOOOM_NOTARY_PROFILE: zooom-ci
+        run: /bin/bash Scripts/package-release.sh
+      - name: Retain verified release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zooom-${{ env.ZOOOM_RELEASE_TAG }}
+          path: |
+            dist/Zooom-macOS.zip
+            dist/Zooom-macOS.zip.sha256
+            dist/Zooom.dmg
+            dist/Zooom.dmg.sha256
+            dist/appcast.xml
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish installers and feed together
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.ZOOOM_RELEASE_TOKEN }}
+        run: /bin/bash Scripts/publish-release.sh
+      - name: Remove temporary signing credentials
+        if: always()
+        run: |
+          if [ -n "${ZOOOM_NOTARY_KEYCHAIN:-}" ]; then security delete-keychain "$ZOOOM_NOTARY_KEYCHAIN"; fi
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/sparkle-key.txt"

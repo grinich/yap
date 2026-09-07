@@ -1,7 +1,8 @@
 import Foundation
 
 /// Zoom identity and SDK signing for the app owner's private, locally configured build.
-/// Creates only the owner's instant meetings. No account-wide APIs or invitations are invoked here.
+/// Creates the owner's instant meetings and reads their cloud recordings.
+/// No account-wide APIs or invitations are invoked here.
 public actor ZoomAccountClient {
     private let store: any ZoomCredentialStore
     private let transport: ZoomHTTPTransport
@@ -157,6 +158,85 @@ public actor ZoomAccountClient {
 
     public func markHostedMeetingStarted(_ meetingNumber: Int64) {
         if pendingHostedMeeting == meetingNumber { pendingHostedMeeting = nil }
+    }
+
+    /// List the connected owner's cloud recordings in an inclusive UTC date range
+    /// of at most one month. Keep subsequent pages on the same range; Zoom page
+    /// tokens expire after 15 minutes.
+    public func recordings(from: Date, to: Date, nextPageToken: String = "") async throws -> ZoomRecordingPage {
+        guard connectionTask == nil else { throw ZoomAccountError.authorizationInProgress }
+        let expected = generation
+        try requireGeneration(expected)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let firstDay = calendar.startOfDay(for: from)
+        let lastDay = calendar.startOfDay(for: to)
+        guard firstDay <= lastDay, let limit = calendar.date(byAdding: .month, value: 1, to: firstDay),
+              lastDay <= limit else { throw ZoomAccountError.invalidRecordingDateRange }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        var components = URLComponents(string: "https://api.zoom.us/v2/users/me/recordings")!
+        components.queryItems = [URLQueryItem(name: "from", value: formatter.string(from: firstDay)),
+                                 URLQueryItem(name: "to", value: formatter.string(from: lastDay)),
+                                 URLQueryItem(name: "page_size", value: "100")]
+        if !nextPageToken.isEmpty { components.queryItems?.append(URLQueryItem(name: "next_page_token", value: nextPageToken)) }
+        // A page token is opaque; form-style query parsers must not turn '+' into a space.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        guard let url = components.url else { throw ZoomAccountError.invalidResponse }
+        let configuration = try await configuration()
+        try requireGeneration(expected)
+        var token = try await accessToken(configuration: configuration, generation: expected)
+        for attempt in 0...1 {
+            try requireGeneration(expected)
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+            request.httpShouldHandleCookies = false
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let data: Data
+            let response: HTTPURLResponse
+            do { (data, response) = try await transport.send(request) }
+            catch {
+                try requireGeneration(expected)
+                throw error
+            }
+            try requireGeneration(expected)
+            if (try? JSONDecoder().decode(ProviderErrorResponse.self, from: data).code) == 4711 {
+                throw ZoomAccountError.missingRecordingScope
+            }
+            if response.statusCode == 401 {
+                guard attempt == 0 else { throw ZoomAccountError.notConnected }
+                token = try await accessToken(configuration: configuration, generation: expected, forceRefresh: true)
+                continue
+            }
+            if response.statusCode == 403 { throw ZoomAccountError.missingRecordingScope }
+            try Self.checkStatus(response)
+            guard let page = try? JSONDecoder().decode(ZoomRecordingPage.self, from: data) else {
+                throw ZoomAccountError.invalidResponse
+            }
+            return page
+        }
+        throw ZoomAccountError.notConnected
+    }
+
+    /// Returns an in-memory authorized request for a completed video or saved chat. Never persist
+    /// this request or place its bearer token in a player URL.
+    public func recordingMediaRequest(for file: ZoomRecordingFile, forceRefresh: Bool = false) async throws -> URLRequest {
+        guard file.isPlayableVideo || file.isChatTranscript, let url = file.mediaURL else {
+            throw ZoomAccountError.recordingUnavailable
+        }
+        guard connectionTask == nil else { throw ZoomAccountError.authorizationInProgress }
+        let expected = generation
+        try requireGeneration(expected)
+        let configuration = try await configuration()
+        try requireGeneration(expected)
+        let token = try await accessToken(configuration: configuration, generation: expected, forceRefresh: forceRefresh)
+        try requireGeneration(expected)
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+        request.httpShouldHandleCookies = false
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return request
     }
 
     private func cancelCreationWaiter(_ waiterID: UUID, taskID: UUID, generation expected: UUID) {

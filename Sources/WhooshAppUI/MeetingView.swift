@@ -18,7 +18,7 @@ struct MeetingView: View {
 
     private var meeting: MeetingCoordinator { model.meeting }
     private var focusedParticipant: MeetingParticipant? {
-        meeting.visibleParticipants.first { $0.id == model.focusedParticipantID }
+        meeting.presentationParticipant
     }
     private var invitationToCopy: URL? {
         MeetingPresentationRules.invitationToCopy(meeting.invitationURL, isConnected: meeting.isConnected, isDemo: meeting.isDemo)
@@ -43,10 +43,7 @@ struct MeetingView: View {
     var body: some View {
         Group {
             if showsConnectionStage {
-                VStack(spacing: 0) {
-                    meetingHeader
-                    connectionStage
-                }
+                connectionStage
             } else {
                 GeometryReader { available in
                     let compactWidth = available.size.width < 620
@@ -137,9 +134,6 @@ struct MeetingView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
             if notification.object as? NSWindow === model.sharingPresentation.mainWindow { keyboardControlsActive = false }
         }
-        .onChange(of: meeting.pageIndex) { _, _ in
-            if focusedParticipant == nil { model.focusedParticipantID = nil }
-        }
         .onChange(of: meeting.sessionID) { _, _ in
             showShareChooser = false
             copiedInvitation = nil
@@ -204,6 +198,16 @@ struct MeetingView: View {
             }
             if !showsConnectionStage {
                 Menu {
+                    Picker("View", selection: Binding(get: { meeting.layout }, set: { meeting.setLayout($0) })) {
+                        ForEach(MeetingLayout.allCases, id: \.self) { layout in
+                            Text(layout.title).tag(layout)
+                        }
+                    }
+                    .pickerStyle(.inline).labelsHidden()
+                    if model.focusedParticipantID != nil {
+                        Button("Unpin participant", systemImage: "pin.slash") { model.focusedParticipantID = nil }
+                    }
+                    if meeting.layout == .gallery || !meeting.receivedShares.isEmpty || model.isPreview { Divider() }
                     if meeting.capabilities.canReceiveShare && !meeting.receivedShares.isEmpty {
                         Section("Shared content") {
                             ForEach(meeting.receivedShares) { share in
@@ -217,17 +221,15 @@ struct MeetingView: View {
                             }
                         }
                     }
-                    if focusedParticipant != nil {
-                        Button("Show everyone", systemImage: "square.grid.2x2") { model.focusedParticipantID = nil }
-                        Divider()
-                    }
-                    Picker("People per page", selection: Binding(get: { model.gridLimit }, set: { model.updateGridLimit($0) })) {
-                        ForEach([25, 49, 100], id: \.self) { count in
-                            Text("Up to \(count)").tag(count)
+                    if meeting.layout == .gallery {
+                        Picker("People per page", selection: Binding(get: { model.gridLimit }, set: { model.updateGridLimit($0) })) {
+                            ForEach([25, 49, 100], id: \.self) { count in
+                                Text("Up to \(count)").tag(count)
+                            }
+                            Text("Show all").tag(0)
                         }
-                        Text("Show all").tag(0)
+                        .pickerStyle(.inline)
                     }
-                    .pickerStyle(.inline)
                     if model.isPreview {
                         Section("Sample participants") {
                             ForEach([2, 6, 25, 49, 100], id: \.self) { count in
@@ -239,7 +241,7 @@ struct MeetingView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "square.grid.2x2").font(.system(size: 15))
+                    Image(systemName: meeting.layout.symbol).font(.system(size: 15))
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
@@ -247,6 +249,7 @@ struct MeetingView: View {
                 .background(WhooshWindowInteractionRegion(isEnabled: showsControls))
                 .tint(nil as Color?).foregroundStyle(.primary)
                 .help("Meeting layout").accessibilityLabel("Meeting layout")
+                .accessibilityValue(meeting.layout.title)
                 .disabled(!meeting.isConnected)
                 inspectorToggle("Chat", symbol: "bubble", sidebar: .chat)
                     .disabled(!meeting.isConnected)
@@ -283,7 +286,7 @@ struct MeetingView: View {
                             HStack(spacing: 8) {
                                 ForEach(meeting.visibleParticipants) { participant in
                                     participantTile(participant)
-                                        .frame(width: stripHeight * 16 / 9, height: stripHeight)
+                                        .frame(width: stripHeight * participant.tileAspectRatio, height: stripHeight)
                                 }
                             }
                         }
@@ -306,20 +309,47 @@ struct MeetingView: View {
                     .font(.system(size: 13)).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let pair = meeting.oneToOneParticipants {
+            participantTile(pair.remote, focused: model.focusedParticipantID == pair.remote.id, immersive: true)
+                .overlay(alignment: .topTrailing) {
+                    GeometryReader { geometry in
+                        let frame = MeetingSelfViewLayout.frame(in: geometry.size,
+                            aspectRatio: pair.local.tileAspectRatio, compactHeight: compactHeight)
+                        ParticipantTile(participant: pair.local, meeting: meeting,
+                            allowsNativeVideo: !model.sharingPresentation.isPresenting, showsInfo: false)
+                            .overlay { WhooshVideoWindowDragSurface().accessibilityHidden(true) }
+                            .frame(width: frame.width, height: frame.height)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(.white.opacity(0.22), lineWidth: 0.75))
+                            .overlay(alignment: .bottomTrailing) {
+                                if pair.local.isCameraEnabled && pair.local.isMuted {
+                                    Image(systemName: "mic.slash.fill")
+                                        .font(.system(size: 9, weight: .medium)).foregroundStyle(.white)
+                                        .padding(5).background(.black.opacity(0.55), in: Circle())
+                                        .padding(6).accessibilityHidden(true)
+                                }
+                            }
+                            .shadow(color: .black.opacity(0.28), radius: 12, y: 4)
+                            .position(x: frame.midX, y: frame.midY)
+                            .accessibilityLabel("Your self-view, \(pair.local.isCameraEnabled ? "camera on" : "camera off"), \(pair.local.isMuted ? "microphone muted" : "microphone on")")
+                    }
+                    .padding(.trailing, model.sidebar != nil ? 22 : 0)
+                }
         } else if meeting.visibleParticipants.count == 1, let participant = meeting.visibleParticipants.first {
             participantTile(participant, immersive: true)
         } else if let focusedParticipant {
             GeometryReader { geometry in
                 let stripHeight = min(90, max(40, geometry.size.height * 0.22))
                 ZStack(alignment: .bottom) {
-                    participantTile(focusedParticipant, focused: true, immersive: true)
+                    participantTile(focusedParticipant, focused: model.focusedParticipantID == focusedParticipant.id, immersive: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if !compactHeight && meeting.visibleParticipants.count > 1 {
                         ScrollView(.horizontal) {
                             HStack(spacing: 8) {
                                 ForEach(meeting.visibleParticipants.filter { $0.id != focusedParticipant.id }) { participant in
                                     participantTile(participant)
-                                        .frame(width: stripHeight * 16 / 9, height: stripHeight)
+                                        .frame(width: stripHeight * participant.tileAspectRatio, height: stripHeight)
                                 }
                             }
                         }
@@ -330,32 +360,33 @@ struct MeetingView: View {
                 }
             }
         } else {
-            MeetingTileLayout(spacing: meeting.visibleParticipants.count > 25 ? 6 : 10) {
-                ForEach(meeting.visibleParticipants) { participant in participantTile(participant) }
-            }
+            MeetingGalleryView(meeting: meeting) { participant in participantTileContent(participant) }
+            .id(meeting.sessionID)
             .padding(6)
         }
     }
 
     private func participantTile(_ participant: MeetingParticipant, focused: Bool = false, immersive: Bool = false) -> some View {
+        participantTileContent(participant, focused: focused, immersive: immersive)
+            .overlay { WhooshVideoWindowDragSurface().accessibilityHidden(true) }
+            .contextMenu {
+                Button(model.focusedParticipantID == participant.id ? "Unpin \(participant.name)" : "Focus on \(participant.name)", systemImage: model.focusedParticipantID == participant.id ? "pin.slash" : "pin") { pin(participant) }
+            }
+    }
+
+    private func participantTileContent(_ participant: MeetingParticipant, focused: Bool = false, immersive: Bool = false) -> some View {
         ParticipantTile(participant: participant, meeting: meeting, isFocused: focused,
                         allowsNativeVideo: !model.sharingPresentation.isPresenting,
                         fillsFrame: immersive, showsInfo: !immersive || showsControls)
             .contentShape(RoundedRectangle(cornerRadius: 12))
             .onTapGesture(count: 2) { pin(participant) }
-            .contextMenu {
-                Button(focused ? "Show everyone" : "Focus on \(participant.name)", systemImage: focused ? "square.grid.2x2" : "pin") { pin(participant) }
-            }
-            .accessibilityAction(named: focused ? "Show everyone" : "Focus on this person") { pin(participant) }
+            .accessibilityAction(named: model.focusedParticipantID == participant.id ? "Unpin this person" : "Focus on this person") { pin(participant) }
             .help(participant.name + (participant.isMuted ? " · Microphone muted" : " · Microphone on"))
     }
 
     private func pin(_ participant: MeetingParticipant) {
         meeting.selectReceivedShare(nil)
         if model.focusedParticipantID == participant.id { model.focusedParticipantID = nil; return }
-        if let index = meeting.participants.firstIndex(where: { $0.id == participant.id }) {
-            meeting.setPage(index / meeting.pageSize)
-        }
         model.focusedParticipantID = participant.id
     }
 
@@ -474,32 +505,9 @@ struct MeetingView: View {
     }
 
     private var connectionStage: some View {
-        VStack(spacing: 12) {
-            ProgressView().controlSize(.regular)
-            Text(meeting.status.label).font(.headline)
-            if meeting.status == .waitingForHost {
-                Text("The meeting will begin when the host starts it.")
-                    .font(.callout).foregroundStyle(.secondary)
-            } else if meeting.status == .waitingRoom {
-                Text("The host will let you in.")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-        }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: 340)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
-        .overlay(alignment: .bottom) {
-            if meeting.status != .leaving {
-                Button(meeting.status == .reconnecting ? "Leave meeting…" : meeting.status == .waitingRoom ? "Leave waiting room" : "Cancel") {
-                    if meeting.status == .reconnecting { model.showLeaveConfirmation = true }
-                    else { Task { await model.leaveMeeting() } }
-                }
-                .buttonStyle(.bordered).controlSize(.regular)
-                .tint(nil as Color?).foregroundStyle(.primary)
-                .keyboardShortcut(.cancelAction)
-                .padding(.bottom, 20)
-            }
+        MeetingConnectionView(title: meeting.meetingTitle, status: meeting.status) {
+            if meeting.status == .reconnecting { model.showLeaveConfirmation = true }
+            else { Task { await model.leaveMeeting() } }
         }
     }
 
@@ -602,10 +610,8 @@ struct MeetingView: View {
                 }
                 ForEach(people) { participant in
                     HStack(spacing: 10) {
-                        Text(participant.initials).font(.system(size: 11, weight: .medium))
-                            .frame(width: 30, height: 30)
-                            .background(WhooshTheme.palette[abs(participant.avatarSeed % WhooshTheme.palette.count)].opacity(0.45), in: Circle())
-                            .accessibilityHidden(true)
+                        ParticipantAvatarView(participant: participant, sessionID: meeting.sessionID,
+                                              diameter: 30, fontSize: 11, backgroundOpacity: 0.45)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(participant.name + (participant.isSelf ? " (you)" : ""))
                                 .font(.system(size: 12, weight: .medium)).lineLimit(1)
@@ -624,8 +630,8 @@ struct MeetingView: View {
                         }
                         .buttonStyle(.borderless)
                         .tint(nil as Color?).foregroundStyle(.primary)
-                        .help(model.focusedParticipantID == participant.id ? "Show everyone" : "Focus on \(participant.name)")
-                        .accessibilityLabel(model.focusedParticipantID == participant.id ? "Show everyone" : "Focus on \(participant.name)")
+                        .help(model.focusedParticipantID == participant.id ? "Unpin \(participant.name)" : "Focus on \(participant.name)")
+                        .accessibilityLabel(model.focusedParticipantID == participant.id ? "Unpin \(participant.name)" : "Focus on \(participant.name)")
                     }
                     .padding(.horizontal, 16).padding(.vertical, 9)
                     .accessibilityElement(children: .contain)
@@ -676,7 +682,6 @@ struct ParticipantTile: View {
     var meeting: MeetingCoordinator
     var isFocused = false
     var allowsNativeVideo = true
-    var preservesRendererSize = false
     var fillsFrame = false
     var showsInfo = true
 
@@ -693,7 +698,9 @@ struct ParticipantTile: View {
                 LinearGradient(colors: [color.opacity(0.17), color.opacity(0.025)], startPoint: .topLeading, endPoint: .bottomTrailing)
                 if rendersNativeVideo {
                     NativeVideoContainer(meeting: meeting, participantID: participant.id,
-                                         preservesRendererSize: preservesRendererSize, fillsFrame: fillsFrame)
+                                         fillsFrame: fillsFrame,
+                                         aspectRatio: participant.tileAspectRatio)
+                        .allowsHitTesting(false)
                         // Focus A → B must mount a new owner for B's renderer,
                         // rather than reuse A's older host behind B's thumbnail.
                         .id(participant.id)
@@ -707,12 +714,7 @@ struct ParticipantTile: View {
                         geometry.size.height - inset * 2 - nameHeight - spacing))
                     let badgeSize = min(22, avatarSize * 0.34)
                     VStack(spacing: spacing) {
-                        Text(participant.initials)
-                            .font(.system(size: max(1, min(42, avatarSize * 0.42)), weight: .regular, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.76))
-                            .lineLimit(1).minimumScaleFactor(0.5)
-                            .frame(width: avatarSize, height: avatarSize)
-                            .background(color.opacity(0.22), in: Circle())
+                        ParticipantAvatarView(participant: participant, sessionID: meeting.sessionID, diameter: avatarSize)
                             .overlay(alignment: .topTrailing) {
                                 if participant.isMuted || participant.isSpeaking {
                                     Image(systemName: participant.isMuted ? "mic.slash.fill" : "waveform")
@@ -772,50 +774,11 @@ struct ParticipantTile: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: fillsFrame ? 0 : compact ? 7 : 12))
-            .overlay(RoundedRectangle(cornerRadius: fillsFrame ? 0 : compact ? 7 : 12).strokeBorder(participant.isSpeaking ? .mint.opacity(0.65) : fillsFrame ? .clear : .white.opacity(0.04), lineWidth: participant.isSpeaking ? 1.5 : 1))
+            // Full-bleed video stays square beneath the native window mask,
+            // but its inset speaking outline must follow the rounded edge.
+            .overlay(RoundedRectangle(cornerRadius: compact ? 7 : 12, style: .continuous).strokeBorder(participant.isSpeaking ? .mint.opacity(0.65) : fillsFrame ? .clear : .white.opacity(0.04), lineWidth: participant.isSpeaking ? 1.5 : 1))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(participant.name)\(participant.isSelf ? ", you" : "")\(participant.isHost ? ", host" : ""), \(participant.isMuted ? "microphone muted" : "microphone on"), \(participant.isCameraEnabled ? "camera on" : "camera off")")
-    }
-}
-
-/// Fits equal 16:9 tiles into the available canvas and centers incomplete rows.
-/// The maximum-area layout is calculated once per layout pass, including at 100 tiles.
-private struct MeetingTileLayout: Layout {
-    var spacing: CGFloat
-
-    private func arrangement(count: Int, size: CGSize) -> (columns: Int, tile: CGSize) {
-        guard count > 0 else { return (1, .zero) }
-        var best = (columns: 1, tile: CGSize.zero)
-        for columns in 1...count {
-            let rows = Int(ceil(Double(count) / Double(columns)))
-            let width = max(0, (size.width - CGFloat(columns - 1) * spacing) / CGFloat(columns))
-            let height = max(0, (size.height - CGFloat(rows - 1) * spacing) / CGFloat(rows))
-            let fittedWidth = min(width, height * 16 / 9)
-            if fittedWidth > best.tile.width { best = (columns, CGSize(width: fittedWidth, height: fittedWidth * 9 / 16)) }
-        }
-        return best
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        proposal.replacingUnspecifiedDimensions(by: CGSize(width: 800, height: 450))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard !subviews.isEmpty else { return }
-        let layout = arrangement(count: subviews.count, size: bounds.size)
-        let rows = Int(ceil(Double(subviews.count) / Double(layout.columns)))
-        let totalHeight = CGFloat(rows) * layout.tile.height + CGFloat(rows - 1) * spacing
-        for index in subviews.indices {
-            let row = index / layout.columns
-            let column = index % layout.columns
-            let itemsInRow = min(layout.columns, subviews.count - row * layout.columns)
-            let rowWidth = CGFloat(itemsInRow) * layout.tile.width + CGFloat(itemsInRow - 1) * spacing
-            let position = CGPoint(
-                x: bounds.minX + (bounds.width - rowWidth) / 2 + CGFloat(column) * (layout.tile.width + spacing),
-                y: bounds.minY + (bounds.height - totalHeight) / 2 + CGFloat(row) * (layout.tile.height + spacing)
-            )
-            subviews[index].place(at: position, anchor: .topLeading, proposal: ProposedViewSize(layout.tile))
-        }
     }
 }

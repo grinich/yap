@@ -135,66 +135,38 @@ struct WhooshSharingOverlayTests {
         #expect(WhooshSharingOverlayLayout.participants(from: [local]).map(\.id) == ["me"])
     }
 
-    @Test func placementFitsSmallAndOffsetDisplaysWithoutCrossingMenuBar() {
+    @Test func largerPictureInPictureFitsPortraitAndLandscapeDisplays() {
         for screen in [CGRect(x: 0, y: 0, width: 640, height: 480),
                        CGRect(x: -1920, y: -200, width: 1920, height: 1055)] {
-            for count in 1...6 {
-                let strip = WhooshSharingOverlayLayout.stripFrame(in: screen, count: count)
-                #expect(screen.contains(strip))
-                #expect(strip.width <= screen.width * 0.6)
-                #expect(abs(strip.midX - screen.midX) < 0.01)
-                #expect(abs(strip.maxY - (screen.maxY - 12)) < 0.01)
-                let width = (strip.width - 16 - CGFloat(count - 1) * 8) / CGFloat(count)
-                #expect(abs((strip.height - 16) - width * 9 / 16) < 0.01)
+            for ratios in [[16.0 / 9.0], [9.0 / 16.0], Array(repeating: 16.0 / 9.0, count: 6)] {
+                let pip = WhooshSharingOverlayLayout.stripFrame(in: screen, aspectRatios: ratios)
+                #expect(screen.contains(pip))
+                #expect(pip.width >= 200 && pip.height >= 140)
+                #expect(pip.maxY <= screen.maxY)
+                let resized = CGRect(x: screen.maxX + 100, y: screen.minY - 200, width: 400, height: 300)
+                let clamped = WhooshSharingOverlayLayout.clampedStripFrame(resized, in: screen)
+                #expect(screen.contains(clamped))
+                #expect(clamped.size == resized.size)
             }
             #expect(screen.contains(WhooshSharingOverlayLayout.chatFrame(in: screen)))
         }
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let normal = WhooshSharingOverlayLayout.stripFrame(in: screen, aspectRatios: [16 / 9])
+        #expect(normal.width >= 384 && normal.height >= 216)
+        let portrait = WhooshSharingOverlayLayout.stripFrame(in: screen, aspectRatios: [9 / 16])
+        #expect(portrait.height > portrait.width)
     }
 
-    @Test func pointerFadeHasHysteresisAndWorksOnNegativeScreenCoordinates() {
-        let frame = CGRect(x: -900, y: 600, width: 500, height: 79)
-        #expect(WhooshSharingOverlayLayout.pointerHidesStrip(CGPoint(x: -910, y: 630), frame: frame, wasHidden: false))
-        #expect(!WhooshSharingOverlayLayout.pointerHidesStrip(CGPoint(x: -923, y: 630), frame: frame, wasHidden: false))
-        #expect(WhooshSharingOverlayLayout.pointerHidesStrip(CGPoint(x: -923, y: 630), frame: frame, wasHidden: true))
-        #expect(!WhooshSharingOverlayLayout.pointerHidesStrip(CGPoint(x: -933, y: 630), frame: frame, wasHidden: true))
-    }
-
-    @Test func dragHandleTracksTheStripAndClampsBothWithinTheDisplay() {
-        let screen = CGRect(x: -1920, y: -200, width: 1920, height: 1055)
-        let original = CGRect(x: -1200, y: 500, width: 500, height: 79)
-        let handle = WhooshSharingOverlayLayout.handleFrame(for: original)
-        #expect(WhooshSharingOverlayLayout.stripFrame(forHandle: handle, stripSize: original.size) == original)
-        let movedHandle = handle.offsetBy(dx: 120, dy: -80)
-        #expect(WhooshSharingOverlayLayout.stripFrame(forHandle: movedHandle, stripSize: original.size) == original.offsetBy(dx: 120, dy: -80))
-        for candidate in [original.offsetBy(dx: -2000, dy: -2000), original.offsetBy(dx: 2000, dy: 2000)] {
-            let clamped = WhooshSharingOverlayLayout.clampedStripFrame(candidate, in: screen)
-            #expect(screen.contains(clamped))
-            #expect(screen.contains(WhooshSharingOverlayLayout.handleFrame(for: clamped)))
-            #expect(clamped.size == original.size)
-        }
-    }
-
-    @Test func handleHoverAndDraggingKeepParticipantFeedbackVisible() {
-        let strip = CGRect(x: 100, y: 500, width: 500, height: 79)
-        let handle = WhooshSharingOverlayLayout.handleFrame(for: strip)
-        let overHandle = CGPoint(x: handle.midX, y: handle.midY)
-        #expect(!WhooshSharingOverlayLayout.pointerHidesStrip(overHandle, frame: strip, wasHidden: true, handleFrame: handle))
-        #expect(!WhooshSharingOverlayLayout.pointerHidesStrip(CGPoint(x: strip.midX, y: strip.midY), frame: strip,
-                                                             wasHidden: true, handleFrame: handle, isDragging: true))
-        #expect(WhooshSharingOverlayLayout.pointerHidesStrip(CGPoint(x: strip.midX, y: strip.midY), frame: strip,
-                                                            wasHidden: false, handleFrame: handle, isDragging: false))
-    }
-
-    @Test func dragUsesScreenCoordinatesAcrossEventsAndClearsAtMouseUp() {
-        var drag = WhooshOverlayDrag()
-        #expect(drag.translatedOrigin(pointer: .zero) == nil)
-        drag.begin(pointer: CGPoint(x: -500, y: 720), windowOrigin: CGPoint(x: -522, y: 713))
-        #expect(drag.translatedOrigin(pointer: CGPoint(x: -320, y: 580)) == CGPoint(x: -342, y: 573))
-        #expect(drag.translatedOrigin(pointer: CGPoint(x: -500, y: 720)) == CGPoint(x: -522, y: 713))
-        drag.end()
-        #expect(drag.translatedOrigin(pointer: CGPoint(x: 500, y: 500)) == nil)
-        drag.begin(pointer: CGPoint(x: 800, y: 400), windowOrigin: CGPoint(x: 778, y: 393))
-        #expect(drag.translatedOrigin(pointer: CGPoint(x: 801, y: 401)) == CGPoint(x: 779, y: 394))
+    @Test func resizingKeepsTheTopLeftAnchorAndEnforcesUsableBounds() {
+        let original = CGRect(x: -800, y: 300, width: 400, height: 250)
+        let minimum = CGSize(width: 200, height: 140)
+        let maximum = CGSize(width: 1000, height: 700)
+        let enlarged = PictureInPictureResize.frame(from: original, translation: CGSize(width: 120, height: -80), minimum: minimum, maximum: maximum)
+        #expect(enlarged == CGRect(x: -800, y: 220, width: 520, height: 330))
+        let small = PictureInPictureResize.frame(from: original, translation: CGSize(width: -900, height: 900), minimum: minimum, maximum: maximum)
+        #expect(small.size == minimum && small.maxY == original.maxY && small.minX == original.minX)
+        let huge = PictureInPictureResize.frame(from: original, translation: CGSize(width: 9000, height: -9000), minimum: minimum, maximum: maximum)
+        #expect(huge.size == maximum && huge.maxY == original.maxY)
     }
 
     @Test func pendingSendSurvivesPresentationChangesAndKeepsNewDraft() async {

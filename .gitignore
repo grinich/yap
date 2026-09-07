@@ -2,6 +2,7 @@
 .swiftpm/
 .DS_Store
 build/
+dist/
 Vendor/
 *.xcuserstate
 *.xcuserdatad/
@@ -10,6 +11,7 @@ Vendor/
 !.env.example
 *.p12
 *.pfx
+*.p8
 *.pem
 *.key
 *.keychain

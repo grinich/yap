@@ -1,7 +1,7 @@
 import AppKit
 
 /// Keeps AppKit's button tracking and accessibility with a quiet, single-dot
-/// appearance. Its action goes through the standard window close delegate.
+/// appearance. Its action hides the main window or asks to leave an active call.
 @MainActor
 final class WhooshWindowCloseButton: NSButton {
     private var isHovered = false
@@ -18,6 +18,9 @@ final class WhooshWindowCloseButton: NSButton {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

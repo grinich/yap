@@ -2,9 +2,39 @@ import Foundation
 import Testing
 @testable import WhooshAppUI
 
-@Suite("Personal bundle preference migration")
+@Suite("Bundle preference migration")
 @MainActor
 struct WhooshPreferenceMigrationTests {
+    @Test func newIdentityMigratesThePreviousBundleBeforeTheOriginalPersonalApp() {
+        #expect(WhooshPreferenceMigration.currentBundleIdentifier == "com.grinich.zooom")
+        #expect(WhooshPreferenceMigration.legacyBundleIdentifiers == ["com.grinich.woosh", "app.whoosh.personal"])
+        let result = WhooshPreferenceMigration.merging(current: [:], legacy: [
+            "displayName": "Taylor", "whoosh.migratedPersonalPreferences.v1": true
+        ])
+        #expect(result["displayName"] as? String == "Taylor")
+        #expect(result[WhooshPreferenceMigration.completionKey] as? Bool == true)
+        #expect(result["whoosh.migratedPersonalPreferences.v1"] == nil)
+    }
+
+    @Test(arguments: [true, false])
+    func usesOnlyTheMostRecentExistingDomain(recentDomainExists: Bool) throws {
+        let unique = UUID().uuidString
+        let domains = ["zooom.preference-test.current.\(unique)",
+                       "zooom.preference-test.recent.\(unique)",
+                       "zooom.preference-test.original.\(unique)"]
+        let preferences = try #require(UserDefaults(suiteName: domains[0]))
+        defer { domains.forEach { preferences.removePersistentDomain(forName: $0) } }
+        preferences.setPersistentDomain(["displayName": "Original", "selectedCalendarIDs": ["old"]], forName: domains[2])
+        if recentDomainExists {
+            preferences.setPersistentDomain(["displayName": "Recent", "whoosh.migratedPersonalPreferences.v1": true], forName: domains[1])
+        }
+        WhooshPreferenceMigration.migrate(preferences: preferences, currentDomain: domains[0], legacyDomains: Array(domains.dropFirst()))
+        #expect(preferences.string(forKey: "displayName") == (recentDomainExists ? "Recent" : "Original"))
+        // A missing selection in the newer domain must not resurrect an older selection.
+        #expect(preferences.stringArray(forKey: "selectedCalendarIDs") == (recentDomainExists ? nil : ["old"]))
+        #expect(preferences.persistentDomain(forName: domains[2])?["displayName"] as? String == "Original")
+    }
+
     @Test func copiesOnlyTheFiveSupportedUserPreferences() {
         let result = WhooshPreferenceMigration.merging(current: [:], legacy: [
             "displayName": "Taylor", "selectedCalendarIDs": ["primary", "work"],

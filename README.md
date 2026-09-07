@@ -1,6 +1,12 @@
 # Zooom
 
+**Releases and updates:** the GitHub workflow and Sparkle updater are implemented; publishing still needs an approved download destination and signing credentials. [Release setup and acceptance checks](Documentation/Releases.md).
+
 Private development repository: `grinich/zooom`. The Swift package lives at the repository root; the internal package and executable names remain `Whoosh`. Local verification links below refer to sibling `../outputs` and `../work` folders, which are intentionally not committed. The proprietary Zoom SDK and personal signing/account configuration are also excluded; see [Zoom setup](Documentation/Zoom-Setup.md) and [personal signing](Documentation/Personal-Signing.md).
+
+**Bundle identity — September 7, 2026:** the macOS bundle identifier is `com.grinich.zooom`. The update migrates supported preferences from `com.grinich.woosh` and retains the existing secure credential namespaces. For the one-time installed app migration, use `Scripts/install-personal-app.sh --migrate-from-woosh`; future updates use the normal installer command. [Identity migration and verification](Documentation/Bundle-Identity.md).
+
+**Recording library:** the Recordings button beside Close opens a sliding library of Zoom cloud recordings, with search, older months, native video playback, video-segment selection, and downloads. Double-click a recording for its own player window. The Chat control opens saved meeting messages on the right, following and highlighting them during playback. The Zoom app needs the `cloud_recording:read:list_user_recordings` scope and a fresh sign-in. [Setup, playback behavior, and verification limits](Documentation/Recordings.md).
 
 **Latest minimal agenda checkpoint — September 6, 2026:** the date and main Upcoming heading are removed, with cards directly below the pinned top-right Start/Join controls. Native installed Mac screenshots verify normal and 320 × 272 compact layouts; the original window size was restored. Both app copies passed deep, strict signature checks, and all 339 functional tests in 46 suites pass. [Verification](../outputs/Zooom-Minimal-Agenda-Verification.md).
 
@@ -48,7 +54,7 @@ Earlier builds separately verified local/incoming gallery video, two-way chat, o
 
 ## Build and test
 
-Requires the installed Xcode 26.6 toolchain with Swift 6.3.3 or newer. SwiftPM does not fetch third-party packages. The proprietary Zoom SDK is downloaded separately and remains outside source control.
+Requires Xcode 26.6 with Swift 6.3.3 or newer. SwiftPM resolves the pinned Sparkle 2.9.6 updater from `Package.resolved`. The proprietary Zoom SDK is downloaded separately and remains outside source control.
 
 ```sh
 git clone git@github.com:grinich/zooom.git
@@ -59,7 +65,7 @@ bash Scripts/build-app.sh release
 bash Scripts/install-personal-app.sh
 ```
 
-The installer copies the verified package to `~/Applications/Zooom.app`, outside the development workspace in Documents. It requires the configured persistent certificate fingerprint, refuses a running app or a different installed bundle/signing identity, and verifies a staged copy before replacement. It unregisters the development package and registers the canonical installed copy with Launch Services. It does not launch Zooom or change macOS permissions or trust. A same-identity installation at `~/Applications/Whoosh.app` is migrated to the new name; the installer refuses ambiguous duplicate installations. The one-time `--migrate-from-personal` option accepts only the approved old identity and new Developer ID identity. Normal updates require the standard Apple/team designated requirement. Keychain service names and the `whoosh` URL scheme remain compatible; macOS authorization is still required for existing protected resources under a new identity.
+The installer copies the verified package to `~/Applications/Zooom.app`, outside the development workspace in Documents. It requires the configured persistent certificate fingerprint, refuses a running app or a different installed bundle/signing identity, and verifies a staged copy before replacement. It unregisters the development package and registers the canonical installed copy with Launch Services. It does not launch Zooom or change macOS permissions or trust. A same-identity installation at `~/Applications/Whoosh.app` is migrated to the new name; the installer refuses ambiguous duplicate installations. The one-time `--migrate-from-woosh` option accepts the previous `com.grinich.woosh` bundle only after verifying its existing Apple/team designated requirement. The older `--migrate-from-personal` option accepts only the approved old identity and new Developer ID identity. Normal updates require the standard Apple/team designated requirement. Keychain service names and the `whoosh` URL scheme remain compatible; macOS authorization is still required for existing protected resources under a new identity.
 
 The build produces `../outputs/Zooom.app`, including native icon assets, extracted shortcuts, and the Zoom SDK runtime. It stages and signs the complete package before replacement. The historical PiP release compiled in **10.62 seconds**, verified **97 embedded Mach-O images**, extracted **three App Intents** and **three App Shortcuts**, and passed strict signing. The package was installed at `~/Applications/Whoosh.app` and launched successfully. [Package log](../work/pip-verified-release.log), [install log](../work/pip-verified-install.log). Notarization has not been performed.
 

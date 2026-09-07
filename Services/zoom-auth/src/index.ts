@@ -126,7 +126,9 @@ async function verifyAuthorization(grant: string, token: string, env: Env, now: 
 
 async function zoomRequest(url: string, init: RequestInit, deps: Dependencies): Promise<Record<string, unknown>> {
   let response: Response;
-  try { response = await deps.fetch(url, {...init, redirect: "error", signal: AbortSignal.timeout(15_000)}); }
+  // workerd rejects redirect: "error" before sending the request. Manual mode
+  // keeps credentials at the pinned endpoint; the non-OK guard also rejects 3xx.
+  try { response = await deps.fetch(url, {...init, redirect: "manual", signal: AbortSignal.timeout(15_000)}); }
   catch { throw new RequestFailure(502, "zoom_unavailable"); }
   if (!response.ok) {
     await response.body?.cancel();

@@ -37,7 +37,7 @@ function signatureRequest(grant: string, token = "fake-access") {
 test("PKCE exchange pins the public client, preserves verifier/redirect, and returns a bound grant", async () => {
   const response = await handleRequest(post("/v1/oauth/token", codeBody()), environment(), dependency((url, init) => {
     assert.equal(url, "https://zoom.us/oauth/token");
-    assert.equal(init.method, "POST"); assert.equal(init.redirect, "error");
+    assert.equal(init.method, "POST"); assert.equal(init.redirect, "manual");
     const body = new URLSearchParams(String(init.body));
     assert.deepEqual(Object.fromEntries(body), codeBody());
     assert.equal(new Headers(init.headers).get("Authorization"), null);
@@ -96,7 +96,7 @@ test("signer verifies live authorization and signs a one-hour native SDK JWT", a
   const response = await handleRequest(signatureRequest(grant), env, dependency((url, init) => {
     assert.equal(url, "https://api.zoom.us/v2/users/me/zak");
     assert.equal(new Headers(init.headers).get("Authorization"), "Bearer fake-access");
-    assert.equal(init.redirect, "error");
+    assert.equal(init.redirect, "manual");
     return Response.json({token: "fake-zak"});
   }));
   assert.equal(response.status, 200);
@@ -167,6 +167,36 @@ test("upstream network errors and oversized responses expose no credentials", as
   const oversized = await handleRequest(post("/v1/oauth/token", codeBody()), environment(),
     dependency(() => new Response("x".repeat(70_000))));
   assert.equal(oversized.status, 502);
+});
+
+test("Zoom redirects never forward credentials or retry token exchanges or authorization checks", async () => {
+  const env = environment();
+  const grant = await obtainGrant(env);
+  const requests = [
+    {make: () => post("/v1/oauth/token", codeBody()), endpoint: "https://zoom.us/oauth/token"},
+    {make: () => post("/v1/oauth/token", {grant_type: "refresh_token", refresh_token: "fake-refresh"}),
+      endpoint: "https://zoom.us/oauth/token"},
+    {make: () => signatureRequest(grant), endpoint: "https://api.zoom.us/v2/users/me/zak"}
+  ];
+  for (const status of [301, 302, 303, 307, 308]) {
+    for (const {make, endpoint} of requests) {
+      let calls = 0;
+      let cancelled = false;
+      const response = await handleRequest(make(), env, dependency((url, init) => {
+        calls++;
+        assert.equal(url, endpoint);
+        assert.equal(init.redirect, "manual");
+        return new Response(new ReadableStream({cancel() { cancelled = true; }}), {
+          status, headers: {Location: "https://another.example.test/collect?private-detail=never-expose"}
+        });
+      }));
+      assert.equal(calls, 1);
+      assert.equal(cancelled, true);
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get("Location"), null);
+      assert.equal(await response.text(), '{"error":"zoom_unavailable"}');
+    }
+  }
 });
 
 test("public documents use the asset binding while API routes remain protected", async () => {

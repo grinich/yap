@@ -124,46 +124,21 @@ struct TodayView: View {
             let compact = available.size.width < 560
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let upcoming = AgendaRules.upcoming(model.events, now: context.date)
-                VStack(spacing: 0) {
-                    HStack {
-                        Button {
-                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
-                                model.recordings.toggle()
-                            }
-                        } label: {
-                            Label("Recordings", systemImage: "sidebar.left")
-                                .font(.system(size: 12, weight: .medium))
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .background(model.recordings.isPresented ? WhooshTheme.accent.opacity(0.15) : .clear, in: Capsule())
-                                .foregroundStyle(model.recordings.isPresented ? WhooshTheme.accent : .primary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Recordings")
-                        .accessibilityValue(model.recordings.isPresented ? "Open" : "Closed")
-                        .help("Show or hide recordings · ⇧⌘R")
-                        .background(WhooshWindowInteractionRegion(isEnabled: true))
-                        Spacer(minLength: 0)
-                        if !model.recordings.isPresented {
-                            meetingActions
-                                .background(WhooshWindowInteractionRegion(isEnabled: true))
-                        }
-                    }
-                    .frame(minHeight: 36)
-                    .padding(.leading, 52)
-                    .padding(.trailing, 12)
-                    .padding(.vertical, 12)
-                    .overlay(WhooshWindowDragSurface())
-
-                    HStack(spacing: 0) {
-                        if model.recordings.isPresented {
+                HStack(spacing: 0) {
+                    if model.recordings.isPresented {
+                        VStack(spacing: 0) {
+                            windowHeader
                             RecordingSidebar(model: model.recordings, connection: model.zoomConnection,
                                              isPreview: model.isPreview, openSettings: { model.showSettings = true })
-                                .frame(width: 260)
-                                .transition(.move(edge: .leading).combined(with: .opacity))
-                            Divider()
-                            RecordingPlayerView(model: model.recordings)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else {
+                        }
+                        .frame(width: 260)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        Divider()
+                        RecordingPlayerView(model: model.recordings)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        VStack(spacing: 0) {
+                            windowHeader
                             ScrollView {
                                 VStack(alignment: .leading, spacing: compact ? 18 : 28) {
                                     if let next = upcoming.first {
@@ -186,8 +161,8 @@ struct TodayView: View {
                             .background(Color.clear)
                         }
                     }
-                    .clipped()
                 }
+                .clipped()
             }
         }
         .ignoresSafeArea(.container, edges: .top)
@@ -197,6 +172,37 @@ struct TodayView: View {
             }
         }
         .onDisappear { model.recordings.stopPlayback() }
+    }
+
+    private var windowHeader: some View {
+        HStack {
+            Button {
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
+                    model.recordings.toggle()
+                }
+            } label: {
+                Label("Recordings", systemImage: "sidebar.left")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(model.recordings.isPresented ? WhooshTheme.accent.opacity(0.15) : .clear, in: Capsule())
+                    .foregroundStyle(model.recordings.isPresented ? WhooshTheme.accent : .primary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Recordings")
+            .accessibilityValue(model.recordings.isPresented ? "Open" : "Closed")
+            .help("Show or hide recordings · ⇧⌘R")
+            .background(WhooshWindowInteractionRegion(isEnabled: true))
+            Spacer(minLength: 0)
+            if !model.recordings.isPresented {
+                meetingActions
+                    .background(WhooshWindowInteractionRegion(isEnabled: true))
+            }
+        }
+        .frame(minHeight: 36)
+        .padding(.leading, 52)
+        .padding(.trailing, 12)
+        .padding(.vertical, 12)
+        .overlay(WhooshWindowDragSurface())
     }
 
     private var meetingActions: some View {

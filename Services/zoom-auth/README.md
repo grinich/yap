@@ -36,9 +36,9 @@ The authentication-service job in `.github/workflows/ci.yml` runs on ordinary pu
 
 Wrangler's [dry-run command](https://developers.cloudflare.com/workers/wrangler/commands/#deploy) and [local secret handling](https://developers.cloudflare.com/workers/local-development/environment-variables/) document the distinction between local validation and deployment.
 
-## Public review and help pages
+## Local review and help preview
 
-The Worker can serve `public/` as static assets. Generate that directory from the repository root:
+Generate the local-only `public/` preview from the repository root. The deployed authentication Worker is API-only and does not serve these pages:
 
 ```sh
 python3 Scripts/build-review-site.py
@@ -50,4 +50,4 @@ The generator uses Python's standard library and an escaped Markdown subset, wit
 
 The only copied images are Yap's app icon and the two sample screenshots described in `Documentation/Images/README.md`. Files under `public/` are an explicit allowlist. Generation validates local links and anchors; `--check` also rejects stale pages or unexpected files. CI checks generated output before bundling. The site has no scripts, forms, analytics, external fonts, or remote image requests. Its `_headers` policy applies to static asset responses; API headers remain the Worker's responsibility.
 
-The routes are `/`, `/guide/`, `/support/`, `/privacy/`, `/terms/`, and `/notices/`, with a separate 404 page. A draft notice in the source terms stays visible on the generated page; generating or deploying that page does not adopt the terms. Review final publication status and regenerate before a release.
+The local preview routes are `/`, `/guide/`, `/support/`, `/privacy/`, `/terms/`, and `/notices/`, with a separate 404 page. Terms render from their GitHub source, including its effective date. Generating the preview does not publish a site or change the Terms. Regenerate and run `--check` after updating the README or capture assets.

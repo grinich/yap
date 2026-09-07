@@ -54,7 +54,7 @@ struct RecordingMonthWindow: Equatable, Sendable {
 
 @MainActor @Observable
 public final class RecordingLibraryModel {
-    static let playbackSpeeds: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5]
+    static let playbackSpeeds: [Float] = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75]
 
     public var isPresented = false
     private(set) var isPreview = false

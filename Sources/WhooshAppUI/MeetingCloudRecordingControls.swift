@@ -148,9 +148,10 @@ struct MeetingCloudRecordingCallControl: View {
                 .padding(8)
                 .contentShape(RoundedRectangle(cornerRadius: 12))
             }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .menuStyle(.button).menuIndicator(.hidden).buttonStyle(.plain).fixedSize()
             .controlSize(.large)
             .tint(nil as Color?).foregroundStyle(.primary)
+            .whooshIconHover(cornerRadius: 12)
             .disabled(state.isBusy)
             .help(state.disabledReason ?? state.statusLabel ?? "Cloud recording controls")
             .accessibilityLabel(state.statusLabel ?? "Cloud recording")
@@ -169,6 +170,7 @@ struct MeetingCloudRecordingCallControl: View {
             }
             .buttonStyle(.borderless).controlSize(.large)
             .tint(nil as Color?).foregroundStyle(.primary)
+            .whooshIconHover(cornerRadius: 12)
             .disabled(!state.canPerform(.start))
             .help(state.disabledReason ?? "Record to Cloud")
             .accessibilityLabel("Record to Cloud")

@@ -20,8 +20,12 @@ struct RecordingSidebar: View {
                     .accessibilityLabel("Search loaded recordings by title or date")
                     .help("Search titles or dates, like Aug 31, 8/31, or last Monday")
                 if !model.search.isEmpty {
-                    Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    Button { model.search = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .frame(width: 20, height: 20).contentShape(Rectangle())
+                    }
                         .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Clear search")
+                        .whooshIconHover(cornerRadius: 6)
                 }
             }
             .padding(9).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
@@ -157,20 +161,27 @@ struct RecordingPlayerView: View {
             if let meeting = model.selectedMeeting {
                 GeometryReader { geometry in
                     let overlaysChat = geometry.size.width < 660
-                    let chatWidth = max(0, min(300, geometry.size.width - 32))
-                    HStack(spacing: 0) {
-                        playerContent(meeting)
-                            .padding(.top, headerHeight)
-                        if model.chat.isPresented && !overlaysChat {
-                            chatPane(width: chatWidth)
-                        }
-                    }
+                    // Leave room for the playback controls outside even an overlay pane.
+                    let chatWidth = max(0, min(300, geometry.size.width - 196))
+                    let titleWidth = availableTitleWidth(meeting, width: geometry.size.width, chatWidth: chatWidth,
+                                                         reservingChat: model.chat.isPresented)
+                    // Keep metadata on the same row throughout the chat transition;
+                    // otherwise it could cross the menus while they slide sideways.
+                    let compactHeader = availableTitleWidth(meeting, width: geometry.size.width,
+                                                            chatWidth: chatWidth, reservingChat: true) < 260
+                    let height: CGFloat = compactHeader ? 144 : headerHeight
+                    playerContent(meeting)
+                        .padding(.top, height)
+                        .padding(.trailing, model.chat.isPresented && !overlaysChat ? chatWidth : 0)
                     .overlay(alignment: .trailing) {
-                        if model.chat.isPresented && overlaysChat {
+                        if model.chat.isPresented {
                             chatPane(width: chatWidth)
                         }
                     }
-                    .overlay(alignment: .top) { playerHeader(meeting, chatWidth: chatWidth) }
+                    .overlay(alignment: .top) {
+                        playerHeader(meeting, width: geometry.size.width, chatWidth: chatWidth,
+                                     titleWidth: titleWidth, compact: compactHeader, height: height)
+                    }
                     .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: model.chat.isPresented)
                 }
                 .clipped()
@@ -195,8 +206,18 @@ struct RecordingPlayerView: View {
         }
     }
 
-    private func playerHeader(_ meeting: ZoomRecordingMeeting, chatWidth: CGFloat) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+    private func availableTitleWidth(_ meeting: ZoomRecordingMeeting, width: CGFloat, chatWidth: CGFloat,
+                                     reservingChat: Bool) -> CGFloat {
+        let playbackWidth: CGFloat = !model.isPreview && model.selectedFile != nil
+            ? (meeting.playableVideoFiles.count > 1 ? 132 : 68) : 0
+        let trailingWidth = reservingChat ? chatWidth + 24 : 64
+        return max(0, width - 24 - trailingWidth - playbackWidth - 16)
+    }
+
+    private func playerHeader(_ meeting: ZoomRecordingMeeting, width: CGFloat, chatWidth: CGFloat,
+                              titleWidth: CGFloat, compact: Bool, height: CGFloat) -> some View {
+        let metadataWidth = compact ? max(0, width - (model.chat.isPresented ? chatWidth : 0) - 48) : titleWidth
+        return ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 12) {
                     Text(meeting.topic.isEmpty ? "Untitled meeting" : meeting.topic)
@@ -209,56 +230,70 @@ struct RecordingPlayerView: View {
                 Text(meeting.startTime.formatted(date: .long, time: .shortened))
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer(minLength: 8)
-            HStack(spacing: 12) {
-                if model.chat.isPresented {
-                    Text("Chat")
-                        .font(.headline).lineLimit(1)
-                        .accessibilityAddTraits(.isHeader)
-                        .frame(height: 32)
-                        .transition(.opacity.combined(with: .move(edge: .trailing)))
-                    Spacer(minLength: 0)
-                }
+            .frame(width: metadataWidth, alignment: .leading)
+            .offset(x: 24, y: compact ? 72 : 24)
+
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
                 HStack(spacing: 8) {
                     if !model.isPreview, model.selectedFile != nil {
                         videoMenu(meeting)
                         speedMenu
                     }
+                }
+                .fixedSize()
+                .padding(.trailing, model.chat.isPresented ? 24 : 8)
+                HStack(spacing: 0) {
+                    if model.chat.isPresented {
+                        Text("Chat")
+                            .font(.headline).lineLimit(1)
+                            .accessibilityAddTraits(.isHeader)
+                            .padding(.leading, 14)
+                            .transition(.opacity)
+                        Spacer(minLength: 0)
+                    }
                     Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.chat.setPresented($0) })) {
                         Label("Chat", systemImage: "bubble")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 32, height: 32)
+                            .contentShape(RoundedRectangle(cornerRadius: 10))
+                            .background(model.chat.isPresented ? Color.primary.opacity(0.09) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 10))
                     }
-                    .toggleStyle(.button).labelStyle(.iconOnly).buttonStyle(.borderless)
-                    .frame(width: 32, height: 32)
-                    .background(model.chat.isPresented ? Color.primary.opacity(0.09) : .clear,
-                                in: RoundedRectangle(cornerRadius: 10))
+                    .toggleStyle(.button).buttonStyle(.plain)
+                    .whooshIconHover(isSelected: model.chat.isPresented)
                     .tint(nil as Color?).foregroundStyle(.primary)
                     .help("\(model.chat.isPresented ? "Hide" : "Show") chat")
                     .background(WhooshWindowInteractionRegion())
                 }
-                .fixedSize()
+                // This group's leading edge follows the chat glass, while the
+                // same menu instances slide alongside it instead of reappearing.
+                .frame(width: model.chat.isPresented ? max(32, chatWidth - 24) : 32, height: 32)
             }
-            // Match the transcript’s leading inset inside the actual chat pane.
-            .frame(width: model.chat.isPresented ? max(32, chatWidth - 14 - 24) : nil)
+            .padding(.horizontal, 24).padding(.top, 24)
         }
-        .padding(24)
-        .frame(height: headerHeight)
+        .frame(width: width, height: height, alignment: .topLeading)
         .overlay(WhooshWindowDragSurface())
     }
 
     private func recordingActions(_ meeting: ZoomRecordingMeeting) -> some View {
         HStack(spacing: 12) {
-            Button(copiedLink == nil ? "Copy link" : "Link copied", systemImage: copiedLink == nil ? "link" : "checkmark") {
+            Button {
                 if RecordingSharing.copyLink(for: meeting) { copiedLink = UUID() }
+            } label: {
+                Label(copiedLink == nil ? "Copy link" : "Link copied", systemImage: copiedLink == nil ? "link" : "checkmark")
+                    .labelStyle(.iconOnly).frame(width: 32, height: 32).contentShape(Rectangle())
             }
-            .labelStyle(.iconOnly).buttonStyle(.borderless)
-            .frame(width: 32, height: 32)
+            .buttonStyle(.plain).whooshIconHover()
             .foregroundStyle(.primary)
             .disabled(meeting.shareableURL == nil)
             .help(meeting.shareableURL == nil ? "No sharing link is available for this recording" : "Copy recording link")
             if model.selectedFile != nil, !model.isPreview {
-                Button("Save video…", systemImage: "arrow.down.to.line", action: saveVideo)
-                    .labelStyle(.iconOnly).buttonStyle(.borderless)
-                    .frame(width: 32, height: 32).foregroundStyle(.primary)
+                Button(action: saveVideo) {
+                    Label("Save video…", systemImage: "arrow.down.to.line")
+                        .labelStyle(.iconOnly).frame(width: 32, height: 32).contentShape(Rectangle())
+                }
+                    .buttonStyle(.plain).whooshIconHover().foregroundStyle(.primary)
                     .disabled(model.isDownloading).help("Save video to your Mac")
             }
         }
@@ -345,7 +380,12 @@ struct RecordingPlayerView: View {
                 }
                 .pickerStyle(.inline).labelsHidden()
             } label: {
-                Image(nsImage: RecordingPlaybackLayout(recordingType: model.selectedFile?.recordingType).image)
+                HStack(spacing: 4) {
+                    Image(nsImage: RecordingPlaybackLayout(recordingType: model.selectedFile?.recordingType).image)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                        .accessibilityHidden(true)
+                }
+                .frame(width: 56, height: 32).contentShape(RoundedRectangle(cornerRadius: 10))
             }
             .modifier(RecordingPlaybackMenuStyle())
             .help("Video layout: \(currentLayout) · V to cycle")
@@ -366,7 +406,12 @@ struct RecordingPlayerView: View {
             }
             .pickerStyle(.inline).labelsHidden()
         } label: {
-            Text(playbackSpeedLabel).monospacedDigit()
+            HStack(spacing: 4) {
+                Text(playbackSpeedLabel).monospacedDigit()
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                    .accessibilityHidden(true)
+            }
+            .frame(width: 68, height: 32).contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .modifier(RecordingPlaybackMenuStyle())
         .disabled(model.selectedFile == nil)
@@ -425,12 +470,11 @@ struct RecordingPlayerView: View {
 private struct RecordingPlaybackMenuStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .menuStyle(.borderlessButton).menuIndicator(.visible)
+            .menuStyle(.button).menuIndicator(.hidden).buttonStyle(.plain)
             .font(.system(size: 12, weight: .medium))
             .tint(nil as Color?).foregroundStyle(.primary)
             .fixedSize()
-            .padding(.horizontal, 8).frame(height: 32)
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .whooshIconHover()
     }
 }
 

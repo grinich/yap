@@ -23,10 +23,14 @@ struct MeetingShareChooser: View {
                 Text(meeting.isDemo ? "Preview sharing" : "Share screen").font(.headline)
                 Spacer()
                 if !meeting.isDemo {
-                    Button("Refresh windows and displays", systemImage: "arrow.clockwise") { refreshID = UUID() }
-                        .labelStyle(.iconOnly).buttonStyle(.borderless)
-                        .help("Refresh windows and displays")
-                        .disabled(isLoading || isSubmitting || !meeting.isConnected)
+                    Button { refreshID = UUID() } label: {
+                        Label("Refresh windows and displays", systemImage: "arrow.clockwise")
+                            .frame(width: 32, height: 32).contentShape(Rectangle())
+                    }
+                    .labelStyle(.iconOnly).buttonStyle(.borderless)
+                    .whooshIconHover()
+                    .help("Refresh windows and displays")
+                    .disabled(isLoading || isSubmitting || !meeting.isConnected)
                 }
             }
             sourceGrid.frame(height: 316)

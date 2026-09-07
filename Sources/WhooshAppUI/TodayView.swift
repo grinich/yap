@@ -189,6 +189,7 @@ struct TodayView: View {
                     .foregroundStyle(model.recordings.isPresented ? WhooshTheme.accent : .primary)
             }
             .buttonStyle(.plain)
+            .whooshIconHover(isSelected: model.recordings.isPresented, cornerRadius: 100)
             .accessibilityLabel("Recordings")
             .accessibilityValue(model.recordings.isPresented ? "Open" : "Closed")
             .help("Show or hide recordings · ⇧⌘R")
@@ -230,6 +231,7 @@ struct TodayView: View {
                     .foregroundStyle(.white)
             }
             .buttonStyle(.glassProminent)
+            .whooshIconHover(cornerRadius: 100)
             .help("Start a meeting · ⇧⌘N")
             .accessibilityLabel("Start a meeting")
             Button("Join with a link…", systemImage: "link") {
@@ -238,6 +240,7 @@ struct TodayView: View {
                 model.showJoinSheet = true
             }
             .buttonStyle(.glass)
+            .whooshIconHover(cornerRadius: 100)
             .tint(nil as Color?)
             .foregroundStyle(.primary)
             .help("Join with a link · ⌘J")
@@ -398,8 +401,12 @@ struct TodayView: View {
                         }
                         .frame(maxWidth: compact ? 92 : nil, alignment: .trailing)
                         if AgendaRules.showsJoinButton(for: event, now: now) {
-                            Button { Task { await model.joinNextCalendarMeeting(expectedEventID: event.id) } } label: { Image(systemName: "arrow.up.right") }
-                                .buttonStyle(.borderless).accessibilityLabel("Join \(event.title)").help("Join \(event.title)")
+                            Button { Task { await model.joinNextCalendarMeeting(expectedEventID: event.id) } } label: {
+                                Image(systemName: "arrow.up.right")
+                                    .frame(width: 32, height: 32).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless).whooshIconHover()
+                            .accessibilityLabel("Join \(event.title)").help("Join \(event.title)")
                         }
                     }.padding(.vertical, 13)
                     if event.id != items.last?.id { Divider().padding(.leading, compact ? 0 : 19) }

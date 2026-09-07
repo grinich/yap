@@ -146,8 +146,11 @@ struct MeetingChatView: View {
                 Image(systemName: "info.circle").font(.system(size: 12))
             }
             .foregroundStyle(.primary)
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.borderless).accessibilityLabel(notice.prompt)
+        .whooshIconHover(cornerRadius: 8)
         .tint(nil as Color?)
         .accessibilityHint("Opens Zoom’s chat privacy information")
         .popover(isPresented: $showChatNotice, arrowEdge: .top) {
@@ -203,6 +206,7 @@ struct MeetingChatView: View {
     private var sendButton: some View {
         Button("Send message", systemImage: "arrow.up") { presentation.sendMessage(in: meeting) }
             .labelStyle(.iconOnly).controlSize(.regular).buttonBorderShape(.circle)
+            .whooshIconHover(cornerRadius: 100)
             .help("Send message")
             .disabled(presentation.chatDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || presentation.chatDraft.count > 4_000 || presentation.isSending || !meeting.isConnected || !meeting.capabilities.canChat || meeting.isApplyingControl)
     }

@@ -78,7 +78,7 @@ struct RecordingPlaybackTests {
         #expect(abs(model.player.currentTime().seconds - pausedPosition) < 0.025)
     }
 
-    @Test(arguments: [Float(1.75), 2.25, 2.5])
+    @Test(arguments: [Float(1.75), 2.25, 2.5, 2.75])
     func changingSpeedWhilePausedKeepsThePositionAndResumesAtThatSpeed(_ speed: Float) async throws {
         let fixture = try await RecordingPlaybackFixture.make()
         defer { fixture.cleanUp() }
@@ -726,7 +726,7 @@ struct RecordingPlaybackTests {
         model.player.pause()
         #expect(await model.player.seek(to: time(0.4), toleranceBefore: .zero, toleranceAfter: .zero))
         let item = model.player.currentItem
-        for expected in [Float(1.25), 1.5, 1.75, 2, 2.25, 2.5, 0.5, 0.75, 1] {
+        for expected in [Float(1.25), 1.5, 1.75, 2, 2.25, 2.5, 2.75, 1] {
             model.cyclePlaybackSpeed()
             #expect(model.playbackSpeed == expected)
             #expect(model.player.defaultRate == expected)

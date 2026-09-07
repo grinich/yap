@@ -188,11 +188,16 @@ struct MeetingView: View {
                     .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
             if let invitation = invitationToCopy {
-                Button(copiedInvitation == invitation ? "Invite link copied" : "Copy invite link", systemImage: copiedInvitation == invitation ? "checkmark" : "link") {
+                Button {
                     copyInvitation(invitation)
+                } label: {
+                    Label(copiedInvitation == invitation ? "Invite link copied" : "Copy invite link",
+                          systemImage: copiedInvitation == invitation ? "checkmark" : "link")
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .labelStyle(.iconOnly).buttonStyle(.borderless)
-                .frame(width: 32, height: 32)
+                .whooshIconHover()
                 .tint(nil as Color?).foregroundStyle(.primary)
                 .help("Copy invite link")
             }
@@ -245,7 +250,8 @@ struct MeetingView: View {
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton).fixedSize()
+                .menuStyle(.button).buttonStyle(.plain).fixedSize()
+                .whooshIconHover()
                 .background(WhooshWindowInteractionRegion(isEnabled: showsControls))
                 .tint(nil as Color?).foregroundStyle(.primary)
                 .help("Meeting layout").accessibilityLabel("Meeting layout")
@@ -263,12 +269,14 @@ struct MeetingView: View {
     private func inspectorToggle(_ label: String, symbol: String, sidebar: MeetingSidebar) -> some View {
         Toggle(isOn: Binding(get: { model.sidebar == sidebar }, set: { model.sidebar = $0 ? sidebar : nil })) {
             Label(label, systemImage: symbol)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
         }
         .toggleStyle(.button).labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .frame(width: 32, height: 32)
         .background(model.sidebar == sidebar ? Color.primary.opacity(0.09) : .clear,
                     in: RoundedRectangle(cornerRadius: 10))
+        .whooshIconHover(isSelected: model.sidebar == sidebar)
         .tint(nil as Color?).foregroundStyle(.primary)
         .help("\(model.sidebar == sidebar ? "Hide" : "Show") \(label.lowercased())")
     }
@@ -392,11 +400,21 @@ struct MeetingView: View {
 
     private var pageControls: some View {
         HStack(spacing: 16) {
-            Button { meeting.setPage(meeting.pageIndex - 1) } label: { Image(systemName: "chevron.left") }
+            Button { meeting.setPage(meeting.pageIndex - 1) } label: {
+                Image(systemName: "chevron.left")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+                .whooshIconHover(cornerRadius: 8)
                 .disabled(meeting.pageIndex == 0).accessibilityLabel("Previous participants")
             Text("\(meeting.pageIndex + 1) of \(meeting.pageCount)")
                 .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
-            Button { meeting.setPage(meeting.pageIndex + 1) } label: { Image(systemName: "chevron.right") }
+            Button { meeting.setPage(meeting.pageIndex + 1) } label: {
+                Image(systemName: "chevron.right")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+                .whooshIconHover(cornerRadius: 8)
                 .disabled(meeting.pageIndex + 1 >= meeting.pageCount).accessibilityLabel("Next participants")
         }
         .buttonStyle(.borderless)
@@ -478,6 +496,7 @@ struct MeetingView: View {
             // The dock supplies the one glass surface; avoid glass on glass.
             button.buttonStyle(.borderless)
                 .tint(nil as Color?).foregroundStyle(.primary)
+                .whooshIconHover(cornerRadius: 16)
         }
     }
 
@@ -574,8 +593,11 @@ struct MeetingView: View {
                 if !participantSearch.isEmpty {
                     Button { participantSearch = "" } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain).help("Clear search")
+                    .whooshIconHover(cornerRadius: 4)
                     .accessibilityLabel("Clear people search")
                 }
             }
@@ -627,8 +649,11 @@ struct MeetingView: View {
                         Button { pin(participant) } label: {
                             Image(systemName: model.focusedParticipantID == participant.id ? "pin.fill" : "pin")
                                 .font(.system(size: 11))
+                                .frame(width: 24, height: 24)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.borderless)
+                        .whooshIconHover(cornerRadius: 8)
                         .tint(nil as Color?).foregroundStyle(.primary)
                         .help(model.focusedParticipantID == participant.id ? "Unpin \(participant.name)" : "Focus on \(participant.name)")
                         .accessibilityLabel(model.focusedParticipantID == participant.id ? "Unpin \(participant.name)" : "Focus on \(participant.name)")
@@ -669,6 +694,7 @@ private struct MeetingLeaveButtonStyle: ButtonStyle {
             ? Color(red: configuration.isPressed ? 0.29 : 0.22, green: 0.105, blue: 0.105)
             : Color(red: 0.98, green: configuration.isPressed ? 0.84 : 0.91, blue: configuration.isPressed ? 0.82 : 0.90)
         configuration.label
+            .whooshIconHover(cornerRadius: 16)
             .foregroundStyle(foreground)
             .background(background, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16)

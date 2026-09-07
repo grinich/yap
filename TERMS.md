@@ -1,10 +1,10 @@
 # Terms for the free preview
 
-**Draft prepared September 7, 2026 for release review. Not yet published or in effect.** These proposed terms apply to the official Yap macOS preview and its project-operated authorization service. The developer and operator is **Michael Grinich**, an individual, contactable at [mgrinich@gmail.com](mailto:mgrinich@gmail.com).
+**Effective September 7, 2026.** These terms apply to the official Yap macOS preview and its project-operated authorization service. The developer and operator is **Michael Grinich**, an individual, contactable at [mgrinich@gmail.com](mailto:mgrinich@gmail.com).
 
 ## Using the preview
 
-When these terms are adopted and published for the preview, using the official app or authorization service means agreeing to them. If you do not agree, do not use the preview. The preview is provided without a charge from Michael Grinich. Your own Zoom, Google, internet or other third-party charges remain your responsibility.
+Using the official app or authorization service means agreeing to these terms. If you do not agree, do not use the preview. The preview is provided without a charge from Michael Grinich. Your own Zoom, Google, internet or other third-party charges remain your responsibility.
 
 You may use the preview for lawful personal or team purposes with accounts and meetings you are authorized to access. Obtain any necessary permission from your organization. Keep your account credentials private, and do not share the developer's SDK secret, bypass access controls or rate limits, impersonate another user, or interfere with the app, authorization service or other users.
 

@@ -126,7 +126,9 @@ async function verifyAuthorization(grant: string, token: string, env: Env, now: 
 
 async function zoomRequest(url: string, init: RequestInit, deps: Dependencies): Promise<Record<string, unknown>> {
   let response: Response;
-  try { response = await deps.fetch(url, {...init, redirect: "error", signal: AbortSignal.timeout(15_000)}); }
+  // workerd rejects redirect: "error" before sending the request. Manual mode
+  // keeps credentials at the pinned endpoint; the non-OK guard also rejects 3xx.
+  try { response = await deps.fetch(url, {...init, redirect: "manual", signal: AbortSignal.timeout(15_000)}); }
   catch { throw new RequestFailure(502, "zoom_unavailable"); }
   if (!response.ok) {
     await response.body?.cancel();
@@ -214,7 +216,6 @@ export async function handleRequest(request: Request, env: Env, deps = liveDepen
     if (url.search) throw new RequestFailure(400, "invalid_request");
     if (url.pathname === "/health" && request.method === "GET") return json({status: "ok"});
     if (url.pathname !== TOKEN_PATH && url.pathname !== SIGNATURE_PATH) {
-      if (request.method === "GET" || request.method === "HEAD") return env.ASSETS.fetch(request);
       throw new RequestFailure(404, "not_found");
     }
     if (request.method !== "POST") throw new RequestFailure(405, "method_not_allowed");

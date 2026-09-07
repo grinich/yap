@@ -9,8 +9,7 @@ function environment(): Env {
     ZOOM_PUBLIC_CLIENT_ID: "test-public-client", ZOOM_SDK_CLIENT_ID: "test-sdk-client",
     ZOOM_SDK_CLIENT_SECRET: "fake-test-sdk-secret", SIGNING_GRANT_SECRET: "fake-test-grant-secret-with-at-least-43-characters",
     REQUEST_LIMITER: {limit: async () => ({success: true})},
-    SIGNATURE_LIMITER: {limit: async () => ({success: true})},
-    ASSETS: {fetch: async () => new Response("Not found", {status: 404}), connect: () => { throw new Error("No sockets in asset tests"); }}
+    SIGNATURE_LIMITER: {limit: async () => ({success: true})}
   };
 }
 const codeBody = () => ({grant_type: "authorization_code", client_id: "test-public-client",
@@ -37,7 +36,7 @@ function signatureRequest(grant: string, token = "fake-access") {
 test("PKCE exchange pins the public client, preserves verifier/redirect, and returns a bound grant", async () => {
   const response = await handleRequest(post("/v1/oauth/token", codeBody()), environment(), dependency((url, init) => {
     assert.equal(url, "https://zoom.us/oauth/token");
-    assert.equal(init.method, "POST"); assert.equal(init.redirect, "error");
+    assert.equal(init.method, "POST"); assert.equal(init.redirect, "manual");
     const body = new URLSearchParams(String(init.body));
     assert.deepEqual(Object.fromEntries(body), codeBody());
     assert.equal(new Headers(init.headers).get("Authorization"), null);
@@ -96,7 +95,7 @@ test("signer verifies live authorization and signs a one-hour native SDK JWT", a
   const response = await handleRequest(signatureRequest(grant), env, dependency((url, init) => {
     assert.equal(url, "https://api.zoom.us/v2/users/me/zak");
     assert.equal(new Headers(init.headers).get("Authorization"), "Bearer fake-access");
-    assert.equal(init.redirect, "error");
+    assert.equal(init.redirect, "manual");
     return Response.json({token: "fake-zak"});
   }));
   assert.equal(response.status, 200);
@@ -169,9 +168,50 @@ test("upstream network errors and oversized responses expose no credentials", as
   assert.equal(oversized.status, 502);
 });
 
-test("public documents use the asset binding while API routes remain protected", async () => {
+test("Zoom redirects never forward credentials or retry token exchanges or authorization checks", async () => {
   const env = environment();
-  env.ASSETS.fetch = async () => new Response("Public documentation");
-  assert.equal(await (await handleRequest(new Request("https://auth.example.test/privacy/"), env, noNetwork)).text(), "Public documentation");
+  const grant = await obtainGrant(env);
+  const requests = [
+    {make: () => post("/v1/oauth/token", codeBody()), endpoint: "https://zoom.us/oauth/token"},
+    {make: () => post("/v1/oauth/token", {grant_type: "refresh_token", refresh_token: "fake-refresh"}),
+      endpoint: "https://zoom.us/oauth/token"},
+    {make: () => signatureRequest(grant), endpoint: "https://api.zoom.us/v2/users/me/zak"}
+  ];
+  for (const status of [301, 302, 303, 307, 308]) {
+    for (const {make, endpoint} of requests) {
+      let calls = 0;
+      let cancelled = false;
+      const response = await handleRequest(make(), env, dependency((url, init) => {
+        calls++;
+        assert.equal(url, endpoint);
+        assert.equal(init.redirect, "manual");
+        return new Response(new ReadableStream({cancel() { cancelled = true; }}), {
+          status, headers: {Location: "https://another.example.test/collect?private-detail=never-expose"}
+        });
+      }));
+      assert.equal(calls, 1);
+      assert.equal(cancelled, true);
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get("Location"), null);
+      assert.equal(await response.text(), '{"error":"zoom_unavailable"}');
+    }
+  }
+});
+
+test("service exposes only health and authenticated APIs, without hosting documents", async () => {
+  const env = environment();
+  const health = await handleRequest(new Request("https://auth.example.test/health"), env, noNetwork);
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), {status: "ok"});
+  for (const path of ["/", "/privacy/", "/terms/", "/support/", "/index.html", "/arbitrary-path"]) {
+    for (const method of ["GET", "HEAD", "POST"]) {
+      const response = await handleRequest(new Request(`https://auth.example.test${path}`, {method}), env, noNetwork);
+      assert.equal(response.status, 404);
+      assert.equal(response.headers.get("Location"), null);
+      assert.equal(await response.text(), '{"error":"not_found"}');
+    }
+  }
+  assert.equal((await handleRequest(post("/health"), env, noNetwork)).status, 404);
+  assert.equal((await handleRequest(new Request("https://auth.example.test/v1/oauth/token"), env, noNetwork)).status, 405);
   assert.equal((await handleRequest(post("/v1/meeting-sdk/signature"), env, noNetwork)).status, 401);
 });

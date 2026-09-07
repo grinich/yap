@@ -7,8 +7,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
-  "routes": [{"pattern": "meetings.grinich.app", "custom_domain": true}],
-  "assets": {"directory": "./public", "binding": "ASSETS", "run_worker_first": true},
+  "routes": [],
   "vars": {
     "ZOOM_PUBLIC_CLIENT_ID": "_Xz_EnBNS3OPtUmqZ1og3A",
     "ZOOM_SDK_CLIENT_ID": "UHoml3aIQpy86gZeijjfpQ"

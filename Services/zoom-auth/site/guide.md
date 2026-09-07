@@ -1,16 +1,16 @@
 # User guide
 
-This guide covers {{brand}} 0.1.0. The first installer is being prepared as a release candidate and remains a draft pending Zoom distribution approval. Managed production onboarding has not yet completed live acceptance. Check the [release status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md) for availability; the sample interface and source remain available.
+This guide covers Yap 0.1.1, the candidate being prepared for the first public installer. Packaging and native installation acceptance remain pending, along with Zoom distribution approval. Browser PKCE and authenticated service checks passed at the managed endpoint, but this does not establish native app onboarding. The superseded 0.1.0 draft should not be installed. Check the [release status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md) for availability; the sample interface and source remain available.
 
 ## Install and connect
 
-{{brand}} requires **Apple silicon and macOS 26 or newer**. When the release is published, download **Yap.dmg** from the project's [releases](https://github.com/grinich/yap/releases), open it, drag **Yap.app** to **Applications**, eject the disk image and launch Yap from Applications. **Yap-macOS.zip** is the alternative app archive; expand it and move Yap.app to Applications. Both downloads have a matching `.sha256` file. The first version is **0.1.0 (build 1)**. [Artifact and checksum details](https://github.com/grinich/yap/blob/main/Documentation/Releases.md#first-release-v010).
+Yap requires **Apple silicon and macOS 26 or newer**. When the release is published, download **Yap.dmg** from the project's [releases](https://github.com/grinich/yap/releases), open it, drag **Yap.app** to **Applications**, eject the disk image and launch Yap from Applications. **Yap-macOS.zip** is the alternative app archive; expand it and move Yap.app to Applications. Both downloads have a matching `.sha256` file. The current candidate is **0.1.1 (build 2)**; its artifacts are not yet available. [Planned artifact and checksum details](https://github.com/grinich/yap/blob/main/Documentation/Releases.md#first-release-v011).
 
 Quit any older app before switching to Yap. Keep it until you have verified the new app's account access; supported saved accounts and preferences can migrate through normal macOS permissions. See [migration details](https://github.com/grinich/yap/blob/main/Documentation/Bundle-Identity.md). For the SDK-free sample interface and personal developer setup, see the [source README](https://github.com/grinich/yap#try-yap).
 
 Open **Settings → Your meetings → Zoom**, then choose **Sign in with Zoom**. The browser opens Zoom's sign-in and consent page. Approve access with the account you want to use, and return to the app. The app does not ask for your Zoom password directly.
 
-Builds with the managed connection already know the project's public client and authorization service. If you see **Enter Zoom configuration…**, that build or connection is using personal developer mode; follow the [personal Zoom setup](https://github.com/grinich/yap/blob/main/Documentation/Zoom-Setup.md). Do not use another person's SDK secret. See [Privacy](/privacy/) for the two connection modes and their data flows.
+Builds with the managed connection already know the project's public client and authorization service. If you see **Enter Zoom configuration…**, that build or connection is using personal developer mode; follow the [personal Zoom setup](https://github.com/grinich/yap/blob/main/Documentation/Zoom-Setup.md). Do not use another person's SDK secret. See [Privacy](https://github.com/grinich/yap/blob/main/PRIVACY.md) for the two connection modes and their data flows.
 
 ## Join or start a meeting
 
@@ -50,7 +50,14 @@ Some recordings have no saved chat or transcript. Cloud settings, completion of 
 
 ## Keyboard shortcuts
 
-{{shortcuts}}
+| While watching a recording | Shortcut |
+| --- | --- |
+| Play / pause | Space |
+| Skip backward / forward | ← / → |
+| Cycle playback speed | S |
+| Cycle video layout | V |
+| Toggle fullscreen | F |
+| Show / hide recordings | ⇧⌘R |
 
 Left and Right skip ten seconds at a time. Recording shortcuts apply to the active player and leave search fields and text editing alone.
 
@@ -58,7 +65,7 @@ Left and Right skip ten seconds at a time. Recording shortcuts apply to the acti
 
 Leave active calls, then use **Settings → Disconnect Zoom** and disconnect Calendar if connected. Disconnect removes the app's local authorization and clears associated app playback and caches; personal developer configuration can remain. To revoke the provider's server-side grant too, remove the app from Zoom's or Google's connected-app settings.
 
-Quit the app and delete it from Applications to uninstall. Files you explicitly exported stay where you saved them until you delete them. Deleting the app does not remove every preference or SDK-owned item. The [Privacy policy](/privacy/) explains storage, retention, and deletion choices.
+Quit the app and delete it from Applications to uninstall. Files you explicitly exported stay where you saved them until you delete them. Deleting the app does not remove every preference or SDK-owned item. The [Privacy policy](https://github.com/grinich/yap/blob/main/PRIVACY.md) explains storage, retention, and deletion choices.
 
 ## Troubleshooting
 
@@ -67,4 +74,4 @@ Quit the app and delete it from Applications to uninstall. Files you explicitly 
 - **No chat or transcript appears:** Zoom must have saved that attachment. The app shows an availability or retry message when the file is absent or cannot be loaded.
 - **Camera, microphone, or sharing fails:** check the app's permissions in macOS System Settings and any meeting restrictions. Keep another way to join an important meeting during the preview.
 
-For help with a reproducible problem, see [Support](/support/). Send private account or security matters through the contact listed there, rather than a public issue.
+For help with a reproducible problem, see [Support](https://github.com/grinich/yap#support-and-feedback). Send private account or security matters through the contact in the [Privacy policy](https://github.com/grinich/yap/blob/main/PRIVACY.md), rather than a public issue.

@@ -14,20 +14,20 @@ sparkle = root / ".build/artifacts/sparkle/Sparkle"
 tools = sparkle / "bin"
 seed = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
 public = base64.b64encode(bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")).decode()
-with tempfile.TemporaryDirectory(prefix="zooom-update-test-") as temporary:
+with tempfile.TemporaryDirectory(prefix="yap-update-test-") as temporary:
     scratch = Path(temporary)
     key = scratch / "test-key.txt"
     key.write_bytes(base64.b64encode(seed))
     key.chmod(0o600)
-    app = scratch / "Zooom.app"
+    app = scratch / "Yap.app"
     (app / "Contents/MacOS").mkdir(parents=True)
     (app / "Contents/Frameworks").mkdir()
     # An inert fixture is never launched. The generator only inspects metadata.
-    shutil.copyfile("/usr/bin/true", app / "Contents/MacOS/Whoosh")
+    shutil.copyfile("/usr/bin/true", app / "Contents/MacOS/Yap")
     framework = sparkle / "Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
     subprocess.run(["ditto", str(framework), str(app / "Contents/Frameworks/Sparkle.framework")], check=True)
-    info = {"CFBundleName": "Zooom", "CFBundleIdentifier": "com.grinich.zooom.signature-fixture",
-            "CFBundleExecutable": "Whoosh", "CFBundlePackageType": "APPL",
+    info = {"CFBundleName": "Yap", "CFBundleIdentifier": "com.grinich.yap.signature-fixture",
+            "CFBundleExecutable": "Yap", "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": "0.1.1", "CFBundleVersion": "2", "LSMinimumSystemVersion": "26.0",
             "SUFeedURL": "https://github.com/example/releases/releases/latest/download/appcast.xml",
             "SUPublicEDKey": public, "SURequireSignedFeed": True}
@@ -36,13 +36,13 @@ with tempfile.TemporaryDirectory(prefix="zooom-update-test-") as temporary:
     subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
     feed_dir = scratch / "feed"
     feed_dir.mkdir()
-    archive = feed_dir / "Zooom-macOS.zip"
+    archive = feed_dir / "Yap-macOS.zip"
     subprocess.run(["ditto", "-c", "-k", "--keepParent", str(app), str(archive)], check=True)
     subprocess.run([str(tools / "generate_appcast"), "--ed-key-file", str(key), "--maximum-deltas", "0",
                     "--download-url-prefix", "https://github.com/example/releases/releases/download/v0.1.1/", str(feed_dir)], check=True)
     feed = feed_dir / "appcast.xml"
     subprocess.run(["python3", str(root / "Scripts/validate-appcast.py"), str(feed), str(archive), str(plist)],
-                   env={**os.environ, "ZOOOM_RELEASE_REPOSITORY": "example/releases"}, check=True)
+                   env={**os.environ, "YAP_RELEASE_REPOSITORY": "example/releases"}, check=True)
     sign = [str(tools / "sign_update"), "--verify", "--ed-key-file", str(key)]
     subprocess.run(sign + [str(feed)], check=True)
     signature = ET.parse(feed).find("channel/item/enclosure").get("{http://www.andymatuschak.org/xml-namespaces/sparkle}edSignature")

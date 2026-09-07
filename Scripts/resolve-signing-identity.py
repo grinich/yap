@@ -8,10 +8,10 @@ import sys
 
 
 def resolve(root: Path, environment: dict[str, str]) -> str:
-    if "WHOOSH_SIGNING_IDENTITY" in environment:
-        value = environment["WHOOSH_SIGNING_IDENTITY"].strip()
+    if "YAP_SIGNING_IDENTITY" in environment:
+        value = environment["YAP_SIGNING_IDENTITY"].strip()
         if not value or "\n" in value or "\r" in value:
-            raise ValueError("WHOOSH_SIGNING_IDENTITY must name an identity, its fingerprint, or explicit '-'.")
+            raise ValueError("YAP_SIGNING_IDENTITY must name an identity, its fingerprint, or explicit '-'.")
         return value
     local = root / "signing.local.json"
     if not local.exists():

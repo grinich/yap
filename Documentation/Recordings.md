@@ -48,7 +48,7 @@ Transcript validation on September 7, 2026: all 608 tests in 73 suites passed wi
 
 This library uses the signed-in user's Zoom cloud recordings. It needs a Pro or higher account with cloud recording enabled. Recordings started by a co-host appear in the host's library. Recordings saved only to a computer are not fetched from this API. [Zoom recording requirements and locations](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0058006).
 
-Add **`cloud_recording:read:list_user_recordings`** to the existing user-managed General app in Zoom Marketplace. Keep the existing public-client OAuth configuration and its other scopes. Then reconnect Zoom in Zooom's settings so the newly issued authorization includes recording access. Refreshing an old access token cannot add a permission that was not previously granted. See [Zoom setup](Zoom-Setup.md) for the existing native sign-in configuration and [Zoom's scope reference](https://developers.zoom.us/docs/integrations/oauth-scopes-granular/) for the recording scope.
+Add **`cloud_recording:read:list_user_recordings`** to the existing user-managed General app in Zoom Marketplace. Keep the existing public-client OAuth configuration and its other scopes. Then reconnect Zoom in Yap's settings so the newly issued authorization includes recording access. Refreshing an old access token cannot add a permission that was not previously granted. See [Zoom setup](Zoom-Setup.md) for the existing native sign-in configuration and [Zoom's scope reference](https://developers.zoom.us/docs/integrations/oauth-scopes-granular/) for the recording scope.
 
 The implementation calls `GET /v2/users/me/recordings`, preserving the host's meeting-occurrence UUID and individual file IDs. It exhausts opaque pagination tokens within each UTC month, deduplicates occurrences, and sorts the results newest first. Zoom limits recording queries to one month per request; pagination tokens expire after 15 minutes. Only completed MP4 files with a supported download address are playable. Completed TRANSCRIPT/audio_transcript attachments are available in the Transcript tab. Audio-only playback and local computer recordings are outside this feature. [Zoom Meetings API](https://developers.zoom.us/docs/api/meetings/), [Zoom staff on query windows](https://devforum.zoom.us/t/zoom-meeting-api-returns-incorrect-dates/116887).
 
@@ -58,7 +58,7 @@ Selecting a video starts an authenticated media request through `AVAssetResource
 
 Zoom documents its download URL for file retrieval; its `play_url` opens Zoom's hosted web player. Availability of byte ranges must be verified against the particular recording. If streaming fails, **Download to play** retrieves the complete MP4 to a temporary local file and then opens it in the same player. **Save video…** opens in the user's Downloads folder and lets them choose a different location, with cancellation and **Show in Finder** feedback. Temporary playback files are removed when playback is stopped or replaced. Metadata and media are cleared when the connected account changes. [Zoom staff on independent playback](https://devforum.zoom.us/t/meeting-recording/37588).
 
-Live-account setup and verification on September 6, 2026: added the recording-list scope to the existing user-managed Zoom app and reauthorized the native PKCE connection. The live library returned 91 recordings across the first three months and 125 after loading June. Both a short recording and a 59-minute recording streamed through the native player. Switching Active speaker → Gallery view → Active speaker preserved the paused position at 32:58, with the return view served from the warm cache. **Save video…** successfully saved a valid MP4 at an explicit destination; the final installed build opens its save dialog in Downloads. The updated app is installed at `~/Applications/Zooom.app` with its existing Developer ID identity. Streaming failures and download fallback remain covered by fixtures rather than an induced live-account failure.
+Live-account setup and verification on September 6, 2026: added the recording-list scope to the existing user-managed Zoom app and reauthorized the native PKCE connection. The live library returned 91 recordings across the first three months and 125 after loading June. Both a short recording and a 59-minute recording streamed through the native player. Switching Active speaker → Gallery view → Active speaker preserved the paused position at 32:58, with the return view served from the warm cache. **Save video…** successfully saved a valid MP4 at an explicit destination; the final installed build opens its save dialog in Downloads. The updated app is installed at `~/Applications/Yap.app` with its existing Developer ID identity. Streaming failures and download fallback remain covered by fixtures rather than an induced live-account failure.
 
 Validation on September 7, 2026: 467 tests in 62 suites passed with the real Zoom SDK enabled, including chat parsing, authenticated transcript loading, clock synchronization, safe share-link selection, keyboard event handling, native player-window lifecycle tests, and real synthetic-video tests for window/chat resizing, active-row clicks, position transfer, chat seeking and window transfer, and temporary-file ownership. The signed app passed strict signature verification with 97 embedded Mach-O images. Sign-out also reconciles actual saved status if an old Keychain item's cleanup fails after the active credential was already removed; this has memory-backed regression coverage.
 
@@ -83,13 +83,13 @@ Live chat-link acceptance: the installed app displayed the real transcript's web
 Run feature tests from the recordings worktree with an isolated SwiftPM build directory and caches. The fixture clients do not access Zoom or Keychain. Disabling the proprietary SDK makes these checks independent of a live meeting runtime; disabling loopback tests also avoids unrelated OAuth listeners.
 
 ```sh
-WHOOSH_ZOOM_SDK_PATH=/nonexistent \
-WHOOSH_TEST_LOOPBACK=0 \
-CLANG_MODULE_CACHE_PATH=/tmp/zooom-recordings-checks/module-cache \
-SWIFTPM_MODULECACHE_OVERRIDE=/tmp/zooom-recordings-checks/module-cache \
+YAP_ZOOM_SDK_PATH=/nonexistent \
+YAP_TEST_LOOPBACK=0 \
+CLANG_MODULE_CACHE_PATH=/tmp/yap-recordings-checks/module-cache \
+SWIFTPM_MODULECACHE_OVERRIDE=/tmp/yap-recordings-checks/module-cache \
 swift test --disable-sandbox \
-  --scratch-path /tmp/zooom-recordings-checks/build \
-  --cache-path /tmp/zooom-recordings-checks/spm-cache \
+  --scratch-path /tmp/yap-recordings-checks/build \
+  --cache-path /tmp/yap-recordings-checks/spm-cache \
   --filter 'RecordingLibraryTests|ZoomRecordingsTests|RecordingMediaLoaderTests|RecordingPlaybackTests|RecordingPlayerWindowTests|ZoomRecordingChatTests|RecordingChatLoaderTests|RecordingChatModelTests|ZoomRecordingTranscriptTests|RecordingTranscriptLoaderTests|RecordingTranscriptModelTests'
 ```
 
@@ -99,4 +99,4 @@ swift test --disable-sandbox \
 
 Launch with `--preview --recordings-preview` to inspect the library with clearly labeled sample meetings. Preview never requests recording media or reads the live cloud library.
 
-The existing `Scripts/test.sh` writes caches into `../work`, and `Scripts/build-app.sh` writes the signed application into `../outputs/Zooom.app`. Sibling worktrees therefore share those destinations. Use the isolated command above while other tasks are building. Coordinate release packaging and installation separately so a worktree does not overwrite another task's generated or installed app.
+The existing `Scripts/test.sh` writes caches into `../work`, and `Scripts/build-app.sh` writes the signed application into `../outputs/Yap.app`. Sibling worktrees therefore share those destinations. Use the isolated command above while other tasks are building. Coordinate release packaging and installation separately so a worktree does not overwrite another task's generated or installed app.

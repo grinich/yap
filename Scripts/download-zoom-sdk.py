@@ -18,7 +18,7 @@ def download(archive, env=None, run=None):
         raise ValueError("Set ZOOM_SDK_REPOSITORY to the private dependency repository (owner/name).")
     if repository.casefold() in {
         env.get("GITHUB_REPOSITORY", "").casefold(),
-        env.get("ZOOOM_RELEASE_REPOSITORY", "").casefold(),
+        env.get("YAP_RELEASE_REPOSITORY", "").casefold(),
     }:
         raise ValueError("The SDK dependency repository must be separate from the source and distribution repositories.")
     if not re.fullmatch(r"[1-9][0-9]*", asset_id):

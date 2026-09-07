@@ -1,0 +1,40 @@
+{
+  "fill": {
+    "solid": "srgb:0.09804,0.10588,0.13725,1.00000"
+  },
+  "groups": [
+    {
+      "name": "Yap artwork",
+      "blend-mode": "normal",
+      "layers": [
+        {
+          "image-name": "Yap-Art.png",
+          "name": "Yap",
+          "glass": false,
+          "position": {
+            "scale": 0.8165869218500797,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "opacity": 1
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared",
+    "circles": []
+  }
+}

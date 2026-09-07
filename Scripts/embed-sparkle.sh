@@ -9,7 +9,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 source_framework="$2/Sparkle.framework"
 source_license="$root/.build/artifacts/sparkle/Sparkle/LICENSE"
 framework="$app/Contents/Frameworks/Sparkle.framework"
-: "${WHOOSH_SIGNING_IDENTITY:?Set the app signing identity}"
+: "${YAP_SIGNING_IDENTITY:?Set the app signing identity}"
 test -f "$source_framework/Sparkle"
 if [ ! -s "$source_license" ]; then
     echo "Sparkle's complete upstream LICENSE is missing; resolve the pinned dependency before packaging." >&2
@@ -22,10 +22,10 @@ ditto "$source_license" "$licenses/Sparkle.txt"
 cmp "$source_license" "$licenses/Sparkle.txt"
 # Follow Sparkle's manual distribution signing order. Keep versioned symlinks.
 for target in XPCServices/Installer.xpc XPCServices/Downloader.xpc Autoupdate Updater.app; do
-    codesign --force --sign "$WHOOSH_SIGNING_IDENTITY" --options runtime --timestamp \
+    codesign --force --sign "$YAP_SIGNING_IDENTITY" --options runtime --timestamp \
         "$framework/Versions/B/$target"
 done
-codesign --force --sign "$WHOOSH_SIGNING_IDENTITY" --options runtime --timestamp "$framework"
+codesign --force --sign "$YAP_SIGNING_IDENTITY" --options runtime --timestamp "$framework"
 codesign --verify --deep --strict "$framework"
 test -L "$framework/Versions/Current"
 test -L "$framework/Sparkle"

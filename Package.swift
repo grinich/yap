@@ -3,12 +3,12 @@ import PackageDescription
 import Foundation
 
 let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let zoomSDKPath = ProcessInfo.processInfo.environment["WHOOSH_ZOOM_SDK_PATH"]
+let zoomSDKPath = ProcessInfo.processInfo.environment["YAP_ZOOM_SDK_PATH"]
     ?? packageDirectory.appendingPathComponent("Vendor/Zoom/zoom-sdk-macos-7.1.5.84750/ZoomSDK").path
 let hasZoomSDK = FileManager.default.fileExists(atPath: zoomSDKPath + "/ZoomSDK.framework/Headers/ZoomSDK.h")
-let meetingDependencies: [Target.Dependency] = hasZoomSDK ? ["WhooshCredentials", "WhooshZoomBridge"] : ["WhooshCredentials"]
+let meetingDependencies: [Target.Dependency] = hasZoomSDK ? ["YapCredentials", "YapZoomBridge"] : ["YapCredentials"]
 let zoomTargets: [Target] = hasZoomSDK ? [
-    .target(name: "WhooshZoomBridge", publicHeadersPath: "include",
+    .target(name: "YapZoomBridge", publicHeadersPath: "include",
         cSettings: [.unsafeFlags(["-fobjc-arc", "-F", zoomSDKPath])],
         linkerSettings: [.linkedFramework("ZoomSDK"), .linkedFramework("AppKit"),
             .unsafeFlags(["-F", zoomSDKPath,
@@ -17,24 +17,24 @@ let zoomTargets: [Target] = hasZoomSDK ? [
 ] : []
 
 let package = Package(
-    name: "Whoosh",
+    name: "Yap",
     platforms: [.macOS("26.0")],
-    products: [.executable(name: "Whoosh", targets: ["Whoosh"])],
+    products: [.executable(name: "Yap", targets: ["Yap"])],
     dependencies: [.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")],
     targets: [
-        .target(name: "WhooshCredentials"),
-        .target(name: "WhooshCalendar", dependencies: ["WhooshCredentials"]),
-        .target(name: "WhooshMeetings", dependencies: meetingDependencies),
-        .target(name: "WhooshSystem"),
-        .target(name: "WhooshUpdates", dependencies: [.product(name: "Sparkle", package: "Sparkle")]),
-        .target(name: "WhooshAppUI", dependencies: ["WhooshCalendar", "WhooshMeetings", "WhooshSystem", "WhooshCredentials"]),
-        .executableTarget(name: "Whoosh", dependencies: ["WhooshAppUI", "WhooshSystem", "WhooshUpdates"],
+        .target(name: "YapCredentials"),
+        .target(name: "YapCalendar", dependencies: ["YapCredentials"]),
+        .target(name: "YapMeetings", dependencies: meetingDependencies),
+        .target(name: "YapSystem"),
+        .target(name: "YapUpdates", dependencies: [.product(name: "Sparkle", package: "Sparkle")]),
+        .target(name: "YapAppUI", dependencies: ["YapCalendar", "YapMeetings", "YapSystem", "YapCredentials"]),
+        .executableTarget(name: "Yap", dependencies: ["YapAppUI", "YapSystem", "YapUpdates"],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
-        .testTarget(name: "WhooshCredentialsTests", dependencies: ["WhooshCredentials"]),
-        .testTarget(name: "WhooshCalendarTests", dependencies: ["WhooshCalendar"]),
-        .testTarget(name: "WhooshMeetingsTests", dependencies: ["WhooshMeetings"]),
-        .testTarget(name: "WhooshSystemTests", dependencies: ["WhooshSystem"]),
-        .testTarget(name: "WhooshUpdatesTests", dependencies: ["WhooshUpdates"]),
-        .testTarget(name: "WhooshAppUITests", dependencies: ["WhooshAppUI", "WhooshCalendar", "WhooshMeetings"])
+        .testTarget(name: "YapCredentialsTests", dependencies: ["YapCredentials"]),
+        .testTarget(name: "YapCalendarTests", dependencies: ["YapCalendar"]),
+        .testTarget(name: "YapMeetingsTests", dependencies: ["YapMeetings"]),
+        .testTarget(name: "YapSystemTests", dependencies: ["YapSystem"]),
+        .testTarget(name: "YapUpdatesTests", dependencies: ["YapUpdates"]),
+        .testTarget(name: "YapAppUITests", dependencies: ["YapAppUI", "YapCalendar", "YapMeetings"])
     ] + zoomTargets
 )

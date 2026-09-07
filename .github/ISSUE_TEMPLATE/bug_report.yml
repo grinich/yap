@@ -1,15 +1,15 @@
 name: Report a bug
-description: Something in Zooom is not working as expected.
+description: Something in Yap is not working as expected.
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Zooom. This report is public. Please remove meeting links, passcodes, tokens, private messages, and personal information from screenshots or logs.
+        Thanks for helping improve Yap. This report is public. Please remove meeting links, passcodes, tokens, private messages, and personal information from screenshots or logs.
   - type: input
     id: version
     attributes:
-      label: Zooom version or commit
-      description: Find the version in Zooom → About Zooom, or provide your source commit.
+      label: Yap version or commit
+      description: Find the version in Yap → About Yap, or provide your source commit.
     validations:
       required: true
   - type: input

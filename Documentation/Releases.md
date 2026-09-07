@@ -15,10 +15,18 @@ Zooom uses a private source repository and a separately configured binary distri
 
 The signing and artifact pipeline follows [Replay's release workflow](https://github.com/grinich/replay/blob/main/.github/workflows/release.yml). Replay uses a custom updater; Zooom uses [Sparkle's maintained installer](https://sparkle-project.org/documentation/) and [its supported manual signing order](https://sparkle-project.org/documentation/sandboxing/#code-signing).
 
-## One-time configuration still required
+## Signing credentials
+
+Configured September 7, 2026: the existing Developer ID Application certificate for team `VSVHNQP588`, a dedicated Developer-role `Zooom Notarization` API key, and a dedicated Sparkle key. All six Apple/Sparkle signing secrets and `ZOOOM_UPDATE_PUBLIC_KEY` are set in the private source repository. Private keys have secure local Keychain copies; temporary exports were removed.
+
+[Apple Signing passed on a fresh GitHub runner](https://github.com/grinich/zooom/actions/runs/34149118682), including credential import, secure timestamping, Apple notarization, stapling, and Gatekeeper. The full Zooom release build with its embedded Zoom and Sparkle components was also accepted by Apple without issues and passed Gatekeeper as `Notarized Developer ID`.
+
+The current Developer ID certificate expires February 1, 2027. Renew it before signing new builds after that date. Existing timestamped releases retain their signature validity after certificate expiry, subject to Apple's normal revocation checks; see [Apple's explanation of secure timestamps](https://developer.apple.com/documentation/technotes/tn3161-inside-code-signing-certificates).
+
+## Distribution configuration still required
 
 1. Choose public installers with private source, or request a private authenticated distribution design. For public installers, create a distribution-only repository (for example `grinich/zooom-releases`) with a README/default branch. Keep `grinich/zooom` private.
-2. In the **source repository**, create a `release` environment and configure these variables/secrets. Restrict its deployment branches to release tags once the initial dry run works.
+2. The source repository's `release` environment and Apple/Sparkle credentials are configured. Finish the distribution variables and token below. Any environment branch restrictions must permit both the release tags and the source branches used by the Apple Signing check.
 
 | Type | Name | Value/source |
 | --- | --- | --- |
@@ -37,14 +45,16 @@ The signing and artifact pipeline follows [Replay's release workflow](https://gi
 The Developer ID must belong to team `VSVHNQP588`, matching existing Zooom installations. Replay's original Apple credentials can be reused; GitHub only exposes secret names and cannot return their saved values. Do not print credentials, commit them, export unrelated Keychain identities, or broaden the developer's login Keychain permissions. The CI keychain script refuses to run outside GitHub Actions.
 
 3. Store the unmodified downloaded `zoom-sdk-macos-7.1.5.84750.zip` as an asset of a draft dependency release in the **private source repo**, then set its numeric asset ID. CI reads it with its source-repository `GITHUB_TOKEN`. This archive must never go into the public distribution repo. `prepare-zoom-sdk.py` checks its checksum before extracting. The original developer setup still obtains the SDK from Zoom.
-4. Generate a dedicated production Sparkle key with `.build/artifacts/sparkle/Sparkle/bin/generate_keys --account com.grinich.zooom`. Export that exact account using `--account com.grinich.zooom -x /protected/path/sparkle-key.txt` and provision the `SPARKLE_PRIVATE_KEY` secret from the file. Keep a secure backup; losing the key breaks the existing update trust chain. `test-update-signatures.py` uses published RFC 8032 test keys only; those **must never be used for releases**.
+4. The production Sparkle key is already stored in Keychain account `com.grinich.zooom` and configured in GitHub. When recovering it, export that exact account using `.build/artifacts/sparkle/Sparkle/bin/generate_keys --account com.grinich.zooom -x /protected/path/sparkle-key.txt`. Do not generate a replacement for an existing update trust chain. `test-update-signatures.py` uses published RFC 8032 test keys only; those **must never be used for releases**.
 5. Commit the final source and `Package.resolved` to main. Increase both `CFBundleShortVersionString` (x.y.z) and integer `CFBundleVersion` for every release. Tag the commit, e.g. `v0.1.0`. Tags will attempt publication; configure credentials and the approved destination first. Manual dispatch with `publish=false` only produces private CI artifacts.
 
 ## First-release acceptance
 
+The **Apple Signing** workflow independently checks the saved GitHub credentials. It runs manually or when its workflow/signing scripts change on a trusted source branch. It uses the same temporary-keychain import as a release, then signs, notarizes, staples, and checks a disposable app with Gatekeeper. This needs no Zoom SDK upload or public distribution repository. It does not publish or install anything. Its report distinguishes successful credential validation from notarization of the actual Zooom/Zoom/Sparkle bundle.
+
 The current personal install predates a configured update feed, so it needs a one-time normal install of the first notarized updater-enabled release. No bundle-ID migration is required for installations already on `com.grinich.zooom`. Older `com.grinich.woosh` builds require the existing explicit migration installer; Sparkle does not change application identity.
 
-Before calling the updater live, install version N from the DMG, publish N+1, and verify manual update, automatic discovery, on-quit installation, relaunch, retained accounts/preferences, call-in-progress veto, offline errors, and denied folder-write access. The GitHub workflow, Apple's notarization service, and an actual N → N+1 installation have **not yet run**. Local checks prove app packaging, signature generation/tamper rejection, and the meeting update gate, not end-to-end delivery.
+Before calling the updater live, install version N from the DMG, publish N+1, and verify manual update, automatic discovery, on-quit installation, relaunch, retained accounts/preferences, call-in-progress veto, offline errors, and denied folder-write access. Apple signing and notarization have been exercised independently. The full publishing workflow and an actual N → N+1 installation have **not yet run**. Signing success does not establish end-to-end update delivery.
 
 Local production packaging uses `Scripts/package-release.sh` with the same variables as CI plus `WHOOSH_ZOOM_SDK_PATH`, `WHOOSH_SIGNING_IDENTITY`, `ZOOOM_NOTARY_PROFILE`, optional `ZOOOM_NOTARY_KEYCHAIN`, and `ZOOOM_UPDATE_PRIVATE_KEY_FILE`. It fails if notarization or update signing is unavailable. It does not publish or launch the app. Personal debug builds remain available through `Scripts/build-app.sh` without release credentials. Set `WHOOSH_OUTPUT_DIR` to stage a separate build while someone is running `outputs/Zooom.app`; the builder refuses to replace a running output bundle.
 

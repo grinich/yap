@@ -1,0 +1,55 @@
+name: Apple Signing
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/**']
+    paths:
+      - '.github/workflows/apple-signing.yml'
+      - 'Scripts/ci-signing-setup.sh'
+      - 'Scripts/verify-apple-signing.sh'
+permissions:
+  contents: read
+concurrency:
+  group: zooom-apple-signing
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: macos-26
+    timeout-minutes: 35
+    environment: release
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Import release signing credentials
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: /bin/bash Scripts/ci-signing-setup.sh
+      - name: Sign, notarize, and verify a disposable app
+        env:
+          WHOOSH_SIGNING_IDENTITY: 'Developer ID Application: Michael Grinich (VSVHNQP588)'
+          ZOOOM_NOTARY_PROFILE: zooom-ci
+          ZOOOM_SIGNING_REPORT_DIR: ${{ runner.temp }}/apple-signing-report
+        run: /bin/bash Scripts/verify-apple-signing.sh
+      - name: Keep the validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apple-signing-verification
+          path: ${{ runner.temp }}/apple-signing-report
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Remove temporary signing credentials
+        if: always()
+        run: |
+          if [ -n "${ZOOOM_NOTARY_KEYCHAIN:-}" ]; then
+            security delete-keychain "$ZOOOM_NOTARY_KEYCHAIN" || true
+          fi
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/sparkle-key.txt"

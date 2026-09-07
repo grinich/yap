@@ -8,6 +8,8 @@ import WhooshMeetings
 public final class ZoomConnectionModel {
     public let client: ZoomAccountClient
     public private(set) var isConfigured = false
+    public private(set) var configurationMode: ZoomConfigurationMode = .unconfigured
+    public var hasPublicConfiguration: Bool { client.hasPublicConfiguration }
     public private(set) var hasSavedConnection = false
     public private(set) var isConnecting = false
     public private(set) var isUpdatingConfiguration = false
@@ -51,11 +53,12 @@ public final class ZoomConnectionModel {
             }
         }
         do {
-            let configured = try await client.isConfigured()
+            let mode = try await client.configurationMode()
             guard operationID == expectedOperation, statusRequestID == requestID, !Task.isCancelled else { return }
             let connected = try await client.hasSavedConnection()
             guard operationID == expectedOperation, statusRequestID == requestID, !Task.isCancelled else { return }
-            isConfigured = configured
+            configurationMode = mode
+            isConfigured = mode != .unconfigured
             hasSavedConnection = connected
             hasLoadedStatus = true
         } catch is CancellationError {
@@ -151,6 +154,22 @@ public final class ZoomConnectionModel {
         }
     }
 
+    public func usePublicConfiguration() async {
+        guard hasPublicConfiguration, !isBusy, !isLoadingStatus, !Task.isCancelled else { return }
+        let currentOperation = beginOperation()
+        isUpdatingConfiguration = true
+        defer { if operationID == currentOperation { isUpdatingConfiguration = false } }
+        do {
+            try await client.usePublicConfiguration()
+            guard operationID == currentOperation, !Task.isCancelled else { return }
+            await refreshStatus(for: currentOperation)
+        } catch is CancellationError {
+        } catch {
+            guard operationID == currentOperation, !Task.isCancelled else { return }
+            self.error = error.localizedDescription
+        }
+    }
+
     private func beginOperation() -> UUID {
         // Invalidate account-owned recordings synchronously. A fast mutation may
         // finish between SwiftUI frames, so observing only isBusy can miss it.
@@ -217,9 +236,13 @@ struct ZoomConnectionView: View {
                     Button("Sign in with Zoom") { Task { await connection.connect() } }
                         .disabled(connection.isBusy || connection.isLoadingStatus || model.activeCall)
                 }
-                Menu("Replace Zoom configuration…") {
+                Menu(connection.hasPublicConfiguration ? "Developer configuration…" : "Replace Zoom configuration…") {
                     Button("Enter Zoom configuration…", action: enterConfiguration)
                     Button("Import Zoom configuration…", action: importConfiguration)
+                    if connection.hasPublicConfiguration, connection.configurationMode == .personal {
+                        Divider()
+                        Button("Use Zooom sign-in") { Task { await connection.usePublicConfiguration() } }
+                    }
                 }
                 .disabled(model.activeCall || connection.isBusy || connection.isLoadingStatus)
             } else if connection.hasLoadedStatus, connection.statusError == nil {

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>User guide · Zooom</title>
+<meta name="description" content="Connect your account, join a meeting, and find your way through recordings."><meta name="referrer" content="no-referrer">
+<link rel="canonical" href="https://meetings.grinich.app/guide/"><meta property="og:title" content="Zooom · User guide"><meta property="og:description" content="Connect your account, join a meeting, and find your way through recordings."><meta property="og:image" content="https://meetings.grinich.app/assets/recordings.jpg"><meta property="og:type" content="website">
+<link rel="icon" href="/assets/icon.png" type="image/png"><link rel="stylesheet" href="/assets/site.css?v=e56df8798545">
+</head><body><a class="skip" href="#main">Skip to content</a>
+<header class="site-header"><div class="shell topbar"><a class="brand" href="/" aria-label="Zooom home"><img src="/assets/icon.png" alt="" width="42" height="42">Zooom</a><nav class="nav" aria-label="Main"><a href="/guide/" aria-current="page">Guide</a><a href="/support/">Support</a><a href="https://github.com/grinich/zooom">Source ↗</a></nav></div></header>
+<main id="main" class="shell"><header class="page-title"><span class="eyebrow">Zooom / User guide</span><h1>User guide</h1><p>Connect your account, join a meeting, and find your way through recordings.</p></header><div class="document"><nav class="toc" aria-label="On this page"><div class="toc-label">On this page</div><a href="#install-and-connect">Install and connect</a><a href="#join-or-start-a-meeting">Join or start a meeting</a><a href="#add-your-calendar">Add your calendar</a><a href="#find-and-watch-a-recording">Find and watch a recording</a><a href="#read-chat-and-transcripts">Read chat and transcripts</a><a href="#keyboard-shortcuts">Keyboard shortcuts</a><a href="#disconnect-or-remove-the-app">Disconnect or remove the app</a><a href="#troubleshooting">Troubleshooting</a></nav><article class="markdown"><p>This guide covers Zooom&#x27;s current preview. Availability depends on the build, your provider account, and the permissions granted to the app. Start with the <a href="https://github.com/grinich/zooom/blob/main/Documentation/Distribution.md">preview status</a>; a public source repository does not mean that Zoom has approved external use.</p>
+<h2 id="install-and-connect">Install and connect</h2>
+<p>Zooom requires <strong>Apple silicon and macOS 26 or newer</strong>. Use an official signed installer when one is available from the project&#x27;s <a href="https://github.com/grinich/zooom/releases">releases</a>, move the app to Applications, and open it. Current developer build instructions are in the <a href="https://github.com/grinich/zooom#try-zooom">source README</a>.</p>
+<p>Open <strong>Settings → Your meetings → Zoom</strong>, then choose <strong>Sign in with Zoom</strong>. The browser opens Zoom&#x27;s sign-in and consent page. Approve access with the account you want to use, and return to the app. The app does not ask for your Zoom password directly.</p>
+<p>Builds with the managed connection already know the project&#x27;s public client and authorization service. If you see <strong>Enter Zoom configuration…</strong>, that build or connection is using personal developer mode; follow the <a href="https://github.com/grinich/zooom/blob/main/Documentation/Zoom-Setup.md">personal Zoom setup</a>. Do not use another person&#x27;s SDK secret. See <a href="/privacy/">Privacy</a> for the two connection modes and their data flows.</p>
+<h2 id="join-or-start-a-meeting">Join or start a meeting</h2>
+<ul>
+<li>Choose <strong>Join with a link…</strong>, paste your Zoom invitation, check your display name, and choose <strong>Join meeting</strong>. If an invitation contains several meeting links, choose the one you intend to join.</li>
+<li>Choose <strong>Start a meeting</strong> to create a meeting using the connected Zoom account. Hosting and admission remain subject to that account&#x27;s Zoom permissions.</li>
+<li>Meetings begin with the microphone muted and camera off. Use the meeting controls to enable them when you are ready; macOS may request permission.</li>
+<li>Use the chat and participant controls to open their side panes. Choose Share to select the window or display you want to share, and use <strong>Stop sharing</strong> to finish.</li>
+<li>When you leave, the app stops your microphone, camera, and sharing. Hosts can separately choose <strong>End for everyone</strong>; that ends the call for the other participants too.</li>
+</ul>
+<p>An optional setting lets the app handle Zoom&#x27;s native meeting links. Unsupported link types offer an explicit option to open Zoom Workplace. Access to meetings outside the developer&#x27;s account depends on the applicable Zoom approval and authorization.</p>
+<h2 id="add-your-calendar">Add your calendar</h2>
+<p>Google Calendar is optional. Choose <strong>Connect Google Calendar</strong>, complete Google&#x27;s browser consent, and select which calendars appear. If your build asks for developer configuration, follow the <a href="https://github.com/grinich/zooom/blob/main/Documentation/GoogleCalendar.md">Calendar setup instructions</a>.</p>
+<p>The agenda shows upcoming events with supported Zoom links. Join from the agenda or the menu bar. Calendar access is read-only: the app does not create events, invite people, or change your RSVP. You can deselect calendars or disconnect the account in Settings.</p>
+<h2 id="find-and-watch-a-recording">Find and watch a recording</h2>
+<p>Choose <strong>Recordings</strong> beside the window controls to open the library. Select a meeting to play an available video. Selecting the same row again keeps the current position. Double-click a recording to give it its own window; its video layout, speed, timestamp, and paused or playing state carry over.</p>
+<p>Search by title or a date such as <code>Aug 31</code>, <code>8/31</code>, or <code>last Monday</code>. Search covers the months already loaded. Choose <strong>Load earlier month</strong> to include older recordings. Reopening the library refreshes loaded months without restarting the selected video.</p>
+<p>The layout menu changes among the video views supplied by Zoom. The speed menu changes playback speed without losing your place or starting a paused video. Use <strong>Copy link</strong> beside the title to copy Zoom&#x27;s sharing page, or <strong>Save video…</strong> to save an MP4. The save sheet starts in Downloads and lets you choose another location. Existing Zoom sharing permissions still apply.</p>
+<p>If streaming cannot start, <strong>Download to play</strong> can retrieve a temporary copy for playback. Cloud recordings require an account with cloud-recording access; computer-only recordings and audio-only files are not included in this player.</p>
+<h2 id="read-chat-and-transcripts">Read chat and transcripts</h2>
+<p>Open the right pane and choose <strong>Chat</strong> or <strong>Transcript</strong>. These tabs use the saved files attached to the Zoom recording, when available. They do not create a new transcript or a live chat conversation.</p>
+<p>The pane highlights messages or passages as the recording plays. Scrolling manually pauses following; choose <strong>Follow playback</strong> to return to the current point. Click a chat timestamp, transcript passage, or transcript timestamp to seek without changing the video&#x27;s paused or playing state.</p>
+<p>Search the transcript to find words or speakers. The previous and next controls, or Return, move between matching passages and seek the video. <strong>Copy passage</strong> includes a timestamp and speaker. <strong>Copy transcript</strong> copies the whole transcript, and <strong>Download transcript</strong> saves UTF-8 TXT or WebVTT. Export includes all passages even when a search is active.</p>
+<p>Some recordings have no saved chat or transcript. Cloud settings, completion of Zoom&#x27;s processing, and account permissions determine which files exist. Pauses or edits inside a recorded video may also limit exact timing alignment.</p>
+<h2 id="keyboard-shortcuts">Keyboard shortcuts</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">While watching a recording</th><th scope="col">Shortcut</th></tr></thead><tbody>
+<tr><td>Play / pause</td><td>Space</td></tr>
+<tr><td>Skip backward / forward</td><td>← / →</td></tr>
+<tr><td>Cycle playback speed</td><td>S</td></tr>
+<tr><td>Cycle video layout</td><td>V</td></tr>
+<tr><td>Toggle fullscreen</td><td>F</td></tr>
+<tr><td>Show / hide recordings</td><td>⇧⌘R</td></tr>
+</tbody></table></div>
+<p>Playback shortcuts stay out of the way while you type in a search field.</p>
+<p>Left and Right skip ten seconds at a time. Recording shortcuts apply to the active player and leave search fields and text editing alone.</p>
+<h2 id="disconnect-or-remove-the-app">Disconnect or remove the app</h2>
+<p>Leave active calls, then use <strong>Settings → Disconnect Zoom</strong> and disconnect Calendar if connected. Disconnect removes the app&#x27;s local authorization and clears associated app playback and caches; personal developer configuration can remain. To revoke the provider&#x27;s server-side grant too, remove the app from Zoom&#x27;s or Google&#x27;s connected-app settings.</p>
+<p>Quit the app and delete it from Applications to uninstall. Files you explicitly exported stay where you saved them until you delete them. Deleting the app does not remove every preference or SDK-owned item. The <a href="/privacy/">Privacy policy</a> explains storage, retention, and deletion choices.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<ul>
+<li><strong>Sign-in is unavailable:</strong> check the build&#x27;s connection mode and the provider&#x27;s approval or account restrictions. After a newly required permission is added, disconnect and sign in again so consent includes it.</li>
+<li><strong>No recordings appear:</strong> confirm you signed into the recording host&#x27;s account, that cloud recording is available, and that the relevant month is loaded. A co-host&#x27;s recording normally belongs to the host&#x27;s library.</li>
+<li><strong>No chat or transcript appears:</strong> Zoom must have saved that attachment. The app shows an availability or retry message when the file is absent or cannot be loaded.</li>
+<li><strong>Camera, microphone, or sharing fails:</strong> check the app&#x27;s permissions in macOS System Settings and any meeting restrictions. Keep another way to join an important meeting during the preview.</li>
+</ul>
+<p>For help with a reproducible problem, see <a href="/support/">Support</a>. Send private account or security matters through the contact listed there, rather than a public issue.</p><p class="source-note">Published from the project’s <a href="https://github.com/grinich/zooom/blob/main/Services/zoom-auth/site/guide.md">source document</a>.</p></article></div></main>
+<footer class="site-footer"><div class="shell"><div class="footer-top"><span>Zooom · An independent Mac app</span><nav class="footer-links" aria-label="Legal and project"><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a><a href="/notices/">Notices</a><a href="https://github.com/grinich/zooom">GitHub</a></nav></div><p>Independent of Zoom, Google, and Apple. Screenshots use sample meetings and an original sample recording. This site uses no analytics, external fonts, or tracking scripts.</p></div></footer></body></html>

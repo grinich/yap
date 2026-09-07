@@ -8,8 +8,6 @@ public struct WhooshSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) private var openWindow
     @AppStorage("settings.selectedPane") private var selectedTab = 0
-    @State private var loginStatus = LaunchAtLoginService.status
-    @State private var isChangingLogin = false
     public init(model: WhooshModel) { self.model = model }
 
     public var body: some View {
@@ -21,7 +19,6 @@ public struct WhooshSettingsView: View {
         .frame(width: 590, height: 560)
         .navigationTitle(selectedTab == 1 ? "General" : selectedTab == 2 ? "Development" : "Connections")
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            loginStatus = LaunchAtLoginService.status
             Task { await model.refreshReminderAuthorization() }
         }
         .task { await model.refreshReminderAuthorization() }
@@ -103,21 +100,7 @@ public struct WhooshSettingsView: View {
                 .onChange(of: model.reminderMinutes) { Task { await model.synchronizeReminders() } }
                 Text("Reminders open meeting details. Your camera and microphone never turn on automatically.").font(.caption).foregroundStyle(.secondary)
             }
-            Section("On your Mac") {
-                Toggle("Open Zooom at login", isOn: Binding(get: { loginStatus == .enabled || loginStatus == .requiresApproval }, set: { value in
-                    isChangingLogin = true
-                    Task {
-                        defer { isChangingLogin = false; loginStatus = LaunchAtLoginService.status }
-                        do { try await LaunchAtLoginService.setEnabled(value) }
-                        catch { model.error = error.localizedDescription }
-                    }
-                })).disabled(isChangingLogin || loginStatus == .unavailable)
-                if loginStatus == .requiresApproval {
-                    Button("Allow Zooom in Login Items…") { LaunchAtLoginService.openSystemSettings() }
-                    Text("macOS needs your approval before Zooom can open at login.").font(.caption).foregroundStyle(.secondary)
-                }
-                Text("Zooom also lives in your menu bar. Use ⌘J to paste a meeting link and ⌘Return to join your next meeting.").font(.callout).foregroundStyle(.secondary)
-            }
+            LaunchAtLoginSettingsView()
         }.formStyle(.grouped)
     }
 

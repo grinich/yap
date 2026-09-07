@@ -33,12 +33,16 @@ public struct ZoomOAuthTokens: Codable, Sendable, CustomStringConvertible, Custo
     public let accessToken: String
     public let refreshToken: String
     public let expiresAt: Date
+    /// Service-issued authorization bound to this exact access token. Not an SDK secret.
+    public let signingAuthorization: String?
 
-    public init(clientID: String, accessToken: String, refreshToken: String, expiresAt: Date) {
+    public init(clientID: String, accessToken: String, refreshToken: String, expiresAt: Date,
+                signingAuthorization: String? = nil) {
         self.clientID = clientID
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
+        self.signingAuthorization = signingAuthorization
     }
     public var description: String { "ZoomOAuthTokens(redacted)" }
     public var debugDescription: String { description }
@@ -61,6 +65,7 @@ public struct ZoomHostingCredentials: Sendable, CustomStringConvertible, CustomD
 
 public enum ZoomAccountError: LocalizedError, Sendable, Equatable {
     case notConfigured, invalidConfiguration, notConnected, invalidResponse, invalidCallback
+    case invalidPublicConfiguration, signingUnavailable, signingDenied, invalidSigningResponse
     case localCallbackUnavailable
     case authorizationDenied, authorizationTimedOut, authorizationInProgress, missingScope
     case missingHostingScope, meetingCreationUnconfirmed
@@ -71,6 +76,10 @@ public enum ZoomAccountError: LocalizedError, Sendable, Equatable {
         switch self {
         case .notConfigured: "Set up your personal Zoom developer configuration first."
         case .invalidConfiguration: "The Zoom configuration needs a Client ID, Client Secret, and Public Client ID."
+        case .invalidPublicConfiguration: "This Zooom build has an incomplete Zoom sign-in configuration. Install the latest version."
+        case .signingUnavailable: "Zooom couldn’t reach its meeting authorization service. Please try again."
+        case .signingDenied: "The meeting authorization service did not grant access. Reconnect your Zoom account or contact support."
+        case .invalidSigningResponse: "The meeting authorization response could not be verified. Please try again."
         case .notConnected: "Connect your Zoom account to continue."
         case .invalidResponse: "Zoom returned an unexpected response. Please try again."
         case .invalidCallback: "The Zoom sign-in response could not be verified."

@@ -9,6 +9,46 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  auth-service:
+    name: Authentication service
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: Services/zoom-auth
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: Services/zoom-auth/package-lock.json
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify public review pages match their source documents
+        run: |
+          python3 ../../Scripts/build-review-site.py --check
+          python3 -m unittest discover -s ../../Scripts/tests -p test_review_site.py -v
+      - name: Check generated Worker types
+        shell: bash
+        run: |
+          # Only declaration names are needed; never use live credentials in PR CI.
+          test ! -e .dev.vars
+          trap 'unlink .dev.vars' EXIT
+          cp .dev.vars.example .dev.vars
+          npm run types -- --check
+      - name: Check TypeScript
+        run: npm run typecheck
+      - name: Test authentication and signing boundaries
+        run: npm test
+      - name: Validate Worker bundle without deploying
+        run: |
+          test ! -e .dev.vars
+          ./node_modules/.bin/wrangler deploy --dry-run --outdir "$RUNNER_TEMP/zoom-auth-bundle"
   test:
     runs-on: macos-26
     timeout-minutes: 25

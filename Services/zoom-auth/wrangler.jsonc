@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "meeting-auth",
+  "account_id": "3e255fa3f97d08ecbcc92faa195553cd",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [{"pattern": "meetings.grinich.app", "custom_domain": true}],
+  "assets": {"directory": "./public", "binding": "ASSETS", "run_worker_first": true},
+  "vars": {
+    "ZOOM_PUBLIC_CLIENT_ID": "_Xz_EnBNS3OPtUmqZ1og3A",
+    "ZOOM_SDK_CLIENT_ID": "UHoml3aIQpy86gZeijjfpQ"
+  },
+  "ratelimits": [
+    {"name": "REQUEST_LIMITER", "namespace_id": "26090701", "simple": {"limit": 120, "period": 60}},
+    {"name": "SIGNATURE_LIMITER", "namespace_id": "26090702", "simple": {"limit": 10, "period": 60}}
+  ],
+  // Tokens and OAuth codes pass through this service. Retain only explicit,
+  // constant error events; request URLs, headers, bodies and traces are excluded.
+  "observability": {
+    "enabled": true,
+    "logs": {"enabled": true, "invocation_logs": false, "head_sampling_rate": 1},
+    "traces": {"enabled": false}
+  }
+}

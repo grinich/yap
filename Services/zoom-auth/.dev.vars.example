@@ -1,0 +1,2 @@
+ZOOM_SDK_CLIENT_SECRET=replace-with-your-development-sdk-secret
+SIGNING_GRANT_SECRET=replace-with-an-independent-random-secret-at-least-43-characters

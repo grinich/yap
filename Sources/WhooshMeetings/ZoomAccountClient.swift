@@ -1,11 +1,12 @@
 import Foundation
 
-/// Zoom identity and SDK signing for the app owner's private, locally configured build.
-/// Creates the owner's instant meetings and reads their cloud recordings.
+/// Zoom identity, meeting authorization, and the connected user's cloud recordings.
 /// No account-wide APIs or invitations are invoked here.
 public actor ZoomAccountClient {
     private let store: any ZoomCredentialStore
     private let transport: ZoomHTTPTransport
+    private let bundledConfiguration: Result<ZoomPublicConfiguration?, ZoomAccountError>
+    public nonisolated let hasPublicConfiguration: Bool
     private var cachedTokens: ZoomOAuthTokens?
     private var refreshTask: Task<ZoomOAuthTokens, Error>?
     private var connectionTask: Task<Void, Error>?
@@ -17,20 +18,33 @@ public actor ZoomAccountClient {
     private var meetingCreationWaiters: Set<UUID> = []
     private var meetingCreationUnconfirmed = false
 
-    public init(store: any ZoomCredentialStore = KeychainZoomCredentialStore(), transport: ZoomHTTPTransport = .live) {
+    public init(store: any ZoomCredentialStore = KeychainZoomCredentialStore(), transport: ZoomHTTPTransport = .live,
+                publicConfiguration: ZoomPublicConfiguration? = nil) {
         self.store = store
         self.transport = transport
+        let bundled: Result<ZoomPublicConfiguration?, ZoomAccountError>
+        if let publicConfiguration {
+            bundled = publicConfiguration.isValid ? .success(publicConfiguration) : .failure(.invalidPublicConfiguration)
+        } else {
+            do { bundled = .success(try ZoomPublicConfiguration.load(info: Bundle.main.infoDictionary ?? [:])) }
+            catch { bundled = .failure(.invalidPublicConfiguration) }
+        }
+        self.bundledConfiguration = bundled
+        if case .success(.some) = bundled { hasPublicConfiguration = true }
+        else { hasPublicConfiguration = false }
     }
 
     public func isConfigured() async throws -> Bool {
-        if let storeMutationTask { _ = try? await storeMutationTask.value }
-        return try await store.loadConfiguration()?.isValid == true
+        try await configurationMode() != .unconfigured
+    }
+
+    public func configurationMode() async throws -> ZoomConfigurationMode {
+        try await optionalConfiguration()?.mode ?? .unconfigured
     }
 
     /// Indicates saved authorization, not that Zoom has validated this connection during this launch.
     public func hasSavedConnection() async throws -> Bool {
-        if let storeMutationTask { _ = try? await storeMutationTask.value }
-        guard let configuration = try await store.loadConfiguration(),
+        guard let configuration = try await optionalConfiguration(),
               let tokens = try await store.loadTokens() else { return false }
         return tokens.clientID == configuration.oauthPublicClientID
     }
@@ -67,7 +81,7 @@ public actor ZoomAccountClient {
             let tokens = try await self.exchange(fields: ["grant_type": "authorization_code",
                 "client_id": configuration.oauthPublicClientID, "code": authorization.code,
                 "redirect_uri": authorization.redirectURI, "code_verifier": authorization.verifier],
-                clientID: configuration.oauthPublicClientID, previousRefreshToken: nil)
+                configuration: configuration, previousRefreshToken: nil)
             // The minimal-scope ZAK read verifies that the newly granted connection works.
             _ = try await self.fetchZAK(accessToken: tokens.accessToken)
             try await self.installTokens(tokens, generation: operationGeneration)
@@ -93,22 +107,35 @@ public actor ZoomAccountClient {
         try await mutateStore(generation: generation) { try await $0.deleteAll() }
     }
 
+    /// Explicitly remove a developer override and its account before using the
+    /// public client identifiers shipped with the signed app.
+    public func usePublicConfiguration() async throws {
+        guard try bundledConfiguration.get() != nil else { throw ZoomAccountError.invalidPublicConfiguration }
+        try await removeConfiguration()
+    }
+
     public func meetingCredentials() async throws -> ZoomMeetingCredentials {
         guard connectionTask == nil else { throw ZoomAccountError.authorizationInProgress }
         let currentGeneration = generation
         let configuration = try await configuration()
         guard generation == currentGeneration else { throw CancellationError() }
-        var token = try await accessToken(configuration: configuration, generation: currentGeneration)
-        let zak: FetchedZAK
-        do { zak = try await fetchZAK(accessToken: token) }
-        catch ZoomAccountError.notConnected {
-            token = try await accessToken(configuration: configuration, generation: currentGeneration, forceRefresh: true)
-            zak = try await fetchZAK(accessToken: token)
+        for attempt in 0...1 {
+            let tokens = try await authorizationTokens(configuration: configuration, generation: currentGeneration,
+                                                       forceRefresh: attempt > 0)
+            do {
+                let zak = try await fetchZAK(accessToken: tokens.accessToken)
+                try requireGeneration(currentGeneration)
+                let signature: String
+                switch configuration {
+                case .personal(let personal): signature = try ZoomSDKJWT.make(configuration: personal)
+                case .managed(let managed):
+                    signature = try await ZoomRemoteSDKSigner.signature(configuration: managed, tokens: tokens, transport: transport)
+                }
+                try requireGeneration(currentGeneration)
+                return ZoomMeetingCredentials(sdkJWT: signature, zak: zak.token, zakExpiresAt: zak.expiresAt)
+            } catch ZoomAccountError.notConnected where attempt == 0 { continue }
         }
-        try Task.checkCancellation()
-        guard generation == currentGeneration else { throw CancellationError() }
-        return ZoomMeetingCredentials(sdkJWT: try ZoomSDKJWT.make(configuration: configuration), zak: zak.token,
-                                      zakExpiresAt: zak.expiresAt)
+        throw ZoomAccountError.notConnected
     }
 
     /// Prepare one instant meeting, retaining its ID across SDK failures or cancelled attempts.
@@ -305,21 +332,32 @@ public actor ZoomAccountClient {
         throw ZoomAccountError.notConnected
     }
 
-    private func configuration() async throws -> ZoomPersonalConfiguration {
+    private func optionalConfiguration() async throws -> ZoomRuntimeConfiguration? {
         if let storeMutationTask { _ = try? await storeMutationTask.value }
-        guard let configuration = try await store.loadConfiguration(), configuration.isValid else {
-            throw ZoomAccountError.notConfigured
+        if let personal = try await store.loadConfiguration() {
+            guard personal.isValid else { throw ZoomAccountError.invalidConfiguration }
+            return .personal(personal)
         }
+        return try bundledConfiguration.get().map(ZoomRuntimeConfiguration.managed)
+    }
+
+    private func configuration() async throws -> ZoomRuntimeConfiguration {
+        guard let configuration = try await optionalConfiguration() else { throw ZoomAccountError.notConfigured }
         return configuration
     }
 
-    private func accessToken(configuration: ZoomPersonalConfiguration, generation expected: UUID,
+    private func accessToken(configuration: ZoomRuntimeConfiguration, generation expected: UUID,
                              forceRefresh: Bool = false) async throws -> String {
+        try await authorizationTokens(configuration: configuration, generation: expected, forceRefresh: forceRefresh).accessToken
+    }
+
+    private func authorizationTokens(configuration: ZoomRuntimeConfiguration, generation expected: UUID,
+                                     forceRefresh: Bool = false) async throws -> ZoomOAuthTokens {
         try requireGeneration(expected)
         if let refreshTask {
             let updated = try await refreshTask.value
             try requireGeneration(expected)
-            return updated.accessToken
+            return updated
         }
         let tokens: ZoomOAuthTokens?
         if let cachedTokens { tokens = cachedTokens }
@@ -328,19 +366,21 @@ public actor ZoomAccountClient {
         if let refreshTask {
             let updated = try await refreshTask.value
             try requireGeneration(expected)
-            return updated.accessToken
+            return updated
         }
         guard let tokens, tokens.clientID == configuration.oauthPublicClientID else { throw ZoomAccountError.notConnected }
-        if !forceRefresh && tokens.expiresAt.timeIntervalSinceNow > 60 {
+        let hasSigningGrant = configuration.publicConfiguration == nil ||
+            tokens.signingAuthorization.map(ZoomRemoteSDKSigner.validHeaderToken) == true
+        if !forceRefresh && tokens.expiresAt.timeIntervalSinceNow > 60 && hasSigningGrant {
             cachedTokens = tokens
-            return tokens.accessToken
+            return tokens
         }
         let currentGeneration = expected
         let task = Task { [weak self] in
             guard let self else { throw CancellationError() }
             let updated = try await self.exchange(fields: ["grant_type": "refresh_token",
                 "client_id": configuration.oauthPublicClientID, "refresh_token": tokens.refreshToken],
-                clientID: configuration.oauthPublicClientID, previousRefreshToken: tokens.refreshToken)
+                configuration: configuration, previousRefreshToken: tokens.refreshToken)
             try await self.installTokens(updated, generation: currentGeneration)
             return updated
         }
@@ -349,7 +389,7 @@ public actor ZoomAccountClient {
             let updated = try await task.value
             try requireGeneration(currentGeneration)
             if currentGeneration == generation { refreshTask = nil }
-            return updated.accessToken
+            return updated
         } catch {
             if currentGeneration == generation {
                 refreshTask = nil
@@ -375,26 +415,38 @@ public actor ZoomAccountClient {
         cachedTokens = tokens
     }
 
-    private func exchange(fields: [String: String], clientID: String, previousRefreshToken: String?) async throws -> ZoomOAuthTokens {
-        var request = URLRequest(url: URL(string: "https://zoom.us/oauth/token")!)
+    private func exchange(fields: [String: String], configuration: ZoomRuntimeConfiguration,
+                          previousRefreshToken: String?) async throws -> ZoomOAuthTokens {
+        let endpoint = configuration.publicConfiguration?.oauthTokenURL ?? URL(string: "https://zoom.us/oauth/token")!
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = "POST"
+        request.httpShouldHandleCookies = false
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         request.httpBody = Self.formBody(fields)
+        let requestedAt = Date()
         let (data, response) = try await transport.send(request)
         if response.statusCode == 400 || response.statusCode == 401 { throw ZoomAccountError.notConnected }
         try Self.checkStatus(response)
-        guard let result = try? JSONDecoder().decode(TokenResponse.self, from: data),
-              !result.access_token.isEmpty, result.token_type.lowercased() == "bearer",
+        guard response.url == endpoint, data.count <= 65_536,
+              let result = try? JSONDecoder().decode(TokenResponse.self, from: data),
+              ZoomRemoteSDKSigner.validHeaderToken(result.access_token), result.token_type.lowercased() == "bearer",
               result.expires_in > 0, result.expires_in <= 86_400,
-              let refreshToken = result.refresh_token ?? previousRefreshToken, !refreshToken.isEmpty else {
+              let refreshToken = result.refresh_token ?? previousRefreshToken,
+              ZoomRemoteSDKSigner.validHeaderToken(refreshToken) else {
             throw ZoomAccountError.invalidResponse
         }
         let scopes = Set(result.scope.split(separator: " ").map(String.init))
         guard scopes.contains(ZoomPersonalConfiguration.requiredScope) || scopes.contains("user_zak:read") else {
             throw ZoomAccountError.missingScope
         }
-        return ZoomOAuthTokens(clientID: clientID, accessToken: result.access_token, refreshToken: refreshToken,
-                               expiresAt: Date().addingTimeInterval(result.expires_in))
+        if configuration.publicConfiguration != nil,
+           result.signing_authorization.map(ZoomRemoteSDKSigner.validHeaderToken) != true {
+            throw ZoomAccountError.invalidSigningResponse
+        }
+        return ZoomOAuthTokens(clientID: configuration.oauthPublicClientID, accessToken: result.access_token, refreshToken: refreshToken,
+                               expiresAt: requestedAt.addingTimeInterval(result.expires_in),
+                               signingAuthorization: configuration.publicConfiguration == nil ? nil : result.signing_authorization)
     }
 
     private func fetchZAK(accessToken: String) async throws -> FetchedZAK {
@@ -470,6 +522,7 @@ public actor ZoomAccountClient {
         let token_type: String
         let expires_in: TimeInterval
         let scope: String
+        let signing_authorization: String?
     }
     private struct ZAKResponse: Decodable { let token: String }
     private struct CreatedMeetingResponse: Decodable { let id: Int64 }

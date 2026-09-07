@@ -19,6 +19,9 @@
     <key>NSMicrophoneUsageDescription</key><string>Zooom uses your microphone when you choose to speak in a meeting.</string>
     <key>NSScreenCaptureUsageDescription</key><string>Zooom shares the window or display you select with people in your Zoom meeting.</string>
     <key>NSHumanReadableCopyright</key><string>Zooom · Personal development build</string>
+    <key>ZooomZoomOAuthClientID</key><string>_Xz_EnBNS3OPtUmqZ1og3A</string>
+    <key>ZooomZoomSDKClientID</key><string>UHoml3aIQpy86gZeijjfpQ</string>
+    <key>ZooomZoomSDKSignerURL</key><string>https://meetings.grinich.app/v1/meeting-sdk/signature</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

@@ -1,10 +1,12 @@
 # User guide
 
-This guide covers {{brand}}'s current preview. Availability depends on the build, your provider account, and the permissions granted to the app. Start with the [preview status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md); a public source repository does not mean that Zoom has approved external use.
+This guide covers {{brand}} 0.1.0. The first installer is being prepared as a release candidate and remains a draft pending Zoom distribution approval. Managed production onboarding has not yet completed live acceptance. Check the [release status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md) for availability; the sample interface and source remain available.
 
 ## Install and connect
 
-{{brand}} requires **Apple silicon and macOS 26 or newer**. Use an official signed installer when one is available from the project's [releases](https://github.com/grinich/yap/releases), move the app to Applications, and open it. Current developer build instructions are in the [source README](https://github.com/grinich/yap#try-yap).
+{{brand}} requires **Apple silicon and macOS 26 or newer**. When the release is published, download **Yap.dmg** from the project's [releases](https://github.com/grinich/yap/releases), open it, drag **Yap.app** to **Applications**, eject the disk image and launch Yap from Applications. **Yap-macOS.zip** is the alternative app archive; expand it and move Yap.app to Applications. Both downloads have a matching `.sha256` file. The first version is **0.1.0 (build 1)**. [Artifact and checksum details](https://github.com/grinich/yap/blob/main/Documentation/Releases.md#first-release-v010).
+
+Quit any older app before switching to Yap. Keep it until you have verified the new app's account access; supported saved accounts and preferences can migrate through normal macOS permissions. See [migration details](https://github.com/grinich/yap/blob/main/Documentation/Bundle-Identity.md). For the SDK-free sample interface and personal developer setup, see the [source README](https://github.com/grinich/yap#try-yap).
 
 Open **Settings → Your meetings → Zoom**, then choose **Sign in with Zoom**. The browser opens Zoom's sign-in and consent page. Approve access with the account you want to use, and return to the app. The app does not ask for your Zoom password directly.
 

@@ -18,7 +18,7 @@
     <key>NSCameraUsageDescription</key><string>Yap uses your camera when you choose to turn on video in a meeting.</string>
     <key>NSMicrophoneUsageDescription</key><string>Yap uses your microphone when you choose to speak in a meeting.</string>
     <key>NSScreenCaptureUsageDescription</key><string>Yap shares the window or display you select with people in your Zoom meeting.</string>
-    <key>NSHumanReadableCopyright</key><string>Yap · Personal development build</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 Michael Grinich</string>
     <key>YapZoomOAuthClientID</key><string>_Xz_EnBNS3OPtUmqZ1og3A</string>
     <key>YapZoomSDKClientID</key><string>UHoml3aIQpy86gZeijjfpQ</string>
     <key>YapZoomSDKSignerURL</key><string>https://meetings.grinich.app/v1/meeting-sdk/signature</string>

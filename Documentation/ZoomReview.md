@@ -2,7 +2,7 @@
 
 Prepared September 7, 2026 from the source in `codex/release-and-zoom-approval` and current official Zoom documentation. This is a working submission package, not a claim that Zoom has approved the app. Fields marked **pending** must be completed from the deployed release before submitting an attestation. Do not put credentials, private test meetings, or confidential Zoom review results in this public file.
 
-**Portal checkpoint reported by the release operator:** production General app `z9T2ySUsSySXlDZgwzNBew` exists in **Draft**, last verified in the portal as **Whoosh**, pending its update to **Yap**. Production native PKCE is enabled; the public client ID is `_Xz_EnBNS3OPtUmqZ1og3A`, and the SDK client ID is `UHoml3aIQpy86gZeijjfpQ`. These are public identifiers, not secrets. Developer contact is Michael Grinich, `mgrinich@gmail.com`; the contact email field still requires portal readback. The PKCE explanation, loopback redirect, all three production scopes, scope justification and technical stack have been entered according to the release operator. The production service is deployed at `https://meetings.grinich.app`; HTTPS health and anonymous-signature rejection have been verified, but successful authenticated onboarding is not yet asserted. The user selected **Yap**; portal metadata and icon readback still need to confirm that name. Draft status is not submission or approval.
+**Portal checkpoint reported by the release operator:** production General app `z9T2ySUsSySXlDZgwzNBew` exists in **Draft** with the saved app header **Yap**, verified by the release operator in Chrome and a screenshot on September 7, 2026. The Publish page still says **Not ready**. Production native PKCE is enabled; the public client ID is `_Xz_EnBNS3OPtUmqZ1og3A`, and the SDK client ID is `UHoml3aIQpy86gZeijjfpQ`. These are public identifiers, not secrets. The production contact is **Michael Grinich**, **mgrinich@gmail.com**, role **Developer**, confirmed visually in the portal; the public-client OAuth option remains enabled. The PKCE explanation, loopback redirect, all three production scopes, scope justification and technical stack have been entered according to the release operator. The production service is deployed at `https://meetings.grinich.app`; HTTPS health and anonymous-signature rejection have been verified, but successful authenticated onboarding is not yet asserted. The saved portal name is now confirmed; the final listing icon still needs its own readback. Draft status is not submission or approval.
 
 ## Submission route and remaining decisions
 
@@ -16,16 +16,16 @@ Prepared September 7, 2026 from the source in `codex/release-and-zoom-approval` 
 
 | Field | Proposed value or required completion |
 | --- | --- |
-| App name | Binary/product: Yap. Portal draft was last verified as Whoosh; update and read back Yap. Maximum 50 characters. |
+| App name | Yap. The saved portal header now matches the binary/product; verified September 7, 2026. Maximum 50 characters. |
 | App type | General app; user-managed OAuth; native macOS Meeting SDK; public-client PKCE. |
 | Audience / discoverability | External; unlisted initially, if selected by the release owner. |
 | Platform | Apple silicon Mac, macOS 26 or later. |
 | Category | Productivity / meetings, selecting the closest categories offered in the portal. |
 | Developer/company | Michael Grinich, individual developer; no separate company is asserted. |
-| Contact | Michael Grinich, `mgrinich@gmail.com`; verify the email field by portal readback. Public support uses GitHub Issues. Use the email for private privacy/security matters, never public Issues for secrets. |
+| Contact | Michael Grinich, `mgrinich@gmail.com`, role Developer; verified in the production portal. Public support uses GitHub Issues. Use the email for private privacy/security matters, never public Issues for secrets. |
 | Home / documentation / support | Verified HTTP 200: [Home](https://meetings.grinich.app/), [Guide](https://meetings.grinich.app/guide/), [Support](https://meetings.grinich.app/support/). Source: `https://github.com/grinich/yap`; public bug tracker: `https://github.com/grinich/yap/issues`. |
 | Privacy / Terms | [Privacy](https://meetings.grinich.app/privacy/) and [Terms](https://meetings.grinich.app/terms/) both return HTTP 200 and cover personal/managed modes. Terms still explicitly says draft/not in effect; operator adoption and regeneration are pending. Source: [Privacy](../PRIVACY.md), [Terms](../TERMS.md). |
-| Download | Pending exact immutable signed release URL, version/build and SHA-256. |
+| Download | Planned 0.1.0, build 1: `https://github.com/grinich/yap/releases/download/v0.1.0/Yap.dmg`, plus its `.sha256` asset. Keep the notarized candidate in a GitHub draft while distribution approval is pending; provide reviewer access through an approved private delivery path. Artifact creation and its exact checksum still need evidence. |
 | Icon / gallery | Final Yap app icon at the required 160 × 160 listing size; screenshots of joining/hosting, the recording player, and saved chat/transcripts using synthetic data. |
 
 The production build flow requires app information, contacts and technical design. Its submission page checks required URLs and domain ownership. Use a domain the operator can verify, or the portal's manual verification process; a public GitHub page does not establish ownership of `github.com`. [Production fields](https://developers.zoom.us/docs/build-flow/prep-app-for-prod/), [submission and domain validation](https://developers.zoom.us/docs/distribute/app-submission/submit-apps-review/)

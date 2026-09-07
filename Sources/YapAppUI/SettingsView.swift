@@ -106,8 +106,8 @@ public struct YapSettingsView: View {
 
     private var development: some View {
         Form {
-            Section("Yap 0.1 · Personal development build") {
-                Text("A personal development build. Interface preview uses sample people and messages on this Mac.")
+            Section(appVersionTitle) {
+                Text("Interface preview uses sample people and messages on this Mac.")
                     .font(.callout).foregroundStyle(.secondary)
                 Button(model.isPreview ? "Exit interface preview" : "Explore interface preview") {
                     Task {
@@ -127,6 +127,12 @@ public struct YapSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
+    }
+
+    private var appVersionTitle: String {
+        guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              !version.isEmpty else { return "Yap" }
+        return "Yap \(version)"
     }
 
     private func importGoogle() {

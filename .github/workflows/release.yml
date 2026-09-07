@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       publish:
-        description: Publish the verified installers and update feed
+        description: Publish a new release after required Zoom approval (otherwise keep a draft)
         default: false
         type: boolean
 permissions:
@@ -30,6 +30,7 @@ jobs:
       YAP_RELEASE_REPOSITORY: ${{ vars.YAP_RELEASE_REPOSITORY }}
       YAP_UPDATE_FEED_URL: ${{ vars.YAP_UPDATE_FEED_URL }}
       YAP_UPDATE_PUBLIC_KEY: ${{ vars.YAP_UPDATE_PUBLIC_KEY }}
+      YAP_PUBLISH_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,6 +82,9 @@ jobs:
           YAP_NOTARY_PROFILE: yap-ci
         run: /bin/bash Scripts/package-release.sh
       - name: Retain verified release artifacts
+        # Artifacts in a public repository are downloadable by other signed-in
+        # users. Unpublished candidates are retained only in the draft release.
+        if: env.YAP_PUBLISH_RELEASE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Yap-${{ env.YAP_RELEASE_TAG }}
@@ -92,11 +96,15 @@ jobs:
             dist/appcast.xml
           if-no-files-found: error
           retention-days: 14
-      - name: Publish installers and feed together
-        if: github.event_name == 'push' || inputs.publish
+      - name: Create draft release or publish approved installers and feed
         env:
           GH_TOKEN: ${{ env.YAP_RELEASE_REPOSITORY == github.repository && github.token || secrets.YAP_RELEASE_TOKEN }}
-        run: /bin/bash Scripts/publish-release.sh
+        run: |
+          if [[ "$YAP_PUBLISH_RELEASE" == true ]]; then
+            /bin/bash Scripts/publish-release.sh --publish
+          else
+            /bin/bash Scripts/publish-release.sh
+          fi
       - name: Remove temporary signing credentials and SDK
         if: always()
         run: |

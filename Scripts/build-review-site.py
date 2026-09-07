@@ -267,12 +267,12 @@ def build_files(root: Path = ROOT) -> dict[str, bytes]:
     try_section = section(readme, "Try " + brand).split("\n\n", 1)[0]
     content = f'''<section class="hero"><span class="eyebrow">A little more room for your day</span><h1>{renderer.inline(tagline[1])}</h1><p class="deck">{renderer.inline(deck[1])}</p><div class="actions"><a class="button" href="/guide/">Meet {html.escape(brand)}</a><a class="button secondary" href="{REPOSITORY}">Explore the source ↗</a></div><p class="requirements">For Apple silicon · macOS 26 or newer</p></section>
 <figure><div class="showcase"><img src="/assets/recordings.jpg" alt="{html.escape(brand, quote=True)} recording player with a searchable, synchronized transcript and an original sample presentation" width="1200" height="760" fetchpriority="high"></div><figcaption>The native recording player, shown with sample content. Find a passage, change the view, and keep your place.</figcaption></figure>
-<aside class="status" aria-label="Preview status">{renderer.render(status[1])}</aside>
+<aside class="status" aria-label="Release status">{renderer.render(status[1])}</aside>
 <section class="section features"><h2>Pick up where the meeting left off</h2>{renderer.render(recording_section)}</section>
 <section class="section agenda"><h2>Less between you and your next meeting</h2>{renderer.render(agenda_section)}</section>
 <section class="section meeting-copy"><h2>A meeting window that feels like a Mac app</h2>{renderer.render(meeting_section)}</section>
 <section class="section shortcut-area"><h2>A few keys worth knowing</h2><div class="markdown">{renderer.render(shortcuts)}</div></section>
-<section class="source-card"><h2>Try the preview</h2>{renderer.render(try_section)}<div class="actions"><a class="button" href="{REPOSITORY}#try-{slug(brand)}">Build instructions ↗</a><a class="button secondary" href="/support/">Get in touch</a></div></section>'''
+<section class="source-card"><h2>Try {html.escape(brand)}</h2>{renderer.render(try_section)}<div class="actions"><a class="button" href="{REPOSITORY}#try-{slug(brand)}">Installation and setup ↗</a><a class="button secondary" href="/support/">Get in touch</a></div></section>'''
     files["index.html"] = shell(brand, tagline[1], deck[1], content, "/", css_hash).encode()
     documents = [("privacy", "Privacy", "How the app and its authorization service handle your data.", "PRIVACY.md"),
                  ("terms", "Terms for the free preview", "The terms and current publication status of the preview.", "TERMS.md"),
@@ -287,7 +287,7 @@ def build_files(root: Path = ROOT) -> dict[str, bytes]:
     if not email:
         raise ValueError("Privacy policy must provide a private contact")
     support = "# Support\n\n## Report a problem\n\n" + section(readme, "Support and feedback")
-    support += f"\n\n## Privacy and security\n\nFor private account, privacy, or security matters, contact [{email[1]}]({email[2]}). Include only the information needed to explain the issue. Do not post credentials, tokens, meeting passcodes, or private transcripts in public Issues.\n\n## Before you write\n\nCheck the [user guide](/guide/) for connection, recordings, and removal instructions. Include the app version and macOS version, what you expected, what happened, and the steps needed to reproduce it. Screenshots with sample content are helpful.\n\n## Preview availability\n\n" + try_section
+    support += f"\n\n## Privacy and security\n\nFor private account, privacy, or security matters, contact [{email[1]}]({email[2]}). Include only the information needed to explain the issue. Do not post credentials, tokens, meeting passcodes, or private transcripts in public Issues.\n\n## Before you write\n\nCheck the [user guide](/guide/) for connection, recordings, and removal instructions. Include the app version and macOS version, what you expected, what happened, and the steps needed to reproduce it. Screenshots with sample content are helpful.\n\n## Availability\n\n" + try_section
     files["support/index.html"] = document(brand, "Support", "Questions, bug reports, and a private route for sensitive matters.", support, "README.md", "/support/", css_hash).encode()
     missing = '<section class="not-found"><span class="eyebrow">404</span><h1>This page isn’t here.</h1><p>Try the <a href="/guide/">user guide</a>, or head back to the <a href="/">homepage</a>.</p></section>'
     files["404.html"] = shell(brand, "Page not found", "This page could not be found.", missing, "/404.html", css_hash).encode()

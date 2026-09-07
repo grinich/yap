@@ -104,6 +104,7 @@ public final class RecordingLibraryModel {
     @ObservationIgnored private let fetchPage: @Sendable (Date, Date, String) async throws -> ZoomRecordingPage
     @ObservationIgnored private let makePlaybackSource: @MainActor (ZoomRecordingFile) -> RecordingPlaybackSource
     @ObservationIgnored private let downloadVideo: @Sendable (ZoomRecordingFile, URL) async throws -> Void
+    @ObservationIgnored private let seekForPlaybackRestoration: @MainActor (AVPlayer, CMTime) async -> Bool
     @ObservationIgnored private let fetchChat: @Sendable (ZoomRecordingFile) async throws -> String
     @ObservationIgnored private let fetchTranscript: @Sendable (ZoomRecordingFile) async throws -> String
     @ObservationIgnored private var allowsAutomaticTranscriptPresentation = true
@@ -138,6 +139,7 @@ public final class RecordingLibraryModel {
          fetchPage: (@Sendable (Date, Date, String) async throws -> ZoomRecordingPage)? = nil,
          makePlaybackSource: (@MainActor (ZoomRecordingFile) -> RecordingPlaybackSource)? = nil,
          downloadVideo: (@Sendable (ZoomRecordingFile, URL) async throws -> Void)? = nil,
+         seekForPlaybackRestoration: (@MainActor (AVPlayer, CMTime) async -> Bool)? = nil,
          fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
          fetchTranscript: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil) {
         self.client = client
@@ -156,6 +158,9 @@ public final class RecordingLibraryModel {
         }
         self.downloadVideo = downloadVideo ?? { file, destination in
             try await RecordingDownloadService.download(client: client, file: file, to: destination)
+        }
+        self.seekForPlaybackRestoration = seekForPlaybackRestoration ?? { player, time in
+            await player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         }
         playbackSpeedObservation = player.observe(\.defaultRate, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in
@@ -447,7 +452,8 @@ public final class RecordingLibraryModel {
             temporaryVideoFileID = nil
         }
         let playback = RecordingLibraryModel(client: client, makePlaybackSource: makePlaybackSource,
-                                             downloadVideo: downloadVideo, fetchChat: fetchChat, fetchTranscript: fetchTranscript)
+                                             downloadVideo: downloadVideo, seekForPlaybackRestoration: seekForPlaybackRestoration,
+                                             fetchChat: fetchChat, fetchTranscript: fetchTranscript)
         let transferredSpeed = position.flatMap { $0.rate > 0 ? $0.rate : nil } ?? playbackSpeed
         playback.applyPlaybackSpeed(transferredSpeed)
         playback.isPreview = isPreview
@@ -612,15 +618,23 @@ public final class RecordingLibraryModel {
                 if status == .readyToPlay {
                     guard self.resumedItemRevision != revision else { return }
                     self.resumedItemRevision = revision
-                    let completed = await self.player.seek(to: position.clamped(to: item.duration),
-                                                           toleranceBefore: .zero, toleranceAfter: .zero)
+                    let completed = await self.seekForPlaybackRestoration(self.player, position.clamped(to: item.duration))
                     guard self.playbackGeneration == expected, self.itemRevision == revision else { return }
                     self.isPreparing = false
-                    guard completed, self.playbackError == nil, item.status == .readyToPlay else { return }
+                    guard self.playbackError == nil, item.status == .readyToPlay else { return }
                     let rate = self.pendingPosition?.rate ?? position.rate
+                    // Native controls now own playback, even when AVFoundation
+                    // interrupted the restoring seek. Retaining its old autoplay
+                    // intent here would override a later pause during fallback.
                     self.pendingPosition = nil
                     self.synchronizeChat(at: self.player.currentTime())
-                    if rate != 0 { self.player.playImmediately(atRate: rate) }
+                    // A native Play/Pause/seek may have interrupted this seek.
+                    // Only a completed restoration may apply the saved intent;
+                    // otherwise preserve the transport the person just chose.
+                    if completed {
+                        if rate != 0 { self.player.playImmediately(atRate: rate) }
+                        else { self.player.pause() }
+                    }
                 }
                 else if status == .failed, self.playbackError == nil {
                     if self.pendingPosition == nil {

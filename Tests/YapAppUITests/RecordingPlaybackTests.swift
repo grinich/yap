@@ -243,6 +243,61 @@ struct RecordingPlaybackTests {
         #expect(model.playbackError == nil)
     }
 
+    @Test func anInterruptedRestoringSeekCannotOverrideANativePauseDuringDownloadFallback() async throws {
+        let fixture = try await RecordingPlaybackFixture.make()
+        defer { fixture.cleanUp() }
+        var restoringSeeks = 0
+        let model = fixture.makeModel(seekForPlaybackRestoration: { player, time in
+            restoringSeeks += 1
+            // AVFoundation can finish an interrupted seek with false while the
+            // item remains ready. Force that result instead of relying on load.
+            if restoringSeeks == 1 { return false }
+            return await player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        })
+        defer { model.stopPlayback() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        #expect(restoringSeeks == 1)
+        #expect(model.player.rate == 0)
+        #expect(model.playbackError == nil)
+        model.setPlaybackSpeed(1.25)
+        // Match the native controls: this doesn't call the model's hide/pause
+        // path, so no model-level pause revision is available to save us.
+        model.player.pause()
+
+        model.downloadSelected()
+        model.setPlaybackSpeed(2)
+        try #require(await waitUntil { !model.isDownloading && !model.isPreparing })
+
+        #expect(restoringSeeks == 2)
+        #expect(model.player.rate == 0)
+        #expect(model.player.defaultRate == 2)
+        #expect(model.playbackSpeed == 2)
+        #expect(model.playbackError == nil)
+        model.player.play()
+        #expect(model.player.rate == 2)
+    }
+
+    @Test func nativePlayThatInterruptsARestoringSeekKeepsRunning() async throws {
+        let fixture = try await RecordingPlaybackFixture.make(duration: 60)
+        defer { fixture.cleanUp() }
+        let model = fixture.makeModel(seekForPlaybackRestoration: { player, _ in
+            // AVPlayerView remains interactive during preparation. A newer
+            // native Play can cancel restoration and must retain ownership.
+            player.play()
+            return false
+        })
+        defer { model.stopPlayback() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+
+        #expect(model.player.rate == 1)
+        #expect(model.playbackError == nil)
+        model.setPlaybackSpeed(2)
+        #expect(model.player.rate == 2)
+        #expect(model.playbackSpeed == 2)
+    }
+
     @Test func playerSurfaceTracksTheVideoShapeAcrossWindowAndChatResizing() async throws {
         let fixture = try await RecordingPlaybackFixture.make()
         defer { fixture.cleanUp() }
@@ -982,7 +1037,8 @@ struct RecordingPlaybackTests {
     func makeModel(fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
                    fetchTranscript: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
                    beforeDownload: (@Sendable () async -> Void)? = nil,
-                   fetchPage: (@Sendable (Date, Date, String) async throws -> ZoomRecordingPage)? = nil) -> RecordingLibraryModel {
+                   fetchPage: (@Sendable (Date, Date, String) async throws -> ZoomRecordingPage)? = nil,
+                   seekForPlaybackRestoration: (@MainActor (AVPlayer, CMTime) async -> Bool)? = nil) -> RecordingLibraryModel {
         // Every source is local synthetic media. Neither live HTTP nor Keychain is reachable.
         let client = ZoomAccountClient(store: RecordingPlaybackUnusedStore(), transport: ZoomHTTPTransport { _ in
             throw URLError(.unsupportedURL)
@@ -995,7 +1051,7 @@ struct RecordingPlaybackTests {
         }, downloadVideo: { [url] _, destination in
             await beforeDownload?()
             try FileManager.default.copyItem(at: url, to: destination)
-        }, fetchChat: fetchChat, fetchTranscript: fetchTranscript)
+        }, seekForPlaybackRestoration: seekForPlaybackRestoration, fetchChat: fetchChat, fetchTranscript: fetchTranscript)
     }
 
     func meeting(id: String = "fixture-meeting") -> ZoomRecordingMeeting {

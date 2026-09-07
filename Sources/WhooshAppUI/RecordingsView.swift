@@ -359,10 +359,9 @@ struct RecordingPlayerView: View {
                 }
                 .pickerStyle(.inline).labelsHidden()
             } label: {
-                playbackMenuLabel { Image(systemName: "display") }
+                Image(systemName: "display")
             }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .tint(nil as Color?).foregroundStyle(.primary)
+            .modifier(RecordingPlaybackMenuStyle())
             .help("Video layout: \(currentLayout)")
             .accessibilityLabel("Video layout").accessibilityValue(currentLayout)
             .background(WhooshWindowInteractionRegion())
@@ -381,10 +380,9 @@ struct RecordingPlayerView: View {
             }
             .pickerStyle(.inline).labelsHidden()
         } label: {
-            playbackMenuLabel { Text(playbackSpeedLabel).monospacedDigit() }
+            Text(playbackSpeedLabel).monospacedDigit()
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .tint(nil as Color?).foregroundStyle(.primary)
+        .modifier(RecordingPlaybackMenuStyle())
         .disabled(model.selectedFile == nil)
         .help("Playback speed").accessibilityLabel("Playback speed")
         .accessibilityValue(playbackSpeedLabel)
@@ -393,18 +391,6 @@ struct RecordingPlayerView: View {
 
     private var playbackSpeedLabel: String {
         model.playbackSpeed.formatted(.number.precision(.fractionLength(0...2))) + "×"
-    }
-
-    private func playbackMenuLabel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 5) {
-            content()
-            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
-                .accessibilityHidden(true)
-        }
-        .font(.system(size: 12, weight: .medium))
-        .padding(.horizontal, 9).frame(height: 32)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 
     @ViewBuilder private var downloadStatus: some View {
@@ -447,6 +433,19 @@ struct RecordingPlayerView: View {
         panel.nameFieldStringValue = String(topic.prefix(120)) + ".mp4"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         model.downloadSelected(to: url)
+    }
+}
+
+private struct RecordingPlaybackMenuStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .menuStyle(.borderlessButton).menuIndicator(.visible)
+            .font(.system(size: 12, weight: .medium))
+            .tint(nil as Color?).foregroundStyle(.primary)
+            .fixedSize()
+            .padding(.horizontal, 8).frame(height: 32)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 

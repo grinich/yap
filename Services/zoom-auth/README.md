@@ -46,7 +46,7 @@ python3 Scripts/build-review-site.py --check
 python3 -m unittest discover -s Scripts/tests -p test_review_site.py -v
 ```
 
-The generator uses Python's standard library and an escaped Markdown subset, with no network access or new dependencies. Privacy, terms, and notices render directly from their root documents; the homepage and support page reuse README content. Edit `site/guide.md` for the user guide and `site/site.css` for styling. Branding comes from the README heading. The canonical host is `https://meetings.grinich.app`, set once in the generator.
+The generator uses Python's standard library and an escaped Markdown subset, with no network access or new dependencies. Privacy, terms, and notices render directly from their root documents; the homepage and support page reuse README content. Edit `site/guide.md` for the user guide and `site/site.css` for styling. Branding comes from the README heading. This generated preview is local-only (`http://127.0.0.1:8000`). Production Terms, privacy, support and documentation are published in the GitHub repository; the authentication Worker does not host this site.
 
 The only copied images are Yap's app icon and the two sample screenshots described in `Documentation/Images/README.md`. Files under `public/` are an explicit allowlist. Generation validates local links and anchors; `--check` also rejects stale pages or unexpected files. CI checks generated output before bundling. The site has no scripts, forms, analytics, external fonts, or remote image requests. Its `_headers` policy applies to static asset responses; API headers remain the Worker's responsibility.
 

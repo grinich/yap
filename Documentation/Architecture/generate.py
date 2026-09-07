@@ -50,7 +50,7 @@ for x, title, letter in [(36, "User's Mac", 'A'), (372, 'Authorization service',
 paragraph('<b>Yap native macOS application</b><br/>SwiftUI / AppKit / AVPlayer<br/>Zoom Meeting SDK', 54, 553, 240, 12, 17)
 paragraph('<b>System browser</b><br/>Zoom consent; S256 PKCE + state.<br/>Code returns to 127.0.0.1 callback.', 54, 483, 240)
 paragraph('<b>Local storage</b><br/>Keychain: OAuth tokens and signing grant.<br/>Calendar cache, temporary playback data,<br/>and user-selected recording exports.', 54, 415, 240)
-paragraph('<b>Cloudflare Workers / HTTPS</b><br/>meetings.grinich.app', 390, 553, 240, 12, 17)
+paragraph('<b>Cloudflare Workers / HTTPS</b><br/>meeting-auth.mgrinich.workers.dev', 390, 553, 240, 12, 17)
 paragraph('<b>POST /v1/oauth/token</b><br/>Pins public client ID; proxies PKCE or<br/>refresh; issues token-bound HMAC grant.', 390, 499, 240)
 paragraph('<b>POST /v1/meeting-sdk/signature</b><br/>Verifies grant + live ZAK; returns SDK JWT.<br/>SDK and grant secrets stay server-side.', 390, 437, 240)
 paragraph('No meeting content or credential database.<br/>Transient token processing only.', 390, 375, 240, 9.5, 13, color=MUTED)

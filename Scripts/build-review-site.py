@@ -19,7 +19,7 @@ from urllib.parse import quote, unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = Path("Services/zoom-auth")
 REPOSITORY = "https://github.com/grinich/yap"
-CANONICAL_URL = "https://meetings.grinich.app"
+CANONICAL_URL = "http://127.0.0.1:8000"
 ROUTES = {"README.md": "/", "PRIVACY.md": "/privacy/", "TERMS.md": "/terms/",
           "THIRD_PARTY_NOTICES.md": "/notices/", str(SERVICE / "site/guide.md"): "/guide/"}
 ASSETS = {"Resources/YapIcon.png": "assets/icon.png",
@@ -230,7 +230,7 @@ def validate(files: dict[str, bytes]) -> None:
     for path, page in pages.items():
         for link in page.links:
             target = urlsplit(link)
-            if target.scheme in {"https", "mailto"}:
+            if target.scheme in {"https", "mailto"} or (target.scheme == "http" and target.netloc == "127.0.0.1:8000"):
                 continue
             if target.scheme or target.netloc:
                 raise ValueError(f"Unexpected external URL in {path}")

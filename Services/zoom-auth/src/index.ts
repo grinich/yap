@@ -216,7 +216,6 @@ export async function handleRequest(request: Request, env: Env, deps = liveDepen
     if (url.search) throw new RequestFailure(400, "invalid_request");
     if (url.pathname === "/health" && request.method === "GET") return json({status: "ok"});
     if (url.pathname !== TOKEN_PATH && url.pathname !== SIGNATURE_PATH) {
-      if (request.method === "GET" || request.method === "HEAD") return env.ASSETS.fetch(request);
       throw new RequestFailure(404, "not_found");
     }
     if (request.method !== "POST") throw new RequestFailure(405, "method_not_allowed");

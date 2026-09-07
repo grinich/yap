@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 Disallow: /v1/
-Sitemap: https://meetings.grinich.app/sitemap.xml
+Sitemap: http://127.0.0.1:8000/sitemap.xml

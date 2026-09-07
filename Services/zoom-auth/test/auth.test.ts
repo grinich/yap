@@ -9,8 +9,7 @@ function environment(): Env {
     ZOOM_PUBLIC_CLIENT_ID: "test-public-client", ZOOM_SDK_CLIENT_ID: "test-sdk-client",
     ZOOM_SDK_CLIENT_SECRET: "fake-test-sdk-secret", SIGNING_GRANT_SECRET: "fake-test-grant-secret-with-at-least-43-characters",
     REQUEST_LIMITER: {limit: async () => ({success: true})},
-    SIGNATURE_LIMITER: {limit: async () => ({success: true})},
-    ASSETS: {fetch: async () => new Response("Not found", {status: 404}), connect: () => { throw new Error("No sockets in asset tests"); }}
+    SIGNATURE_LIMITER: {limit: async () => ({success: true})}
   };
 }
 const codeBody = () => ({grant_type: "authorization_code", client_id: "test-public-client",
@@ -199,9 +198,20 @@ test("Zoom redirects never forward credentials or retry token exchanges or autho
   }
 });
 
-test("public documents use the asset binding while API routes remain protected", async () => {
+test("service exposes only health and authenticated APIs, without hosting documents", async () => {
   const env = environment();
-  env.ASSETS.fetch = async () => new Response("Public documentation");
-  assert.equal(await (await handleRequest(new Request("https://auth.example.test/privacy/"), env, noNetwork)).text(), "Public documentation");
+  const health = await handleRequest(new Request("https://auth.example.test/health"), env, noNetwork);
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), {status: "ok"});
+  for (const path of ["/", "/privacy/", "/terms/", "/support/", "/index.html", "/arbitrary-path"]) {
+    for (const method of ["GET", "HEAD", "POST"]) {
+      const response = await handleRequest(new Request(`https://auth.example.test${path}`, {method}), env, noNetwork);
+      assert.equal(response.status, 404);
+      assert.equal(response.headers.get("Location"), null);
+      assert.equal(await response.text(), '{"error":"not_found"}');
+    }
+  }
+  assert.equal((await handleRequest(post("/health"), env, noNetwork)).status, 404);
+  assert.equal((await handleRequest(new Request("https://auth.example.test/v1/oauth/token"), env, noNetwork)).status, 405);
   assert.equal((await handleRequest(post("/v1/meeting-sdk/signature"), env, noNetwork)).status, 401);
 });

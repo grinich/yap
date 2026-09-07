@@ -444,7 +444,6 @@ private struct RecordingPlaybackMenuStyle: ViewModifier {
             .tint(nil as Color?).foregroundStyle(.primary)
             .fixedSize()
             .padding(.horizontal, 8).frame(height: 32)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
             .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 }

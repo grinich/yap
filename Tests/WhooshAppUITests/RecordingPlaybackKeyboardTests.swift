@@ -38,6 +38,24 @@ struct RecordingPlaybackKeyboardTests {
         #expect(fixture.actionCount == 1)
     }
 
+    @Test(arguments: ["f", "F"])
+    func fullscreenTogglesTheRecordingWindowOncePerPress(_ key: String) throws {
+        let fixture = try RecordingKeyboardFixture()
+        defer { fixture.cleanUp() }
+        let modifiers: NSEvent.ModifierFlags = key == "F" ? .capsLock : []
+
+        #expect(fixture.view.handleLocalEvent(try fixture.key(key, modifiers: modifiers)) == nil)
+        #expect(fixture.window.fullscreenToggleCount == 1)
+        #expect(fixture.window.reportsFullscreen)
+        #expect(fixture.view.handleLocalEvent(try fixture.key(key, modifiers: modifiers, repeating: true)) == nil)
+        #expect(fixture.window.fullscreenToggleCount == 1)
+        #expect(fixture.window.reportsFullscreen)
+        #expect(fixture.view.handleLocalEvent(try fixture.key(key, modifiers: modifiers)) == nil)
+        #expect(fixture.window.fullscreenToggleCount == 2)
+        #expect(!fixture.window.reportsFullscreen)
+        #expect(fixture.actionCount == 2)
+    }
+
     @Test(arguments: ["left", "right"], [NSEvent.ModifierFlags(), .function, .numericPad, [.function, .numericPad]])
     func bareArrowsJogOnEveryRepeatIncludingAppKitArrowFlags(_ key: String, flags: NSEvent.ModifierFlags) throws {
         let fixture = try RecordingKeyboardFixture()
@@ -49,7 +67,7 @@ struct RecordingPlaybackKeyboardTests {
         #expect(fixture.actionCount == 2)
     }
 
-    @Test(arguments: ["s", "v", "left", "right"], [NSEvent.ModifierFlags.command, .control, .option, .shift])
+    @Test(arguments: ["s", "v", "f", "left", "right"], [NSEvent.ModifierFlags.command, .control, .option, .shift])
     func modifiedShortcutsKeepTheirNormalMeaning(_ key: String, modifiers: NSEvent.ModifierFlags) throws {
         let fixture = try RecordingKeyboardFixture()
         defer { fixture.cleanUp() }
@@ -65,11 +83,11 @@ struct RecordingPlaybackKeyboardTests {
             let event = try fixture.key(key)
             #expect(fixture.view.handleLocalEvent(event) === event)
         }
-        for key in [" ", "s", "v", "left", "right"] {
+        for key in [" ", "s", "v", "f", "left", "right"] {
             let event = try fixture.key(key, type: .keyUp)
             #expect(fixture.view.handleLocalEvent(event) === event)
         }
-        for key in ["s", "v"] {
+        for key in ["s", "v", "f"] {
             let event = try fixture.key(key, modifiers: .function)
             #expect(fixture.view.handleLocalEvent(event) === event)
         }
@@ -87,7 +105,7 @@ struct RecordingPlaybackKeyboardTests {
                                       NSButton(), NSSlider(), NSPopUpButton(), NSCollectionView()]
         for control in controls {
             fixture.window.reportedResponder = control
-            for key in [" ", "s", "v", "left", "right"] {
+            for key in [" ", "s", "v", "f", "left", "right"] {
                 let event = try fixture.key(key)
                 #expect(fixture.view.handleLocalEvent(event) === event)
             }
@@ -103,13 +121,14 @@ struct RecordingPlaybackKeyboardTests {
         playerView.addSubview(button)
         for responder in [playerView, button] {
             fixture.window.reportedResponder = responder
-            for key in [" ", "s", "v", "left", "right"] {
+            for key in [" ", "s", "v", "f", "left", "right"] {
                 #expect(fixture.view.handleLocalEvent(try fixture.key(key)) == nil)
             }
         }
         #expect(fixture.toggleCount == 2)
         #expect(fixture.speedCycleCount == 2)
         #expect(fixture.viewCycleCount == 2)
+        #expect(fixture.window.fullscreenToggleCount == 2)
         #expect(fixture.jogs == [-10, 10, -10, 10])
     }
 
@@ -129,10 +148,12 @@ struct RecordingPlaybackKeyboardTests {
             }
             #expect(fixture.view.handleLocalEvent(try fixture.key("s")) == nil)
             #expect(fixture.view.handleLocalEvent(try fixture.key("v")) == nil)
+            #expect(fixture.view.handleLocalEvent(try fixture.key("f")) == nil)
         }
         #expect(fixture.jogs.isEmpty)
         #expect(fixture.speedCycleCount == 2)
         #expect(fixture.viewCycleCount == 2)
+        #expect(fixture.window.fullscreenToggleCount == 2)
     }
 
     @Test func inactiveHiddenEmptyDetachedAndOtherWindowsAreUnaffected() throws {
@@ -141,11 +162,11 @@ struct RecordingPlaybackKeyboardTests {
         let otherWindow = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         otherWindow.isReleasedWhenClosed = false
         defer { otherWindow.close() }
-        for key in [" ", "s", "v", "left", "right"] {
+        for key in [" ", "s", "v", "f", "left", "right"] {
             let otherEvent = try fixture.key(key, window: otherWindow)
             #expect(fixture.view.handleLocalEvent(otherEvent) === otherEvent)
         }
-        let events = try [" ", "s", "v", "left", "right"].map { try fixture.key($0) }
+        let events = try [" ", "s", "v", "f", "left", "right"].map { try fixture.key($0) }
         func expectPassThrough() {
             for event in events { #expect(fixture.view.handleLocalEvent(event) === event) }
         }
@@ -175,7 +196,7 @@ struct RecordingPlaybackKeyboardTests {
         let sheet = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         sheet.isReleasedWhenClosed = false
         defer { fixture.window.reportedSheet = nil; sheet.close() }
-        let events = try [" ", "s", "v", "left", "right"].map { try fixture.key($0) }
+        let events = try [" ", "s", "v", "f", "left", "right"].map { try fixture.key($0) }
         func expectPassThrough() {
             for event in events { #expect(fixture.view.handleLocalEvent(event) === event) }
         }
@@ -205,7 +226,7 @@ private final class RecordingKeyboardFixture {
     var speedCycleCount = 0
     var viewCycleCount = 0
     var jogs: [Double] = []
-    var actionCount: Int { toggleCount + speedCycleCount + viewCycleCount + jogs.count }
+    var actionCount: Int { toggleCount + speedCycleCount + viewCycleCount + jogs.count + window.fullscreenToggleCount }
 
     init() throws {
         _ = NSApplication.shared
@@ -226,7 +247,7 @@ private final class RecordingKeyboardFixture {
 
     func key(_ key: String, modifiers: NSEvent.ModifierFlags = [], repeating: Bool = false,
              window: NSWindow? = nil, type: NSEvent.EventType = .keyDown) throws -> NSEvent {
-        let keys: [String: (UInt16, String)] = [" ": (49, " "), "s": (1, key), "v": (9, key), "q": (12, "q"),
+        let keys: [String: (UInt16, String)] = [" ": (49, " "), "s": (1, key), "v": (9, key), "f": (3, key), "q": (12, "q"),
             "left": (123, "\u{F702}"), "right": (124, "\u{F703}"), "up": (126, "\u{F700}"), "down": (125, "\u{F701}")]
         let (keyCode, characters) = try #require(keys[key.lowercased()])
         return try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers,
@@ -248,9 +269,16 @@ private final class RecordingKeyboardWindow: NSWindow {
     var reportsMiniaturized = false
     var reportedResponder: NSResponder?
     var reportedSheet: NSWindow?
+    var fullscreenToggleCount = 0
+    var reportsFullscreen = false
     override var isKeyWindow: Bool { reportsKey }
     override var isVisible: Bool { reportsVisible }
     override var isMiniaturized: Bool { reportsMiniaturized }
     override var attachedSheet: NSWindow? { reportedSheet }
     override var firstResponder: NSResponder? { reportedResponder ?? super.firstResponder }
+
+    override func toggleFullScreen(_ sender: Any?) {
+        fullscreenToggleCount += 1
+        reportsFullscreen.toggle()
+    }
 }

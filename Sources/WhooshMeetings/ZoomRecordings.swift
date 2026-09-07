@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// A single recorded meeting occurrence. Zoom's UUID distinguishes recurring meetings.
@@ -129,15 +130,31 @@ public struct ZoomRecordingFile: Identifiable, Sendable, Equatable, Decodable {
 
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decode(String.self, forKey: .id)
         recordingType = try values.decodeIfPresent(String.self, forKey: .recordingType) ?? ""
         fileType = try values.decodeIfPresent(String.self, forKey: .fileType) ?? ""
         fileSize = try values.decodeIfPresent(Int64.self, forKey: .fileSize) ?? 0
         status = try values.decodeIfPresent(String.self, forKey: .status) ?? ""
         downloadURL = try values.decodeIfPresent(String.self, forKey: .downloadURL).flatMap(URL.init(string:))
         playURL = try values.decodeIfPresent(String.self, forKey: .playURL).flatMap(URL.init(string:))
-        recordingStart = try values.decodeIfPresent(String.self, forKey: .recordingStart).flatMap(ZoomRecordingDate.parse)
-        recordingEnd = try values.decodeIfPresent(String.self, forKey: .recordingEnd).flatMap(ZoomRecordingDate.parse)
+        let start = try values.decodeIfPresent(String.self, forKey: .recordingStart)
+        let end = try values.decodeIfPresent(String.self, forKey: .recordingEnd)
+        recordingStart = start.flatMap(ZoomRecordingDate.parse)
+        recordingEnd = end.flatMap(ZoomRecordingDate.parse)
+        if let providerID = try values.decodeIfPresent(String.self, forKey: .id) {
+            guard !providerID.isEmpty else {
+                throw DecodingError.dataCorruptedError(forKey: .id, in: values, debugDescription: "Empty recording file ID")
+            }
+            id = providerID
+        } else {
+            // Zoom explicitly omits IDs on CC/TIMELINE attachments. Keep these
+            // non-playable files without rejecting the meeting's valid videos.
+            guard ["CC", "TIMELINE"].contains(fileType.uppercased()) else {
+                throw DecodingError.keyNotFound(CodingKeys.id,
+                    .init(codingPath: decoder.codingPath, debugDescription: "Missing recording file ID"))
+            }
+            let identity = try JSONEncoder().encode([fileType.uppercased(), downloadURL?.absoluteString ?? "", start ?? "", end ?? ""])
+            id = "attachment-" + Data(SHA256.hash(data: identity)).zoomBase64URL
+        }
     }
 }
 

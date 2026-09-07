@@ -61,19 +61,22 @@ struct RecordingSidebar: View {
                         .padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal, 6).padding(.vertical, 12)
                     }
-                    if model.isLoading {
+                    if model.isLoading || model.isLoadingOlder {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Loading recordings…").font(.system(size: 12)).foregroundStyle(.secondary)
+                            Text(model.isLoadingOlder ? "Loading earlier recordings…" : "Loading recordings…")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
                         }.frame(maxWidth: .infinity).padding(.vertical, 22)
                     }
                     if !isPreview, model.oldestLoadedDate != nil, model.error == nil {
                         Button { Task { await model.loadOlder() } } label: {
                             Label("Load earlier month", systemImage: "clock.arrow.circlepath")
                                 .font(.system(size: 12)).frame(maxWidth: .infinity).padding(.vertical, 8)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .disabled(model.isLoading || model.isRefreshing || connection.isBusy).padding(.top, 10)
+                        .whooshIconHover(cornerRadius: 8)
+                        .disabled(model.isLoading || model.isLoadingOlder || connection.isBusy).padding(.top, 10)
                     }
                 }.padding(.horizontal, 8).padding(.bottom, 20)
             }

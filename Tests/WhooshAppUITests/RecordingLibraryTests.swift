@@ -416,6 +416,104 @@ struct RecordingLibraryTests {
         #expect(model.error == nil)
     }
 
+    @Test(arguments: [(false, false), (true, false), (false, true)])
+    func explicitOlderRequestsWaitForRefreshAndShareOneMonth(cancelFirst: Bool, olderFails: Bool) async throws {
+        let historical = try meeting("history", date: "2026-07-03T09:00:00Z")
+        let fixture = RecordingLibraryPages(pages: [
+            .init(meetings: []), .init(meetings: []), .init(meetings: [historical]),
+            .init(meetings: []), .init(meetings: []), .init(meetings: []), .init(meetings: [])
+        ], pausedRequests: [4], failedRequests: olderFails ? [7] : [])
+        let model = makeModel(fixture)
+        let now = try date("2026-09-07T12:00:00Z")
+        await model.loadInitial(now: now)
+        let refresh = Task { await model.refresh(now: now) }
+        await fixture.waitForPause(4)
+        let arrived = AsyncStream<Void>.makeStream()
+        let first = Task {
+            arrived.continuation.yield()
+            await model.loadOlder()
+        }
+        let second = Task {
+            arrived.continuation.yield()
+            await model.loadOlder()
+        }
+        var arrivals = 0
+        for await _ in arrived.stream {
+            arrivals += 1
+            if arrivals == 2 { break }
+        }
+        #expect(model.isRefreshing && model.isLoadingOlder)
+        #expect(await fixture.calls.count == 4)
+        if cancelFirst { first.cancel() }
+        await fixture.resume(4)
+        await refresh.value
+        await first.value
+        await second.value
+
+        let calls = await fixture.calls
+        #expect(calls.count == 7)
+        #expect(calls.last?.from == (try date("2026-06-01T00:00:00Z")))
+        #expect(model.oldestLoadedDate == (try date(olderFails ? "2026-07-01T00:00:00Z" : "2026-06-01T00:00:00Z")))
+        #expect(model.meetings == [historical])
+        #expect(!model.isLoadingOlder && !model.isLoading && !model.isRefreshing)
+        #expect((model.error != nil) == olderFails)
+    }
+
+    @Test func anExplicitOlderRequestStillRunsAfterRefreshFails() async throws {
+        let fixture = RecordingLibraryPages(pages: Array(repeating: .init(meetings: []), count: 5),
+                                            pausedRequests: [4], failedRequests: [4])
+        let model = makeModel(fixture)
+        let now = try date("2026-09-07T12:00:00Z")
+        await model.loadInitial(now: now)
+        let refresh = Task { await model.refresh(now: now) }
+        await fixture.waitForPause(4)
+        let arrived = AsyncStream<Void>.makeStream()
+        let older = Task {
+            arrived.continuation.yield()
+            await model.loadOlder()
+        }
+        for await _ in arrived.stream { break }
+        #expect(model.isLoadingOlder)
+        await fixture.resume(4)
+        await refresh.value
+        await older.value
+
+        #expect(await fixture.calls.count == 5)
+        #expect(await fixture.calls.last?.from == (try date("2026-06-01T00:00:00Z")))
+        #expect(model.oldestLoadedDate == (try date("2026-06-01T00:00:00Z")))
+        #expect(!model.isLoadingOlder && !model.isLoading && !model.isRefreshing)
+        #expect(model.error == nil)
+    }
+
+    @Test func cancellingAQueuedOlderRequestLeavesTheMonthAvailableForTheNextClick() async throws {
+        let fixture = RecordingLibraryPages(pages: Array(repeating: .init(meetings: []), count: 7),
+                                            pausedRequests: [4])
+        let model = makeModel(fixture)
+        let now = try date("2026-09-07T12:00:00Z")
+        await model.loadInitial(now: now)
+        let refresh = Task { await model.refresh(now: now) }
+        await fixture.waitForPause(4)
+        let arrived = AsyncStream<Void>.makeStream()
+        let older = Task {
+            arrived.continuation.yield()
+            await model.loadOlder()
+        }
+        for await _ in arrived.stream { break }
+        #expect(model.isLoadingOlder)
+        older.cancel()
+        await fixture.resume(4)
+        await refresh.value
+        await older.value
+        #expect(await fixture.calls.count == 6)
+        #expect(!model.isLoadingOlder)
+        #expect(model.oldestLoadedDate == (try date("2026-07-01T00:00:00Z")))
+
+        await model.loadOlder()
+        #expect(await fixture.calls.count == 7)
+        #expect(model.oldestLoadedDate == (try date("2026-06-01T00:00:00Z")))
+        #expect(model.error == nil)
+    }
+
     @Test func staleRefreshCannotMergeIntoOrFinishANewAccountsLoad() async throws {
         let stale = try meeting("old-account", date: "2026-09-03T09:00:00Z")
         let current = try meeting("current-account", date: "2026-09-04T09:00:00Z")
@@ -428,7 +526,16 @@ struct RecordingLibraryTests {
         await model.loadInitial(now: now)
         let oldRefresh = Task { await model.refresh(now: now) }
         await fixture.waitForPause(4)
+        let arrived = AsyncStream<Void>.makeStream()
+        let oldOlder = Task {
+            arrived.continuation.yield()
+            await model.loadOlder()
+        }
+        for await _ in arrived.stream { break }
+        #expect(model.isLoadingOlder)
         model.clear()
+        #expect(!model.isLoadingOlder)
+        await oldOlder.value
         let currentLoad = Task { await model.refreshForPresentation(now: now) }
         await fixture.waitForPause(5)
         await fixture.resume(4)
@@ -442,6 +549,7 @@ struct RecordingLibraryTests {
         #expect(model.meetings == [current])
         #expect(model.hasLoadedInitial)
         #expect(!model.isLoading && !model.isRefreshing)
+        #expect(!model.isLoadingOlder)
         #expect(model.error == nil)
     }
 

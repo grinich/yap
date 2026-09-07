@@ -92,6 +92,7 @@ final class RecordingPlaybackKeyboardView: NSView {
         case .space: if !event.isARepeat { togglePlayback() }
         case .speed: if !event.isARepeat { cycleSpeed() }
         case .view: if !event.isARepeat { cycleView() }
+        case .fullscreen: if !event.isARepeat { window.toggleFullScreen(self) }
         case .backward: jogPlayback(-10)
         case .forward: jogPlayback(10)
         }
@@ -99,7 +100,7 @@ final class RecordingPlaybackKeyboardView: NSView {
     }
 
     private enum Shortcut: Equatable {
-        case space, speed, view, backward, forward
+        case space, speed, view, fullscreen, backward, forward
 
         init?(_ event: NSEvent) {
             // AppKit supplies these flags for ordinary arrows, even without Fn.
@@ -110,6 +111,7 @@ final class RecordingPlaybackKeyboardView: NSView {
             case " " where event.keyCode == 49: self = .space
             case "s": self = .speed
             case "v": self = .view
+            case "f": self = .fullscreen
             default: return nil
             }
         }

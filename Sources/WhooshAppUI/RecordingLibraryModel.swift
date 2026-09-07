@@ -68,6 +68,7 @@ public final class RecordingLibraryModel {
     }
     private(set) var isLoading = false
     private(set) var isRefreshing = false
+    private(set) var isLoadingOlder = false
     private(set) var hasLoadedInitial = false
     private(set) var oldestLoadedDate: Date?
     private(set) var error: String?
@@ -91,6 +92,8 @@ public final class RecordingLibraryModel {
     @ObservationIgnored private var pendingLibraryLoad: LibraryLoad?
     @ObservationIgnored private var activeLibraryLoad: LibraryLoad.Kind?
     @ObservationIgnored private var libraryLoadWaiters: [CheckedContinuation<Bool, Never>] = []
+    @ObservationIgnored private var olderLoadRequestCount = 0
+    @ObservationIgnored private var completedOlderLoad = UUID()
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var mediaLoader: RecordingMediaLoader?
     @ObservationIgnored private var itemObservation: NSKeyValueObservation?
@@ -240,7 +243,27 @@ public final class RecordingLibraryModel {
     }
 
     func loadOlder() async {
-        guard !isPreview, activeLibraryLoad == nil else { return }
+        guard !isPreview, !Task.isCancelled else { return }
+        let expected = generation
+        let requestedWindow = nextWindow
+        let previousOlderLoad = completedOlderLoad
+        olderLoadRequestCount += 1
+        isLoadingOlder = true
+        defer {
+            if expected == generation {
+                olderLoadRequestCount -= 1
+                isLoadingOlder = olderLoadRequestCount > 0
+            }
+        }
+        while let activeLibraryLoad {
+            let cancelled = await withCheckedContinuation { libraryLoadWaiters.append($0) }
+            guard expected == generation, !Task.isCancelled, !isPreview else { return }
+            if activeLibraryLoad == .older, !cancelled { return }
+            if completedOlderLoad != previousOlderLoad { return }
+            // Several explicit clicks can wait for the same refresh. The first
+            // completed older fetch satisfies all requests for that same month.
+            if let requestedWindow, let oldestLoadedDate, oldestLoadedDate <= requestedWindow.from { return }
+        }
         guard hasLoadedInitial, let nextWindow else { await loadInitial(); return }
         await load(.init(kind: .older, windows: [nextWindow]))
     }
@@ -292,6 +315,7 @@ public final class RecordingLibraryModel {
                 isLoading = false
                 isRefreshing = false
                 activeLibraryLoad = nil
+                if request.kind == .older, !Task.isCancelled, !wasCancelled { completedOlderLoad = UUID() }
                 let waiters = libraryLoadWaiters
                 libraryLoadWaiters = []
                 for waiter in waiters { waiter.resume(returning: Task.isCancelled || wasCancelled) }
@@ -719,6 +743,8 @@ public final class RecordingLibraryModel {
         error = nil
         isLoading = false
         isRefreshing = false
+        isLoadingOlder = false
+        olderLoadRequestCount = 0
         activeLibraryLoad = nil
         pendingLibraryLoad = nil
         let waiters = libraryLoadWaiters

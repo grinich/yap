@@ -29,6 +29,59 @@ struct ZoomRecordingsTests {
         #expect(page.meetings.first?.shareableURL == nil)
     }
 
+    @Test func listingAcceptsCaptionAndTimelineAttachmentsWithoutProviderIDs() async throws {
+        let server = RecordingFixtureServer(listBody: recordingAuxiliaryFixture)
+        let client = makeClient(server: server)
+        let page = try await client.recordings(from: date("2026-03-01T00:00:00Z"),
+            to: date("2026-03-31T00:00:00Z"))
+        let meeting = try #require(page.meetings.first)
+        #expect(page.nextPageToken == "older-next-page")
+        #expect(meeting.files.count == 4)
+        #expect(meeting.playableVideoFiles.map(\.id) == ["older-video"])
+        let attachments = Array(meeting.files.dropFirst())
+        #expect(Set(attachments.map(\.id)).count == 3)
+        #expect(attachments.allSatisfy { !$0.id.isEmpty && !$0.isPlayableVideo && !$0.isChatTranscript })
+        #expect(attachments.allSatisfy { $0.status.isEmpty && $0.fileSize == 0 && $0.recordingType.isEmpty && $0.playURL == nil })
+        #expect(await server.requests.count == 1)
+    }
+
+    @Test func auxiliaryFileIdentityIsStableAcrossDecodesAndReordering() throws {
+        let first = try JSONDecoder().decode(ZoomRecordingPage.self, from: recordingAuxiliaryFixture)
+        let repeated = try JSONDecoder().decode(ZoomRecordingPage.self, from: recordingAuxiliaryFixture)
+        #expect(first == repeated)
+
+        var payload = try #require(JSONSerialization.jsonObject(with: recordingAuxiliaryFixture) as? [String: Any])
+        var meetings = try #require(payload["meetings"] as? [[String: Any]])
+        let files = try #require(meetings[0]["recording_files"] as? [[String: Any]])
+        meetings[0]["recording_files"] = Array(files.reversed())
+        payload["meetings"] = meetings
+        let reversed = try JSONDecoder().decode(ZoomRecordingPage.self, from: JSONSerialization.data(withJSONObject: payload))
+        let originalFiles = try #require(first.meetings.first).files
+        let reversedFiles = try #require(reversed.meetings.first).files
+        #expect(originalFiles.map(\.id) == Array(reversedFiles.reversed()).map(\.id))
+    }
+
+    @Test(arguments: ["MP4", "CHAT", "M4A", "UNKNOWN"])
+    func otherRecordingTypesStillRequireValidProviderIDs(_ fileType: String) throws {
+        for invalidID in [nil, NSNull(), "", 123] as [Any?] {
+            var payload: [String: Any] = ["file_type": fileType, "status": "completed",
+                "download_url": "https://zoom.us/rec/download/fixture"]
+            if let invalidID { payload["id"] = invalidID }
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            #expect(throws: DecodingError.self) { try JSONDecoder().decode(ZoomRecordingFile.self, from: data) }
+        }
+    }
+
+    @Test(arguments: ["CC", "TIMELINE"])
+    func auxiliaryFilesPreserveProviderIDsAndRejectMalformedValues(_ fileType: String) throws {
+        let valid = try JSONSerialization.data(withJSONObject: ["file_type": fileType, "id": "provider-id"])
+        #expect(try JSONDecoder().decode(ZoomRecordingFile.self, from: valid).id == "provider-id")
+        for invalidID in ["", 123] as [Any] {
+            let data = try JSONSerialization.data(withJSONObject: ["file_type": fileType, "id": invalidID])
+            #expect(throws: DecodingError.self) { try JSONDecoder().decode(ZoomRecordingFile.self, from: data) }
+        }
+    }
+
     @Test func decodesAndPrefersMeetingShareLinkPreservingItsPasscode() throws {
         let data = Data(#"""
         {"uuid":"meeting","start_time":"2026-08-18T12:00:00Z","share_url":"https://us02web.zoom.us/rec/share/meeting?pwd=recording-passcode","recording_files":[
@@ -242,6 +295,15 @@ private let recordingFixture = Data(#"""
   {"id":"processing","file_type":"MP4","status":"processing","download_url":"https://us02web.zoom.us/rec/download/pending"},
   {"id":"untrusted","file_type":"MP4","status":"completed","download_url":"https://zoom.us.attacker.example/video"},
   {"id":"webpage-only","file_type":"MP4","status":"completed","play_url":"https://us02web.zoom.us/rec/play/video"}
+]}]}
+"""#.utf8)
+
+private let recordingAuxiliaryFixture = Data(#"""
+{"next_page_token":"older-next-page","meetings":[{"uuid":"older-meeting","topic":"Earlier recording","start_time":"2026-03-18T12:00:00Z","duration":30,"recording_files":[
+  {"id":"older-video","file_type":"MP4","status":"completed","file_size":100,"download_url":"https://zoom.us/rec/download/older-video"},
+  {"file_type":"CC","download_url":"https://zoom.us/rec/download/captions-first","recording_start":"2026-03-18T12:00:00Z","recording_end":"2026-03-18T12:15:00Z"},
+  {"file_type":"TIMELINE","download_url":"https://zoom.us/rec/download/timeline","recording_start":"2026-03-18T12:00:00Z","recording_end":"2026-03-18T12:30:00Z"},
+  {"file_type":"CC","id":null,"download_url":"https://zoom.us/rec/download/captions-second","recording_start":"2026-03-18T12:15:00Z","recording_end":"2026-03-18T12:30:00Z"}
 ]}]}
 """#.utf8)
 

@@ -96,6 +96,7 @@ public final class RecordingLibraryModel {
     @ObservationIgnored private var resumedItemRevision: UUID?
     @ObservationIgnored private var downloadTask: Task<Void, Never>?
     @ObservationIgnored private var playbackGeneration = UUID()
+    @ObservationIgnored private var pauseRevision = UUID()
     @ObservationIgnored private var temporaryVideo: URL?
     @ObservationIgnored private var temporaryVideoFileID: String?
     @ObservationIgnored private var playbackSources: [String: RecordingPlaybackSource] = [:]
@@ -356,6 +357,7 @@ public final class RecordingLibraryModel {
     }
 
     private func pausePlayback() {
+        pauseRevision = UUID()
         player.pause()
         if let position = pendingPosition {
             pendingPosition = RecordingPlaybackPosition(time: position.time, rate: 0)
@@ -570,6 +572,7 @@ public final class RecordingLibraryModel {
         guard !isPreview, let file = selectedFile, !isDownloading else { return }
         synchronizeDefaultPlaybackSpeed()
         let expected = playbackGeneration
+        let expectedPause = pauseRevision
         let position = pendingPosition ?? RecordingPlaybackPosition(time: pendingSeekTime ?? player.currentTime(), rate: player.rate)
         let target = destination ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("Zooom-recording-\(UUID().uuidString).mp4")
@@ -590,14 +593,16 @@ public final class RecordingLibraryModel {
                 }
                 self.isDownloading = false
                 if destination == nil {
-                    // A speed or pause change made while downloading belongs to
-                    // the fallback too. AVPlayer.rate can briefly lag a requested
-                    // speed change; use it only for paused/playing intent, and
-                    // restore the selected speed. Failed streams retain their intent.
-                    let resume = self.pendingPosition ?? RecordingPlaybackPosition(time: position.time,
+                    // Keep the selected speed and a failed stream's saved intent.
+                    // A later model pause takes precedence over AVPlayer's transient rate.
+                    let positionToResume = self.pendingPosition ?? RecordingPlaybackPosition(time: position.time,
                         rate: self.player.currentItem?.status == .readyToPlay && self.playbackError == nil
                             ? (self.player.rate == 0 ? 0 : self.playbackSpeed)
                             : (position.rate == 0 ? 0 : self.playbackSpeed))
+                    // A hide/pause request revokes this download's automatic resume,
+                    // even if AVPlayer still reports the rate from before that request.
+                    let resume = RecordingPlaybackPosition(time: positionToResume.time,
+                        rate: self.pauseRevision == expectedPause ? positionToResume.rate : 0)
                     self.preparationTask?.cancel()
                     self.preparationTask = nil
                     self.player.pause()

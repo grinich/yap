@@ -542,6 +542,42 @@ struct RecordingPlaybackTests {
         #expect(fixture.createdIDs == ["view-a"])
     }
 
+    @Test func hidingRevokesAnInFlightDownloadsResumeEvenWhenTransportStillReportsPlaying() async throws {
+        let fixture = try await RecordingPlaybackFixture.make(duration: 60)
+        defer { fixture.cleanUp() }
+        let (started, startSignal) = AsyncStream<Void>.makeStream()
+        let (released, releaseSignal) = AsyncStream<Void>.makeStream()
+        defer { startSignal.finish(); releaseSignal.finish() }
+        let model = fixture.makeModel(beforeDownload: {
+            startSignal.yield(())
+            for await _ in released { break }
+        })
+        defer { model.clear() }
+        model.select(fixture.meeting())
+        try #require(await waitUntil { !model.isPreparing && model.player.currentItem?.status == .readyToPlay })
+        model.player.pause()
+        #expect(await model.player.seek(to: time(0.4), toleranceBefore: .zero, toleranceAfter: .zero))
+        model.setPlaybackSpeed(1.5)
+        model.player.play()
+        model.downloadSelected()
+        for await _ in started { break }
+        model.suspendPlayback()
+        // Simulate the stale nonzero transport state observed when a pause and
+        // download completion race. The model's recorded hide request must win.
+        model.player.rate = 1.5
+        model.prepareForPresentation()
+        try #require(model.player.rate == 1.5)
+        releaseSignal.yield(())
+        releaseSignal.finish()
+        try #require(await waitUntil { !model.isDownloading && !model.isPreparing })
+        #expect(model.player.currentItem?.status == .readyToPlay)
+        #expect(model.player.rate == 0)
+        #expect(abs(model.player.currentTime().seconds - 0.4) < 0.05)
+        #expect(model.playbackSpeed == 1.5)
+        model.prepareForPresentation()
+        #expect(model.player.rate == 0)
+    }
+
     @Test(arguments: [false, true])
     func closingADedicatedPlayerClearsOrphanedSelectionWithoutRevivingEitherPlayer(closeAll: Bool) async throws {
         let fixture = try await RecordingPlaybackFixture.make()
@@ -820,7 +856,8 @@ struct RecordingPlaybackTests {
         }
     }
 
-    func makeModel(fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil) -> RecordingLibraryModel {
+    func makeModel(fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
+                   beforeDownload: (@Sendable () async -> Void)? = nil) -> RecordingLibraryModel {
         // Every source is local synthetic media. Neither live HTTP nor Keychain is reachable.
         let client = ZoomAccountClient(store: RecordingPlaybackUnusedStore(), transport: ZoomHTTPTransport { _ in
             throw URLError(.unsupportedURL)
@@ -831,6 +868,7 @@ struct RecordingPlaybackTests {
             let asset: AVAsset = file.id == "short-view" ? shortAsset : fullAsset
             return RecordingPlaybackSource(item: AVPlayerItem(asset: asset))
         }, downloadVideo: { [url] _, destination in
+            await beforeDownload?()
             try FileManager.default.copyItem(at: url, to: destination)
         }, fetchChat: fetchChat)
     }

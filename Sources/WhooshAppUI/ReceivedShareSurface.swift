@@ -20,12 +20,20 @@ struct ReceivedShareSurface: View {
                         ForEach(meeting.receivedShares) { source in
                             Button("\(source.ownerName) · \(source.title)") { meeting.selectReceivedShare(source.id) }
                         }
-                    } label: { Image(systemName: "rectangle.2.swap") }
-                    .menuStyle(.borderlessButton).fixedSize()
+                    } label: {
+                        Image(systemName: "rectangle.2.swap")
+                            .frame(width: 32, height: 32).contentShape(Rectangle())
+                    }
+                    .menuStyle(.button).buttonStyle(.plain).fixedSize()
+                    .whooshIconHover()
                     .help("Choose shared content").accessibilityLabel("Choose shared content")
                 }
-                Button { meeting.selectReceivedShare(nil) } label: { Image(systemName: "person.2") }
-                    .buttonStyle(.plain).help("Show people").accessibilityLabel("Show people instead of shared content")
+                Button { meeting.selectReceivedShare(nil) } label: {
+                    Image(systemName: "person.2")
+                        .frame(width: 32, height: 32).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).whooshIconHover()
+                .help("Show people").accessibilityLabel("Show people instead of shared content")
             }
             .padding(12)
             NativeReceivedShareContainer(meeting: meeting, sourceID: share.id, ownerName: share.ownerName)

@@ -11,41 +11,33 @@ struct RecordingSidebar: View {
     let openSettings: () -> Void
 
     var body: some View {
+        let filteredMeetings = model.filteredMeetings
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Recordings").font(.system(size: 20, weight: .semibold))
-                    Text("Your Zoom cloud library").font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button { Task { await model.refresh() } } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain).padding(6)
-                .disabled(model.isLoading || isPreview || connection.isBusy)
-                .help("Refresh recordings").accessibilityLabel("Refresh recordings")
-            }
-            .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 18)
-
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                TextField("Search recordings", text: $model.search)
+                TextField("Search titles or dates", text: $model.search)
                     .textFieldStyle(.plain).font(.system(size: 12))
-                    .accessibilityLabel("Search loaded recordings")
+                    .accessibilityLabel("Search loaded recordings by title or date")
+                    .help("Search titles or dates, like Aug 31, 8/31, or last Monday")
                 if !model.search.isEmpty {
-                    Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    Button { model.search = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .frame(width: 20, height: 20).contentShape(Rectangle())
+                    }
                         .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Clear search")
+                        .whooshIconHover(cornerRadius: 6)
                 }
             }
             .padding(9).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 14).padding(.bottom, 12)
+            .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 12)
+            .background(WhooshWindowInteractionRegion())
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(model.filteredMeetings) { meeting in
+                    ForEach(filteredMeetings) { meeting in
                         recordingRow(meeting)
                     }
-                    if model.filteredMeetings.isEmpty, !model.isLoading {
+                    if filteredMeetings.isEmpty, !model.isLoading {
                         if isPreview {
                             sidebarMessage("Connect to your library", detail: "Exit preview to browse your Zoom cloud recordings.")
                         } else if model.error == nil {
@@ -61,10 +53,7 @@ struct RecordingSidebar: View {
                                 .textSelection(.enabled)
                             HStack {
                                 Button("Retry") {
-                                    Task {
-                                        if model.hasLoadedInitial { await model.loadOlder() }
-                                        else { await model.loadInitial() }
-                                    }
+                                    Task { await model.retryLoading() }
                                 }
                                 Button("Zoom settings", action: openSettings)
                             }.controlSize(.small)
@@ -72,23 +61,27 @@ struct RecordingSidebar: View {
                         .padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal, 6).padding(.vertical, 12)
                     }
-                    if model.isLoading {
+                    if model.isLoading || model.isLoadingOlder {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Loading recordings…").font(.system(size: 12)).foregroundStyle(.secondary)
+                            Text(model.isLoadingOlder ? "Loading earlier recordings…" : "Loading recordings…")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
                         }.frame(maxWidth: .infinity).padding(.vertical, 22)
                     }
                     if !isPreview, model.oldestLoadedDate != nil, model.error == nil {
                         Button { Task { await model.loadOlder() } } label: {
                             Label("Load earlier month", systemImage: "clock.arrow.circlepath")
                                 .font(.system(size: 12)).frame(maxWidth: .infinity).padding(.vertical, 8)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .disabled(model.isLoading || connection.isBusy).padding(.top, 10)
+                        .whooshIconHover(cornerRadius: 8)
+                        .disabled(model.isLoading || model.isLoadingOlder || connection.isBusy).padding(.top, 10)
                     }
                 }.padding(.horizontal, 8).padding(.bottom, 20)
             }
             .scrollEdgeEffectStyle(.soft, for: .all)
+            .background(WhooshWindowInteractionRegion())
             Spacer(minLength: 0)
             if let since = model.oldestLoadedDate {
                 Text("\(model.meetings.count) recordings · since \(since.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, timeZone: .gmt)))")
@@ -97,7 +90,6 @@ struct RecordingSidebar: View {
             }
         }
         .background(.quaternary.opacity(0.12))
-        .background(WhooshWindowInteractionRegion(isEnabled: true))
     }
 
     private func sidebarMessage(_ title: String, detail: String) -> some View {
@@ -120,10 +112,18 @@ struct RecordingSidebar: View {
                     Text(meeting.topic.isEmpty ? "Untitled meeting" : meeting.topic)
                         .font(.system(size: 12, weight: .medium)).lineLimit(2)
                         .multilineTextAlignment(.leading)
-                    Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                    Text(count == 0 ? "No video available" : "\(meeting.duration) min\(count > 1 ? " · \(count) videos" : "")")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    HStack(spacing: 4) {
+                        Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
+                            .lineLimit(1)
+                        if count > 0 {
+                            Text("· \(meeting.duration) min").fixedSize()
+                        }
+                    }
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    if count == 0 {
+                        Text("No video available")
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -155,7 +155,7 @@ struct RecordingSidebar: View {
 
 struct RecordingPlayerView: View {
     @Bindable var model: RecordingLibraryModel
-    var allowsWindowDragging = false
+    private let headerHeight: CGFloat = 100
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var copiedLink: UUID?
 
@@ -164,39 +164,63 @@ struct RecordingPlayerView: View {
             if let meeting = model.selectedMeeting {
                 GeometryReader { geometry in
                     let overlaysChat = geometry.size.width < 660
-                    HStack(spacing: 0) {
-                        playerContent(meeting)
-                            .padding(.top, 92)
-                        if model.chat.isPresented && !overlaysChat {
-                            chatPane(width: 300)
-                        }
-                    }
+                    // Leave room for the playback controls outside even an overlay pane.
+                    let chatWidth = max(0, min(300, geometry.size.width - 196))
+                    let titleWidth = availableTitleWidth(meeting, width: geometry.size.width, chatWidth: chatWidth,
+                                                         reservingChat: model.chat.isPresented)
+                    // Keep metadata on the same row throughout the chat transition;
+                    // otherwise it could cross the menus while they slide sideways.
+                    let compactHeader = availableTitleWidth(meeting, width: geometry.size.width,
+                                                            chatWidth: chatWidth, reservingChat: true) < 260
+                    let height: CGFloat = compactHeader ? 144 : headerHeight
+                    playerContent(meeting)
+                        .padding(.top, height)
+                        .padding(.trailing, model.chat.isPresented && !overlaysChat ? chatWidth : 0)
                     .overlay(alignment: .trailing) {
-                        if model.chat.isPresented && overlaysChat {
-                            chatPane(width: max(0, min(300, geometry.size.width - 32)))
+                        if model.chat.isPresented {
+                            chatPane(width: chatWidth)
                         }
                     }
-                    .overlay(alignment: .top) { playerHeader(meeting) }
+                    .overlay(alignment: .top) {
+                        playerHeader(meeting, width: geometry.size.width, chatWidth: chatWidth,
+                                     titleWidth: titleWidth, compact: compactHeader, height: height)
+                    }
                     .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: model.chat.isPresented)
                 }
                 .clipped()
             } else {
                 emptyPlayer(title: "Pick a recording", subtitle: "Your meetings, ready to replay. Select a recording from the library to start watching.")
+                    .overlay(alignment: .top) {
+                        WhooshWindowDragSurface().frame(height: headerHeight)
+                    }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(WhooshWindowInteractionRegion(isEnabled: !allowsWindowDragging))
         .background(RecordingPlaybackKeyboardShortcuts(model: model))
         .task(id: copiedLink) {
             guard copiedLink != nil else { return }
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
             copiedLink = nil
         }
-        .onChange(of: model.selectedMeeting?.id) { _, _ in copiedLink = nil }
+        .onAppear { model.prepareForPresentation() }
+        .onChange(of: model.selectedMeeting?.id) { _, _ in
+            copiedLink = nil
+            model.prepareForPresentation()
+        }
     }
 
-    private func playerHeader(_ meeting: ZoomRecordingMeeting) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+    private func availableTitleWidth(_ meeting: ZoomRecordingMeeting, width: CGFloat, chatWidth: CGFloat,
+                                     reservingChat: Bool) -> CGFloat {
+        let playbackWidth: CGFloat = !model.isPreview && model.selectedFile != nil
+            ? (meeting.playableVideoFiles.count > 1 ? 132 : 68) : 0
+        let trailingWidth = reservingChat ? chatWidth + 24 : 64
+        return max(0, width - 24 - trailingWidth - playbackWidth - 16)
+    }
+
+    private func playerHeader(_ meeting: ZoomRecordingMeeting, width: CGFloat, chatWidth: CGFloat,
+                              titleWidth: CGFloat, compact: Bool, height: CGFloat) -> some View {
+        let metadataWidth = compact ? max(0, width - (model.chat.isPresented ? chatWidth : 0) - 48) : titleWidth
+        return ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 12) {
                     Text(meeting.topic.isEmpty ? "Untitled meeting" : meeting.topic)
@@ -204,55 +228,99 @@ struct RecordingPlayerView: View {
                         .help(meeting.topic.isEmpty ? "Untitled meeting" : meeting.topic)
                     recordingActions(meeting)
                         .fixedSize()
+                        .background(WhooshWindowInteractionRegion())
                 }
                 Text(meeting.startTime.formatted(date: .long, time: .shortened))
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer(minLength: 8)
-            if model.chat.isPresented {
-                Text("Chat")
-                    .font(.headline).lineLimit(1)
-                    .accessibilityAddTraits(.isHeader)
-                    .frame(height: 32)
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+            .frame(width: metadataWidth, alignment: .leading)
+            .offset(x: 24, y: compact ? 72 : 24)
+
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    if !model.isPreview, model.selectedFile != nil {
+                        videoMenu(meeting)
+                        speedMenu
+                    }
+                }
+                .fixedSize()
+                .padding(.trailing, model.chat.isPresented ? 24 : 8)
+                HStack(spacing: 0) {
+                    if model.chat.isPresented {
+                        Picker("Recording details", selection: Binding(get: { model.detailTab }, set: { model.setDetailTab($0) })) {
+                            ForEach(RecordingLibraryModel.DetailTab.allCases, id: \.self) { tab in
+                                Text(tab.rawValue).tag(tab)
+                            }
+                        }
+                            .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+                            .frame(width: 170)
+                            .padding(.leading, 14)
+                            .transition(.opacity)
+                            .background(WhooshWindowInteractionRegion())
+                        Spacer(minLength: 0)
+                    }
+                    Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.setDetailPresented($0) })) {
+                        Label("Chat and Transcript", systemImage: "bubble")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 32, height: 32)
+                            .contentShape(RoundedRectangle(cornerRadius: 10))
+                            .background(model.chat.isPresented ? Color.primary.opacity(0.09) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .toggleStyle(.button).buttonStyle(.plain)
+                    .whooshIconHover(isSelected: model.chat.isPresented)
+                    .tint(nil as Color?).foregroundStyle(.primary)
+                    .help("\(model.chat.isPresented ? "Hide" : "Show") chat and transcript")
+                    .background(WhooshWindowInteractionRegion())
+                }
+                // This group's leading edge follows the chat glass, while the
+                // same menu instances slide alongside it instead of reappearing.
+                .frame(width: model.chat.isPresented ? max(32, chatWidth - 24) : 32, height: 32)
             }
-            Toggle(isOn: Binding(get: { model.chat.isPresented }, set: { model.chat.setPresented($0) })) {
-                Label("Chat", systemImage: "bubble")
-            }
-            .toggleStyle(.button).labelStyle(.iconOnly).buttonStyle(.borderless)
-            .frame(width: 32, height: 32)
-            .background(model.chat.isPresented ? Color.primary.opacity(0.09) : .clear,
-                        in: RoundedRectangle(cornerRadius: 10))
-            .tint(nil as Color?).foregroundStyle(.primary)
-            .help("\(model.chat.isPresented ? "Hide" : "Show") chat")
+            .padding(.horizontal, 24).padding(.top, 24)
         }
-        .padding(24)
+        .frame(width: width, height: height, alignment: .topLeading)
+        .overlay(WhooshWindowDragSurface())
     }
 
     private func recordingActions(_ meeting: ZoomRecordingMeeting) -> some View {
         HStack(spacing: 12) {
-            Button(copiedLink == nil ? "Copy link" : "Link copied", systemImage: copiedLink == nil ? "link" : "checkmark") {
+            Button {
                 if RecordingSharing.copyLink(for: meeting) { copiedLink = UUID() }
+            } label: {
+                Label(copiedLink == nil ? "Copy link" : "Link copied", systemImage: copiedLink == nil ? "link" : "checkmark")
+                    .labelStyle(.iconOnly).frame(width: 32, height: 32).contentShape(Rectangle())
             }
-            .labelStyle(.iconOnly).buttonStyle(.borderless)
-            .frame(width: 32, height: 32)
+            .buttonStyle(.plain).whooshIconHover()
             .foregroundStyle(.primary)
             .disabled(meeting.shareableURL == nil)
             .help(meeting.shareableURL == nil ? "No sharing link is available for this recording" : "Copy recording link")
             if model.selectedFile != nil, !model.isPreview {
-                Button("Save video…", systemImage: "arrow.down.to.line", action: saveVideo)
-                    .labelStyle(.iconOnly).buttonStyle(.borderless)
-                    .frame(width: 32, height: 32).foregroundStyle(.primary)
+                Button(action: saveVideo) {
+                    Label("Save video…", systemImage: "arrow.down.to.line")
+                        .labelStyle(.iconOnly).frame(width: 32, height: 32).contentShape(Rectangle())
+                }
+                    .buttonStyle(.plain).whooshIconHover().foregroundStyle(.primary)
                     .disabled(model.isDownloading).help("Save video to your Mac")
             }
         }
     }
 
     private func chatPane(width: CGFloat) -> some View {
-        RecordingChatView(model: model)
+        Group {
+            if model.detailTab == .chat {
+                RecordingChatView(model: model)
+                    .transition(.opacity)
+            } else {
+                RecordingTranscriptView(model: model)
+                    .transition(.opacity)
+            }
+        }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: model.detailTab)
             // Like live meeting chat, the glass extends behind the shared
             // header, whose trailing toggle is the sole open/close control.
-            .padding(.top, 92)
+            .padding(.top, 72)
             .whooshGlassSurface(cornerRadius: 22)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .frame(width: width)
@@ -263,18 +331,15 @@ struct RecordingPlayerView: View {
         VStack(spacing: 0) {
             if model.isPreview {
                 emptyPlayer(title: "Recording preview", subtitle: "These are sample meetings. Exit preview and connect Zoom to watch your own cloud recordings.")
-            } else if !meeting.playableVideoFiles.isEmpty {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) {
-                        videoPicker(meeting)
-                        speedPicker
-                    }
-                    VStack(spacing: 10) {
-                        videoPicker(meeting)
-                        speedPicker
-                    }
+            } else if model.selectedFile == nil, model.playerWindows[meeting.id] != nil {
+                VStack(spacing: 12) {
+                    Text("Open in a separate window").foregroundStyle(.secondary)
+                    Button("Show player window", systemImage: "arrow.up.right.square") {
+                        model.openPlayerWindow(for: meeting)
+                    }.buttonStyle(.bordered)
                 }
-                .padding(.horizontal, 24).padding(.bottom, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !meeting.playableVideoFiles.isEmpty {
                 ZStack {
                     NativeRecordingPlayer(player: model.player)
                         .background(.black)
@@ -294,26 +359,16 @@ struct RecordingPlayerView: View {
                         }
                         .padding(24).frame(maxWidth: 320)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-                    } else if model.selectedFile == nil {
-                        if model.playerWindows[meeting.id] != nil {
-                            VStack(spacing: 12) {
-                                Text("Open in a separate window").foregroundStyle(.secondary)
-                                Button("Show player window", systemImage: "arrow.up.right.square") {
-                                    model.openPlayerWindow(for: meeting)
-                                }.buttonStyle(.borderedProminent)
-                            }
-                        } else {
-                            Button("Play recording", systemImage: "play.fill") {
-                                if let file = meeting.playableVideoFiles.first { model.play(file) }
-                            }.buttonStyle(.borderedProminent)
-                        }
                     }
                 }
+                .background(WhooshWindowInteractionRegion())
                 .aspectRatio(model.videoAspectRatio, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 24).padding(.bottom, 16)
-                downloadStatus.padding(.horizontal, 24).padding(.bottom, 20)
+                if model.isDownloading || model.downloadError != nil || model.downloadedFile != nil {
+                    downloadStatus.padding(.horizontal, 24).padding(.bottom, 20)
+                }
             } else {
                 emptyPlayer(title: "No video available yet", subtitle: "Zoom may still be processing this meeting, or it was recorded as audio only. Refresh the library to check again.")
             }
@@ -321,33 +376,69 @@ struct RecordingPlayerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder private func videoPicker(_ meeting: ZoomRecordingMeeting) -> some View {
+    @ViewBuilder private func videoMenu(_ meeting: ZoomRecordingMeeting) -> some View {
         if meeting.playableVideoFiles.count > 1 {
-            Picker("Video", selection: Binding(get: { model.selectedFile?.id ?? "" }, set: { id in
-                if let file = meeting.playableVideoFiles.first(where: { $0.id == id }) { model.play(file) }
-            })) {
-                if model.selectedFile == nil { Text("Choose a video").tag("") }
-                ForEach(meeting.playableVideoFiles) { file in
-                    Text(RecordingFilePresentation.label(for: file, among: meeting.playableVideoFiles)).tag(file.id)
+            let currentLayout = model.selectedFile.map {
+                RecordingFilePresentation.label(for: $0, among: meeting.playableVideoFiles)
+            } ?? "Choose a video"
+            Menu {
+                Picker("Video", selection: Binding(get: { model.selectedFile?.id ?? "" }, set: { id in
+                    if let file = meeting.playableVideoFiles.first(where: { $0.id == id }) { model.play(file) }
+                })) {
+                    if model.selectedFile == nil { Text("Choose a video").tag("") }
+                    ForEach(meeting.playableVideoFiles) { file in
+                        Label {
+                            Text(RecordingFilePresentation.label(for: file, among: meeting.playableVideoFiles))
+                        } icon: {
+                            Image(nsImage: RecordingPlaybackLayout(recordingType: file.recordingType).image)
+                        }
+                        .tag(file.id)
+                    }
                 }
+                .pickerStyle(.inline).labelsHidden()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(nsImage: RecordingPlaybackLayout(recordingType: model.selectedFile?.recordingType).image)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                        .accessibilityHidden(true)
+                }
+                .frame(width: 56, height: 32).contentShape(RoundedRectangle(cornerRadius: 10))
             }
-            .pickerStyle(.menu).font(.system(size: 12))
+            .modifier(RecordingPlaybackMenuStyle())
+            .help("Video layout: \(currentLayout) · V to cycle")
+            .accessibilityLabel("Video layout").accessibilityValue(currentLayout)
+            .background(WhooshWindowInteractionRegion())
         }
     }
 
-    private var speedPicker: some View {
-        Picker("Speed", selection: Binding(get: { model.playbackSpeed }, set: { model.setPlaybackSpeed($0) })) {
-            ForEach(RecordingLibraryModel.playbackSpeeds, id: \.self) { speed in
-                Text(speed.formatted(.number.precision(.fractionLength(0...2))) + "×").tag(speed)
+    private var speedMenu: some View {
+        Menu {
+            Picker("Speed", selection: Binding(get: { model.playbackSpeed }, set: { model.setPlaybackSpeed($0) })) {
+                ForEach(RecordingLibraryModel.playbackSpeeds, id: \.self) { speed in
+                    Text(speed.formatted(.number.precision(.fractionLength(0...2))) + "×").tag(speed)
+                }
+                if !RecordingLibraryModel.playbackSpeeds.contains(model.playbackSpeed) {
+                    Text(playbackSpeedLabel).tag(model.playbackSpeed)
+                }
             }
-            if !RecordingLibraryModel.playbackSpeeds.contains(model.playbackSpeed) {
-                Text(model.playbackSpeed.formatted(.number.precision(.fractionLength(0...2))) + "×")
-                    .tag(model.playbackSpeed)
+            .pickerStyle(.inline).labelsHidden()
+        } label: {
+            HStack(spacing: 4) {
+                Text(playbackSpeedLabel).monospacedDigit()
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                    .accessibilityHidden(true)
             }
+            .frame(width: 68, height: 32).contentShape(RoundedRectangle(cornerRadius: 10))
         }
-        .pickerStyle(.menu).font(.system(size: 12)).fixedSize()
+        .modifier(RecordingPlaybackMenuStyle())
         .disabled(model.selectedFile == nil)
-        .help("Playback speed").accessibilityLabel("Playback speed")
+        .help("Playback speed · S to cycle").accessibilityLabel("Playback speed")
+        .accessibilityValue(playbackSpeedLabel)
+        .background(WhooshWindowInteractionRegion())
+    }
+
+    private var playbackSpeedLabel: String {
+        model.playbackSpeed.formatted(.number.precision(.fractionLength(0...2))) + "×"
     }
 
     @ViewBuilder private var downloadStatus: some View {
@@ -366,9 +457,6 @@ struct RecordingPlayerView: View {
                 Spacer()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }.controlSize(.small)
             }
-        } else {
-            Text("Cloud recording").font(.system(size: 11)).foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -393,6 +481,17 @@ struct RecordingPlayerView: View {
         panel.nameFieldStringValue = String(topic.prefix(120)) + ".mp4"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         model.downloadSelected(to: url)
+    }
+}
+
+private struct RecordingPlaybackMenuStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .menuStyle(.button).menuIndicator(.hidden).buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .tint(nil as Color?).foregroundStyle(.primary)
+            .fixedSize()
+            .whooshIconHover()
     }
 }
 

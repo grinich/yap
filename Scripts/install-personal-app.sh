@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Install an already packaged personal build. Never sign, launch, or grant access.
 WHOOSH_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WHOOSH_SOURCE="$WHOOSH_ROOT/../outputs/Zooom.app"
+WHOOSH_SOURCE="${WHOOSH_SOURCE_APP:-$WHOOSH_ROOT/../outputs/Zooom.app}"
 WHOOSH_PARENT="$HOME/Applications"
 WHOOSH_DESTINATION="$WHOOSH_PARENT/Zooom.app"
 WHOOSH_PREVIOUS_NAME="$WHOOSH_PARENT/Whoosh.app"

@@ -34,8 +34,11 @@ struct MeetingIndicatorsBar: View {
                 Image(systemName: "info.circle").font(.system(size: 12))
             }
             .foregroundStyle(.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .whooshIconHover(cornerRadius: 8)
         .disabled(!meeting.isConnected || meeting.isApplyingControl)
         .help("Details about \(indicator.title)")
         .accessibilityLabel("\(indicator.title). Show details")

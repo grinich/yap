@@ -50,6 +50,42 @@ struct WhooshWindowInteractionRegionTests {
         }
     }
 
+    @Test(arguments: [true, false], [true, false])
+    func overlappingRegionsRestoreOriginalStateOnlyAfterBothRelease(originallyMovable: Bool, outerReleasesFirst: Bool) throws {
+        try withRegion { window, outer in
+            window.isMovable = originallyMovable
+            let inner = WhooshWindowInteractionTrackingView(frame: outer.frame)
+            try #require(window.contentView).addSubview(inner)
+            defer { inner.detach(); inner.removeFromSuperview() }
+            let press = try event(.leftMouseDown, in: window)
+            outer.handleLocalEvent(press)
+            inner.handleLocalEvent(press)
+            #expect(!window.isMovable)
+
+            let releaseOrder = outerReleasesFirst ? [outer, inner] : [inner, outer]
+            let release = try event(.leftMouseUp, in: window)
+            releaseOrder[0].handleLocalEvent(release)
+            #expect(!window.isMovable)
+            releaseOrder[1].handleLocalEvent(release)
+            #expect(window.isMovable == originallyMovable)
+        }
+    }
+
+    @Test func removingOneOverlappingRegionDoesNotReleaseTheOtherControl() throws {
+        try withRegion { window, outer in
+            let inner = WhooshWindowInteractionTrackingView(frame: outer.frame)
+            try #require(window.contentView).addSubview(inner)
+            defer { inner.detach(); inner.removeFromSuperview() }
+            let press = try event(.leftMouseDown, in: window)
+            outer.handleLocalEvent(press)
+            inner.handleLocalEvent(press)
+            outer.detach()
+            #expect(!window.isMovable)
+            inner.isEnabled = false
+            #expect(window.isMovable)
+        }
+    }
+
     private func withRegion(_ body: (NSWindow, WhooshWindowInteractionTrackingView) throws -> Void) throws {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: CGRect(x: 10_000, y: 10_000, width: 320, height: 240),

@@ -6,6 +6,27 @@ import WhooshMeetings
 
 @Suite("Calendar join authority", .serialized) @MainActor
 struct CalendarJoinRegressionTests {
+    @Test(arguments: ["join", "details"])
+    func incomingLinkSupersedesPendingCalendarNavigation(_ action: String) async {
+        let fixture = CalendarJoinFixture()
+        defer { fixture.cleanUp() }
+        await fixture.model.start()
+        await fixture.calendar.pauseNextEvents()
+        let pending = Task {
+            if action == "join" { await fixture.model.joinNextCalendarMeeting(expectedEventID: "ready") }
+            else { await fixture.model.handleSystemAction(.showMeeting(id: "ready")) }
+        }
+        await fixture.calendar.waitUntilPaused()
+        fixture.model.receiveMeetingLink(URL(string: "zoommtg://zoom.us/join?action=join&confno=98765432101")!)
+        await fixture.calendar.resumeEvents()
+        await pending.value
+        #expect(fixture.driver.requests.isEmpty)
+        #expect(fixture.model.selectedEvent == nil)
+        #expect(fixture.model.joinLink == "https://zoom.us/j/98765432101")
+        #expect(fixture.model.showJoinSheet)
+        #expect(fixture.model.error == nil)
+    }
+
     @Test func overlappingJoinActionsProduceOneJoinWithoutAnActiveCallError() async {
         let fixture = CalendarJoinFixture()
         defer { fixture.cleanUp() }

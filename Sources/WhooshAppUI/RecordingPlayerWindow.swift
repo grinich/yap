@@ -22,15 +22,11 @@ final class RecordingPlayerWindowController: NSWindowController, NSWindowDelegat
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.collectionBehavior = [.fullScreenPrimary]
+        window.isMovableByWindowBackground = false
         window.contentView = NSHostingView(rootView:
-            RecordingPlayerView(model: playback, allowsWindowDragging: true)
+            RecordingPlayerView(model: playback)
                 .frame(minWidth: 520, minHeight: 360)
-                .background {
-                    Color(nsColor: .windowBackgroundColor)
-                        .contentShape(Rectangle())
-                        .gesture(WindowDragGesture())
-                        .allowsWindowActivationEvents()
-                }
+                .background(Color(nsColor: .windowBackgroundColor))
                 .tint(WhooshTheme.accent))
         window.center()
         super.init(window: window)
@@ -48,8 +44,8 @@ final class RecordingPlayerWindowController: NSWindowController, NSWindowDelegat
     }
 
     func windowWillClose(_ notification: Notification) {
-        playback.stopPlayback()
-        playback.chat.clear()
+        // Clear selection too: a closing SwiftUI view must not prepare another player item.
+        playback.clear()
         onClose?()
         onClose = nil
     }

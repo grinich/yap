@@ -58,16 +58,6 @@ public struct WhooshRootView: View {
         .onChange(of: model.activeCall) { _, active in
             if active { model.recordings.dismiss() }
         }
-        .onChange(of: model.zoomConnection.isBusy) { _, busy in
-            if !busy, model.recordings.isPresented, !model.isPreview {
-                Task { await model.recordings.loadInitial() }
-            }
-        }
-        .onChange(of: model.zoomConnection.accountRevision) {
-            if !model.zoomConnection.isBusy, model.recordings.isPresented, !model.isPreview {
-                Task { await model.recordings.loadInitial() }
-            }
-        }
         .sheet(isPresented: $model.showJoinSheet) { JoinMeetingSheet(model: model) }
         .confirmationDialog(model.meeting.isHost ? "Leave or end this meeting?" : "Leave this meeting?", isPresented: $model.showLeaveConfirmation, titleVisibility: .visible) {
             Button("Leave meeting", role: .destructive) { Task { await model.leaveMeeting() } }
@@ -77,17 +67,26 @@ public struct WhooshRootView: View {
         .alert("Zooom", isPresented: Binding(get: { model.error != nil || model.meeting.lastError != nil }, set: { if !$0 { model.error = nil; model.meeting.dismissError() } })) {
             Button("OK", role: .cancel) { model.error = nil; model.meeting.dismissError() }
         } message: { Text(model.error ?? model.meeting.lastError ?? "") }
+        .alert("Open in Zoom Workplace?", isPresented: Binding(
+            get: { model.unsupportedZoomLink != nil },
+            set: { if !$0 { model.unsupportedZoomLink = nil } }
+        ), presenting: model.unsupportedZoomLink) { url in
+            Button("Open Zoom Workplace") {
+                Task {
+                    do { try await ZoomLinkHandlerService().openInZoom(url) }
+                    catch { model.error = error.localizedDescription }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("This link uses a Zoom feature that Zooom doesn’t support yet. You can open it in the official app.")
+        }
         .onAppear {
             applicationDelegate?.configure(model: model, openMainWindow: { openWindow(id: "main") })
         }
         .task { if applicationDelegate == nil { await model.start() } }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in Task { await model.refreshOnForeground() } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await model.refreshOnForeground() } }
-        .onOpenURL { url in
-            if let meetingURL = WhooshDeepLink.meetingURL(from: url) {
-                model.selectedEvent = nil; model.joinLink = meetingURL.absoluteString; model.showJoinSheet = true
-            }
-        }
     }
 
     private var windowBackground: AnyShapeStyle {
@@ -110,47 +109,38 @@ public struct WhooshRootView: View {
 struct TodayView: View {
     @Bindable var model: WhooshModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private struct RecordingPresentation: Equatable {
+        let isAvailable: Bool
+        let accountRevision: UUID
+    }
+
+    private var recordingPresentation: RecordingPresentation {
+        RecordingPresentation(
+            isAvailable: model.recordings.isPresented && !model.isPreview && !model.zoomConnection.isBusy,
+            accountRevision: model.zoomConnection.accountRevision)
+    }
+
     var body: some View {
         GeometryReader { available in
             let compact = available.size.width < 560
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let upcoming = AgendaRules.upcoming(model.events, now: context.date)
-                VStack(spacing: 0) {
-                    HStack {
-                        Button {
-                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
-                                model.recordings.toggle()
-                            }
-                        } label: {
-                            Label("Recordings", systemImage: "sidebar.left")
-                                .font(.system(size: 12, weight: .medium))
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .background(model.recordings.isPresented ? WhooshTheme.accent.opacity(0.15) : .clear, in: Capsule())
-                                .foregroundStyle(model.recordings.isPresented ? WhooshTheme.accent : .primary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Recordings")
-                        .accessibilityValue(model.recordings.isPresented ? "Open" : "Closed")
-                        .help("Show or hide recordings · ⇧⌘R")
-                        .background(WhooshWindowInteractionRegion(isEnabled: true))
-                        Spacer(minLength: 0)
-                        meetingActions
-                            .background(WhooshWindowInteractionRegion(isEnabled: true))
-                    }
-                    .padding(.leading, 52)
-                    .padding(.trailing, 12)
-                    .padding(.vertical, 12)
-
-                    HStack(spacing: 0) {
-                        if model.recordings.isPresented {
+                HStack(spacing: 0) {
+                    if model.recordings.isPresented {
+                        VStack(spacing: 0) {
+                            windowHeader
                             RecordingSidebar(model: model.recordings, connection: model.zoomConnection,
                                              isPreview: model.isPreview, openSettings: { model.showSettings = true })
-                                .frame(width: 260)
-                                .transition(.move(edge: .leading).combined(with: .opacity))
-                            Divider()
-                            RecordingPlayerView(model: model.recordings)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else {
+                        }
+                        .frame(width: 260)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        Divider()
+                        RecordingPlayerView(model: model.recordings)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        VStack(spacing: 0) {
+                            windowHeader
                             ScrollView {
                                 VStack(alignment: .leading, spacing: compact ? 18 : 28) {
                                     if let next = upcoming.first {
@@ -173,17 +163,48 @@ struct TodayView: View {
                             .background(Color.clear)
                         }
                     }
-                    .clipped()
                 }
+                .clipped()
             }
         }
         .ignoresSafeArea(.container, edges: .top)
-        .task(id: model.recordings.isPresented) {
-            if model.recordings.isPresented, !model.isPreview, !model.zoomConnection.isBusy {
-                await model.recordings.loadInitial()
+        .task(id: recordingPresentation) {
+            guard recordingPresentation.isAvailable else { return }
+            await model.recordings.refreshForPresentation()
+        }
+        .onDisappear { model.recordings.suspendPlayback() }
+    }
+
+    private var windowHeader: some View {
+        HStack {
+            Button {
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
+                    model.recordings.toggle()
+                }
+            } label: {
+                Label("Recordings", systemImage: "sidebar.left")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(model.recordings.isPresented ? WhooshTheme.accent.opacity(0.15) : .clear, in: Capsule())
+                    .foregroundStyle(model.recordings.isPresented ? WhooshTheme.accent : .primary)
+            }
+            .buttonStyle(.plain)
+            .whooshIconHover(isSelected: model.recordings.isPresented, cornerRadius: 100)
+            .accessibilityLabel("Recordings")
+            .accessibilityValue(model.recordings.isPresented ? "Open" : "Closed")
+            .help("Show or hide recordings · ⇧⌘R")
+            .background(WhooshWindowInteractionRegion(isEnabled: true))
+            Spacer(minLength: 0)
+            if !model.recordings.isPresented {
+                meetingActions
+                    .background(WhooshWindowInteractionRegion(isEnabled: true))
             }
         }
-        .onDisappear { model.recordings.stopPlayback() }
+        .frame(minHeight: 36)
+        .padding(.leading, 52)
+        .padding(.trailing, 12)
+        .padding(.vertical, 12)
+        .overlay(WhooshWindowDragSurface())
     }
 
     private var meetingActions: some View {
@@ -210,6 +231,7 @@ struct TodayView: View {
                     .foregroundStyle(.white)
             }
             .buttonStyle(.glassProminent)
+            .whooshIconHover(cornerRadius: 100)
             .help("Start a meeting · ⇧⌘N")
             .accessibilityLabel("Start a meeting")
             Button("Join with a link…", systemImage: "link") {
@@ -218,6 +240,7 @@ struct TodayView: View {
                 model.showJoinSheet = true
             }
             .buttonStyle(.glass)
+            .whooshIconHover(cornerRadius: 100)
             .tint(nil as Color?)
             .foregroundStyle(.primary)
             .help("Join with a link · ⌘J")
@@ -378,8 +401,12 @@ struct TodayView: View {
                         }
                         .frame(maxWidth: compact ? 92 : nil, alignment: .trailing)
                         if AgendaRules.showsJoinButton(for: event, now: now) {
-                            Button { Task { await model.joinNextCalendarMeeting(expectedEventID: event.id) } } label: { Image(systemName: "arrow.up.right") }
-                                .buttonStyle(.borderless).accessibilityLabel("Join \(event.title)").help("Join \(event.title)")
+                            Button { Task { await model.joinNextCalendarMeeting(expectedEventID: event.id) } } label: {
+                                Image(systemName: "arrow.up.right")
+                                    .frame(width: 32, height: 32).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless).whooshIconHover()
+                            .accessibilityLabel("Join \(event.title)").help("Join \(event.title)")
                         }
                     }.padding(.vertical, 13)
                     if event.id != items.last?.id { Divider().padding(.leading, compact ? 0 : 19) }
@@ -432,9 +459,24 @@ struct JoinMeetingSheet: View {
 
 public enum WhooshDeepLink {
     public static func meetingURL(from url: URL) -> URL? {
-        guard url.scheme == "whoosh", url.host == "join", let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        guard url.scheme?.lowercased() == "whoosh" else {
+            return ZoomMeetingLinkParser.normalizedJoinURL(url.absoluteString)
+        }
+        guard url.host?.lowercased() == "join", let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil,
+              parts.path.isEmpty else { return nil }
         let values = (parts.queryItems ?? []).filter { $0.name == "url" }
         guard values.count == 1, let value = values.first?.value else { return nil }
-        return ZoomMeetingLinkParser.validatedURL(value)
+        return ZoomMeetingLinkParser.normalizedJoinURL(value)
+    }
+
+    /// Unsupported Zoom actions may be handed to the official app explicitly.
+    /// Never send an arbitrary scheme or a disguised third-party host there.
+    static func isZoomApplicationURL(_ url: URL) -> Bool {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["zoommtg", "zoomus"].contains(parts.scheme?.lowercased() ?? ""),
+              parts.user == nil, parts.password == nil, parts.port == nil,
+              let host = parts.host?.lowercased() else { return false }
+        return host == "zoom.us" || host.hasSuffix(".zoom.us") || host == "zoom.com" || host.hasSuffix(".zoom.com")
     }
 }

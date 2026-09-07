@@ -1,0 +1,10 @@
+name: Suggest an improvement
+description: Share an idea or ask for help with a workflow.
+body:
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: What would you like to do?
+      description: Describe the workflow, question, or improvement. Please keep private meeting information out of this public issue.
+    validations:
+      required: true

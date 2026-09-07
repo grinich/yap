@@ -72,6 +72,67 @@ struct WhooshWindowCloseTests {
         #expect(fixture.originalDelegate.shouldCloseCount == 0)
         #expect(fixture.originalDelegate.willCloseCount == 0)
     }
+
+    @Test func retainedWindowCloseArmsOneRecordingsRefreshOnReveal() throws {
+        let fixture = WindowCloseFixture()
+        defer { fixture.cleanUp() }
+        let probe = RecordingsRevealProbe()
+        let observer = NotificationCenter.default.addObserver(forName: whooshMainWindowWillHide,
+            object: fixture.model, queue: .main) { _ in
+                MainActor.assumeIsolated { probe.reveal.windowWillHide() }
+            }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        #expect(!probe.consumeReveal())
+        try #require(fixture.closeButton).performClick(nil)
+        #expect(fixture.window.hideCount == 1)
+        #expect(!probe.consumeReveal(isVisible: false))
+        #expect(probe.consumeReveal())
+        #expect(!probe.consumeReveal())
+        #expect(!probe.consumeReveal())
+
+        // A later real close permits a new refresh; repeated focus events do not.
+        try #require(fixture.closeButton).performClick(nil)
+        #expect(probe.consumeReveal())
+    }
+
+    @Test func recordingsRevealWaitsUntilTheWindowIsActuallyAvailable() {
+        let probe = RecordingsRevealProbe()
+        probe.reveal.windowWillHide()
+        #expect(!probe.consumeReveal(isVisible: false))
+        #expect(!probe.consumeReveal(isMiniaturized: true))
+        #expect(!probe.consumeReveal(isApplicationHidden: true))
+        #expect(probe.consumeReveal())
+        // De-miniaturize, key-window and app-activation notifications can overlap.
+        #expect(!probe.consumeReveal())
+    }
+
+    @Test(arguments: ["closed", "preview", "account-busy", "active-call"])
+    func ineligibleRecordingsRevealDoesNotTurnLaterFocusIntoARefresh(_ reason: String) {
+        let probe = RecordingsRevealProbe()
+        probe.reveal.windowWillHide()
+        #expect(!probe.consumeReveal(recordingsPresented: reason != "closed",
+            isPreview: reason == "preview", isAccountBusy: reason == "account-busy",
+            hasActiveCall: reason == "active-call"))
+        // The view task handles becoming eligible; Settings/sheet focus does not.
+        #expect(!probe.consumeReveal())
+        probe.reveal.windowWillHide()
+        #expect(probe.consumeReveal())
+    }
+}
+
+@MainActor
+private final class RecordingsRevealProbe {
+    var reveal = WhooshRecordingsWindowReveal()
+
+    func consumeReveal(isVisible: Bool = true, isMiniaturized: Bool = false,
+                       isApplicationHidden: Bool = false, recordingsPresented: Bool = true,
+                       isPreview: Bool = false, isAccountBusy: Bool = false,
+                       hasActiveCall: Bool = false) -> Bool {
+        reveal.shouldRefresh(isVisible: isVisible, isMiniaturized: isMiniaturized,
+            isApplicationHidden: isApplicationHidden, recordingsPresented: recordingsPresented,
+            isPreview: isPreview, isAccountBusy: isAccountBusy, hasActiveCall: hasActiveCall)
+    }
 }
 
 @MainActor

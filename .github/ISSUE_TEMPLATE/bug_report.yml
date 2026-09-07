@@ -1,0 +1,33 @@
+name: Report a bug
+description: Something in Zooom is not working as expected.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Zooom. This report is public. Please remove meeting links, passcodes, tokens, private messages, and personal information from screenshots or logs.
+  - type: input
+    id: version
+    attributes:
+      label: Zooom version or commit
+      description: Find the version in Zooom → About Zooom, or provide your source commit.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: macOS 26, MacBook Pro with Apple silicon
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: What happened?
+      description: Include steps to reproduce the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or additional details
+      description: Optional. Check attachments for private meeting or account information first.

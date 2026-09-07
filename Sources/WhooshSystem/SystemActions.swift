@@ -20,6 +20,15 @@ struct PendingSystemActions: Sendable {
         items.append(Item(action: action, requestedAt: now))
     }
 
+    mutating func discardMeetingNavigation() {
+        items.removeAll { item in
+            switch item.action {
+            case .joinNextMeeting, .showMeeting: true
+            case .openWhoosh, .showUpcomingMeetings: false
+            }
+        }
+    }
+
     mutating func take(now: Date = .now) -> WhooshSystemAction? {
         guard !items.isEmpty else { return nil }
         let item = items.removeFirst()
@@ -50,6 +59,12 @@ public enum WhooshSystemActions {
     /// this preserves an intent delivered while the app is still starting.
     public static func takePendingAction() -> WhooshSystemAction? {
         pendingActions.take()
+    }
+
+    /// A newly opened invitation supersedes meeting intents still waiting for
+    /// startup. Intents requested after this point remain valid new navigation.
+    public static func discardPendingMeetingNavigation() {
+        pendingActions.discardMeetingNavigation()
     }
 }
 

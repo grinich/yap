@@ -103,34 +103,58 @@ struct RecordingPlayerWindowTests {
     }
 
     @Test func refreshingTheLibraryPreservesDedicatedPlayersAndTheirSelectedViews() async throws {
-        let fixture = RecordingPlayerWindowFixture()
+        let video = try #require(Data(base64Encoded: recordingPlaybackMP4Fixture))
+        let videoURL = FileManager.default.temporaryDirectory.appendingPathComponent("recording-window-\(UUID().uuidString).mp4")
+        try video.write(to: videoURL)
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+        let fixture = RecordingPlayerWindowFixture(isPreview: false, playbackAsset: AVURLAsset(url: videoURL))
         defer { fixture.cleanUp() }
-        // Keep the child windows in preview so no asynchronous source preparation
-        // can replace the inert items below. Refresh exits preview on the parent
-        // and fetches its three initial months through the injected page fixture.
+        let now = Date(timeIntervalSince1970: 1_788_739_200)
+        await fixture.setMeetings([fixture.first, fixture.second])
+        await fixture.model.loadInitial(now: now)
         fixture.model.openPlayerWindow(for: fixture.first)
         fixture.model.openPlayerWindow(for: fixture.second)
         let first = try #require(fixture.model.playerWindows[fixture.first.id])
         let second = try #require(fixture.model.playerWindows[fixture.second.id])
         first.playback.play(fixture.first.files[1])
+        // Use real local video: an empty composition never finishes player readiness.
+        // Snapshot the items installed by the model once both players have settled.
+        for _ in 0..<500 {
+            if !first.playback.isPreparing && !second.playback.isPreparing,
+               first.playback.player.currentItem?.status == .readyToPlay,
+               second.playback.player.currentItem?.status == .readyToPlay { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(!first.playback.isPreparing && !second.playback.isPreparing)
+        try #require(first.playback.player.currentItem?.status == .readyToPlay)
+        try #require(second.playback.player.currentItem?.status == .readyToPlay)
+        first.playback.player.pause()
+        second.playback.player.pause()
         let selectedFile = first.playback.selectedFile
+        let secondFile = second.playback.selectedFile
+        let selectedMeeting = fixture.model.selectedMeeting
         let firstPlayer = first.playback.player
         let secondPlayer = second.playback.player
         let firstWindow = first.window
         let secondWindow = second.window
-        // Inert local items make a destructive stop detectable without waiting for
-        // media decoding or depending on a live recording's duration or state.
-        let firstItem = AVPlayerItem(asset: AVMutableComposition())
-        let secondItem = AVPlayerItem(asset: AVMutableComposition())
-        firstPlayer.replaceCurrentItem(with: firstItem)
-        secondPlayer.replaceCurrentItem(with: secondItem)
+        let firstItem = try #require(firstPlayer.currentItem)
+        let secondItem = try #require(secondPlayer.currentItem)
         let sourceCount = fixture.createdMediaSources
+        fixture.model.search = "window search"
+        let updated = ZoomRecordingMeeting(id: fixture.first.id, topic: "Changed meeting title",
+                                          startTime: fixture.first.startTime, duration: fixture.first.duration + 10,
+                                          files: [fixture.first.files[0]])
+        await fixture.setMeetings([updated])
 
-        await fixture.model.refresh()
+        await fixture.model.refresh(now: now)
 
-        #expect(await fixture.fetchedPages == 3)
+        #expect(await fixture.fetchedPages == 6)
         #expect(fixture.model.hasLoadedInitial)
-        #expect(fixture.model.meetings.isEmpty)
+        #expect(fixture.model.meetings.first(where: { $0.id == fixture.first.id }) == updated)
+        #expect(fixture.model.meetings.contains(fixture.second))
+        #expect(fixture.model.selectedMeeting == selectedMeeting)
+        #expect(fixture.model.selectedFile == nil)
+        #expect(fixture.model.search == "window search")
         #expect(fixture.model.error == nil)
         #expect(fixture.model.playerWindows.count == 2)
         #expect(fixture.model.playerWindows[fixture.first.id] === first)
@@ -143,9 +167,17 @@ struct RecordingPlayerWindowTests {
         #expect(second.playback.player === secondPlayer)
         #expect(firstPlayer.currentItem === firstItem)
         #expect(secondPlayer.currentItem === secondItem)
+        #expect(firstItem.status == .readyToPlay)
+        #expect(secondItem.status == .readyToPlay)
+        #expect(firstPlayer.rate == 0)
+        #expect(secondPlayer.rate == 0)
+        #expect(!first.playback.isPreparing && !second.playback.isPreparing)
+        #expect(first.playback.playbackError == nil)
+        #expect(second.playback.playbackError == nil)
         #expect(first.playback.selectedFile == selectedFile)
-        #expect(first.playback.selectedMeeting?.id == fixture.first.id)
-        #expect(second.playback.selectedMeeting?.id == fixture.second.id)
+        #expect(second.playback.selectedFile == secondFile)
+        #expect(first.playback.selectedMeeting == fixture.first)
+        #expect(second.playback.selectedMeeting == fixture.second)
         #expect(fixture.createdMediaSources == sourceCount)
     }
 
@@ -233,7 +265,7 @@ struct RecordingPlayerWindowTests {
     var createdMediaSources: Int { sourceCount.value }
     var fetchedPages: Int { get async { await pageCount.value } }
 
-    init() {
+    init(isPreview: Bool = true, playbackAsset: AVAsset? = nil) {
         _ = NSApplication.shared
         let count = RecordingWindowSourceCounter()
         sourceCount = count
@@ -245,10 +277,10 @@ struct RecordingPlayerWindowTests {
         model = RecordingLibraryModel(client: client, fetchPage: { _, _, _ in await pages.fetch() },
                                       makePlaybackSource: { _ in
             count.value += 1
-            return RecordingPlaybackSource(item: AVPlayerItem(asset: AVMutableComposition()))
+            return RecordingPlaybackSource(item: AVPlayerItem(asset: playbackAsset ?? AVMutableComposition()))
         })
-        // Child windows must inherit preview before selecting their meeting. Any source
-        // construction is counted; live HTTP and Keychain are never reachable regardless.
+        // Seed deterministic meetings, and keep most window tests in preview.
+        // Source construction is counted; live HTTP and Keychain are never reachable.
         model.enterPreview(now: Date(timeIntervalSince1970: 1_788_739_200))
         let sample = model.meetings[0]
         let alternate = ZoomRecordingFile(id: "window-fixture-alternate", recordingType: "gallery_view",
@@ -257,7 +289,10 @@ struct RecordingPlayerWindowTests {
         first = ZoomRecordingMeeting(id: sample.id, topic: sample.topic, startTime: sample.startTime,
                                      duration: sample.duration, files: sample.files + [alternate])
         second = model.meetings[1]
+        if !isPreview { model.clear() }
     }
+
+    func setMeetings(_ meetings: [ZoomRecordingMeeting]) async { await pageCount.setMeetings(meetings) }
 
     func cleanUp() { model.clear() }
 }
@@ -268,9 +303,11 @@ struct RecordingPlayerWindowTests {
 
 private actor RecordingWindowPageCounter {
     private(set) var value = 0
+    private var meetings: [ZoomRecordingMeeting] = []
+    func setMeetings(_ meetings: [ZoomRecordingMeeting]) { self.meetings = meetings }
     func fetch() -> ZoomRecordingPage {
         value += 1
-        return .init(meetings: [])
+        return .init(meetings: meetings)
     }
 }
 

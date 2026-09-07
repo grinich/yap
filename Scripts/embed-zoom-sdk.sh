@@ -36,6 +36,9 @@ if not (sdk / "ZoomSDK.framework/ZoomSDK").is_file():
 driver = sdk.parent / "Plugins/ZoomAudioDevice.driver"
 if not driver.is_dir():
     raise SystemExit("The official Zoom SDK audio driver is missing from the SDK package.")
+license_notice = sdk.parent / "OSS-LICENSE.pdf"
+if not license_notice.is_file() or license_notice.stat().st_size == 0:
+    raise SystemExit("The official Zoom SDK OSS-LICENSE.pdf notice is missing from the SDK package.")
 if frameworks.exists() and any(frameworks.iterdir()):
     raise SystemExit("Embed Zoom into a fresh staging bundle to avoid mixing SDK versions.")
 
@@ -45,6 +48,12 @@ frameworks.mkdir(parents=True, exist_ok=True)
 plugins.mkdir(parents=True, exist_ok=True)
 subprocess.run(["/usr/bin/ditto", str(sdk), str(frameworks)], check=True)
 subprocess.run(["/usr/bin/ditto", str(driver), str(plugins / driver.name)], check=True)
+licenses = app / "Contents/Resources/ThirdPartyLicenses"
+licenses.mkdir(parents=True, exist_ok=True)
+bundled_notice = licenses / "Zoom-OSS-LICENSE.pdf"
+subprocess.run(["/usr/bin/ditto", str(license_notice), str(bundled_notice)], check=True)
+if bundled_notice.read_bytes() != license_notice.read_bytes():
+    raise SystemExit("The bundled Zoom SDK open-source notice differs from the original.")
 
 magic = {bytes.fromhex(h) for h in (
     "feedface", "cefaedfe", "feedfacf", "cffaedfe",

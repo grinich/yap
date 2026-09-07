@@ -3,7 +3,24 @@ import AppKit
 import WhooshSystem
 
 private let whooshMainWindowAttached = Notification.Name("com.grinich.zooom.main-window-attached")
-private let whooshMainWindowWillHide = Notification.Name("com.grinich.zooom.main-window-will-hide")
+let whooshMainWindowWillHide = Notification.Name("com.grinich.zooom.main-window-will-hide")
+
+/// Window focus changes are frequent; only a real hide/reveal refreshes the library.
+struct WhooshRecordingsWindowReveal {
+    private var isAwaitingReveal = false
+
+    mutating func windowWillHide() { isAwaitingReveal = true }
+
+    mutating func shouldRefresh(isVisible: Bool, isMiniaturized: Bool, isApplicationHidden: Bool,
+                                recordingsPresented: Bool, isPreview: Bool, isAccountBusy: Bool,
+                                hasActiveCall: Bool) -> Bool {
+        guard isAwaitingReveal, isVisible, !isMiniaturized, !isApplicationHidden else { return false }
+        // Consume even an ineligible reveal: the view's presentation task owns
+        // a later account/preview transition or opening the recordings pane.
+        isAwaitingReveal = false
+        return recordingsPresented && !isPreview && !isAccountBusy && !hasActiveCall
+    }
+}
 
 public struct WhooshMenuBarView: View {
     @Bindable var model: WhooshModel
@@ -65,6 +82,9 @@ public struct WhooshCommands: Commands {
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(!model.isCalendarConnected || model.isRefreshing || model.isPreview || model.activeCall)
         }
+        CommandGroup(replacing: .help) {
+            Link("Report a Bug", destination: URL(string: "https://github.com/grinich/zooom/issues/new/choose")!)
+        }
         CommandMenu("Meeting") {
             Button(model.meeting.isMicrophoneMuted ? "Unmute microphone" : "Mute microphone") { Task { await model.meeting.setMicrophoneMuted(!model.meeting.isMicrophoneMuted) } }
                 .keyboardShortcut("a", modifiers: [.command, .shift]).disabled(!model.meeting.isConnected || model.meeting.isApplyingControl)
@@ -89,6 +109,8 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
     private var isObservingActions = false
     private var menuBarController: WhooshMenuBarController?
     private var sharingOverlayController: WhooshSharingOverlayController?
+    private let incomingURLs = WhooshIncomingURLRouter()
+    private var recordingsWindowReveal = WhooshRecordingsWindowReveal()
     private lazy var windowPresenter = WhooshMainWindowPresenter(actions: .init(
         afterMenuTracking: { action in
             RunLoop.main.perform(inModes: [.default]) { MainActor.assumeIsolated { action() } }
@@ -140,9 +162,14 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.addObserver(self, selector: #selector(systemActionRequested), name: WhooshSystemActions.notificationName, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(mainWindowAttached), name: whooshMainWindowAttached, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(mainWindowWillHide), name: whooshMainWindowWillHide, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(mainWindowDidMiniaturize), name: NSWindow.didMiniaturizeNotification, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(mainWindowBecameAvailable), name: NSWindow.didBecomeKeyNotification, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(mainWindowBecameAvailable), name: NSWindow.didDeminiaturizeNotification, object: nil)
             isObservingActions = true
+        }
+        incomingURLs.configure { [weak self, weak model] url in
+            model?.receiveMeetingLink(url)
+            self?.presentMainWindow()
         }
         drainActions()
     }
@@ -156,6 +183,14 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
         windowPresenter.request()
     }
 
+    public func application(_ application: NSApplication, open urls: [URL]) {
+        // Handle URL delivery at the application boundary, including cold launch
+        // before SwiftUI attaches the main window and while Settings is in front.
+        guard !urls.isEmpty else { return }
+        WhooshSystemActions.discardPendingMeetingNavigation()
+        incomingURLs.receive(urls)
+    }
+
     func toggleMainWindow() {
         guard let window = model?.sharingPresentation.mainWindow,
               NSApplication.shared.isActive, !NSApplication.shared.isHidden,
@@ -164,7 +199,8 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
             presentMainWindow()
             return
         }
-        windowPresenter.cancel()
+        model?.recordings.suspendPlayback()
+        if let model { NotificationCenter.default.post(name: whooshMainWindowWillHide, object: model) }
         window.attachedSheet?.orderOut(nil)
         window.orderOut(nil)
     }
@@ -176,16 +212,52 @@ public final class WhooshApplicationDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func mainWindowWillHide(_ notification: Notification) {
         guard notification.object as? WhooshModel === model else { return }
+        recordingsWindowReveal.windowWillHide()
         windowPresenter.cancel()
+    }
+
+    @objc private func mainWindowDidMiniaturize(_ notification: Notification) {
+        guard notification.object as? NSWindow === model?.sharingPresentation.mainWindow else { return }
+        recordingsWindowReveal.windowWillHide()
     }
 
     @objc private func mainWindowBecameAvailable(_ notification: Notification) {
         guard notification.object as? NSWindow === model?.sharingPresentation.mainWindow else { return }
+        if let recordings = model?.recordings, recordings.isPresented {
+            recordings.prepareForPresentation()
+        }
         windowPresenter.windowOrActivationChanged()
+        refreshRecordingsAfterWindowReveal()
     }
 
     public func applicationDidBecomeActive(_ notification: Notification) {
         windowPresenter.windowOrActivationChanged()
+        refreshRecordingsAfterWindowReveal()
+    }
+
+    public func applicationWillHide(_ notification: Notification) {
+        guard model?.sharingPresentation.mainWindow != nil else { return }
+        recordingsWindowReveal.windowWillHide()
+    }
+
+    public func applicationDidUnhide(_ notification: Notification) {
+        refreshRecordingsAfterWindowReveal()
+    }
+
+    private func refreshRecordingsAfterWindowReveal() {
+        guard let model, let window = model.sharingPresentation.mainWindow,
+              recordingsWindowReveal.shouldRefresh(isVisible: window.isVisible,
+                  isMiniaturized: window.isMiniaturized, isApplicationHidden: NSApplication.shared.isHidden,
+                  recordingsPresented: model.recordings.isPresented, isPreview: model.isPreview,
+                  isAccountBusy: model.zoomConnection.isBusy, hasActiveCall: model.activeCall) else { return }
+        let accountRevision = model.zoomConnection.accountRevision
+        Task { @MainActor [weak model] in
+            guard let model, model.recordings.isPresented, !model.isPreview, !model.activeCall,
+                  !model.zoomConnection.isBusy, model.zoomConnection.accountRevision == accountRevision,
+                  let window = model.sharingPresentation.mainWindow, window.isVisible,
+                  !window.isMiniaturized, !NSApplication.shared.isHidden else { return }
+            await model.recordings.refreshForPresentation()
+        }
     }
 
     private func drainActions() {
@@ -333,7 +405,7 @@ struct WindowBehavior: NSViewRepresentable {
                 model.showLeaveConfirmation = true
                 return false
             }
-            model.recordings.stopPlayback()
+            model.recordings.suspendPlayback()
             // The menu-bar app keeps one main window. Hiding it directly avoids
             // SwiftUI's close/recreation lifecycle and preserves the window to
             // reopen from the menu bar. Cancel an outstanding reveal first.

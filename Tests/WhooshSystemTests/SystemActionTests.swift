@@ -5,6 +5,27 @@ import Testing
 struct SystemActionTests {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    @Test func incomingInvitationSupersedesQueuedCalendarActionsDuringStartup() {
+        var queue = PendingSystemActions()
+        queue.enqueue(.openWhoosh, now: now)
+        queue.enqueue(.joinNextMeeting, now: now)
+        queue.enqueue(.showMeeting(id: "older-invitation"), now: now)
+        queue.enqueue(.showUpcomingMeetings, now: now)
+        queue.discardMeetingNavigation()
+        #expect(queue.take(now: now) == .openWhoosh)
+        #expect(queue.take(now: now) == .showUpcomingMeetings)
+        #expect(queue.take(now: now) == nil)
+    }
+
+    @Test func explicitlyRequestedMeetingAfterIncomingURLRemainsAvailable() {
+        var queue = PendingSystemActions()
+        queue.enqueue(.joinNextMeeting, now: now)
+        queue.discardMeetingNavigation()
+        queue.enqueue(.showMeeting(id: "new-choice"), now: now)
+        #expect(queue.take(now: now) == .showMeeting(id: "new-choice"))
+        #expect(queue.take(now: now) == nil)
+    }
+
     @Test func freshExplicitJoinSurvivesColdStart() {
         var queue = PendingSystemActions()
         queue.enqueue(.joinNextMeeting, now: now)

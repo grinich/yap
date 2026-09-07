@@ -5,6 +5,69 @@ import WhooshMeetings
 
 @Suite("Join sheet feedback") @MainActor
 struct JoinMeetingFeedbackTests {
+    @Test func incomingNativeLinkPreparesJoinWithoutStartingMedia() async {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.showJoinSheet = false
+        fixture.model.receiveMeetingLink(URL(string: "zoommtg://us02web.zoom.us/join?action=join&confno=12345678901&pwd=a%2Bb%26c&uname=SomeoneElse&video=1")!)
+        #expect(fixture.model.showJoinSheet)
+        #expect(fixture.model.joinLink == "https://us02web.zoom.us/j/12345678901?pwd=a%2Bb%26c")
+        #expect(fixture.model.displayName == "Test Person")
+        #expect(fixture.driver.requests.isEmpty)
+        #expect(fixture.model.unsupportedZoomLink == nil)
+        await fixture.model.joinPastedLink()
+        #expect(fixture.driver.requests.count == 1)
+        #expect(fixture.driver.requests.first?.microphoneMuted == true)
+        #expect(fixture.driver.requests.first?.cameraEnabled == false)
+    }
+
+    @Test func incomingLinkDoesNotReplaceAnActiveMeeting() async {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        await fixture.model.meeting.join(url: URL(string: JoinFeedbackFixture.validInvitation)!, displayName: "Test")
+        fixture.model.showJoinSheet = false
+        fixture.model.joinLink = "previous draft"
+        fixture.model.receiveMeetingLink(URL(string: "zoommtg://zoom.us/join?action=join&confno=99999999999")!)
+        #expect(!fixture.model.showJoinSheet)
+        #expect(fixture.model.joinLink == "previous draft")
+        #expect(fixture.model.error == "Leave your current meeting before joining another.")
+        #expect(fixture.driver.requests.count == 1)
+    }
+
+    @Test func unsupportedZoomActionOffersExplicitOfficialAppHandoff() {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.showJoinSheet = true
+        let url = URL(string: "zoommtg://zoom.us/start?confno=12345678901&zak=fixture")!
+        fixture.model.receiveMeetingLink(url)
+        #expect(fixture.model.unsupportedZoomLink == url)
+        #expect(!fixture.model.showJoinSheet)
+        #expect(fixture.driver.requests.isEmpty)
+        #expect(fixture.model.error == nil)
+    }
+
+    @Test func disguisedZoomHostDoesNotOfferOfficialAppHandoff() {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.showJoinSheet = false
+        fixture.model.receiveMeetingLink(URL(string: "zoommtg://zoom.us.evil.example/join?action=join&confno=12345678901")!)
+        #expect(fixture.model.unsupportedZoomLink == nil)
+        #expect(!fixture.model.showJoinSheet)
+        #expect(fixture.model.error != nil)
+        #expect(fixture.driver.requests.isEmpty)
+    }
+
+    @Test func pastedNativeLinkUsesTheSameMeetingAndMediaDefaults() async {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.joinLink = "zoomus://zoom.us/join?action=join&confno=12345678901&pwd=fixture"
+        await fixture.model.joinPastedLink()
+        #expect(fixture.driver.requests.first?.url?.absoluteString == "https://zoom.us/j/12345678901?pwd=fixture")
+        #expect(fixture.driver.requests.first?.microphoneMuted == true)
+        #expect(fixture.driver.requests.first?.cameraEnabled == false)
+        #expect(!fixture.model.showJoinSheet)
+    }
+
     @Test(arguments: [
         "https://example.com/not-a-zoom-meeting",
         "https://zoom.us.example.com/j/12345678901",

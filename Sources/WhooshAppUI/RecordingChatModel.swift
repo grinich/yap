@@ -22,20 +22,41 @@ final class RecordingChatModel {
     @ObservationIgnored private var meetingTime: TimeInterval?
     @ObservationIgnored private var fileStart: TimeInterval = 0
     @ObservationIgnored private var duration: TimeInterval?
+    @ObservationIgnored private var isPlaybackActive = false
+    @ObservationIgnored private var allowsAutomaticPresentation = true
     @ObservationIgnored private let fetch: @Sendable (ZoomRecordingFile) async throws -> String
 
     init(fetch: @escaping @Sendable (ZoomRecordingFile) async throws -> String) { self.fetch = fetch }
 
     func select(_ meeting: ZoomRecordingMeeting?, isPreview: Bool) {
         guard self.meeting?.id != meeting?.id || self.meeting?.chatFiles != meeting?.chatFiles || preview != isPreview else { return }
+        let isNewMeeting = self.meeting?.id != meeting?.id || preview != isPreview
         resetContent()
+        if isNewMeeting {
+            isPresented = false
+            isPlaybackActive = false
+            allowsAutomaticPresentation = true
+        }
         self.meeting = meeting
         preview = isPreview
         hasChatFile = !(meeting?.chatFiles.isEmpty ?? true)
-        if isPresented { load() }
+        if isPresented || isPlaybackActive { load() }
+    }
+
+    /// Selection alone can point to a recording playing in another window.
+    /// Only the model owning video playback should discover and automatically show its chat.
+    func setPlaybackActive(_ value: Bool) {
+        guard isPlaybackActive != value else { return }
+        isPlaybackActive = value
+        if value {
+            load()
+            presentMessagesAutomatically()
+        }
     }
 
     func setPresented(_ value: Bool) {
+        // Keep an explicit choice through async completion and camera/view switches.
+        allowsAutomaticPresentation = false
         isPresented = value
         if value {
             followsPlayback = true
@@ -55,6 +76,7 @@ final class RecordingChatModel {
             hasChatFile = true
             hasLoaded = true
             updateHighlight()
+            presentMessagesAutomatically()
             return
         }
         let files = meeting.chatFiles
@@ -71,6 +93,7 @@ final class RecordingChatModel {
                 self.isLoading = false
                 self.loadTask = nil
                 self.updateHighlight()
+                self.presentMessagesAutomatically()
             } catch {
                 guard let self, self.generation == expected, !Task.isCancelled else { return }
                 self.isLoading = false
@@ -78,6 +101,10 @@ final class RecordingChatModel {
                 self.error = error.localizedDescription
             }
         }
+    }
+
+    private func presentMessagesAutomatically() {
+        if isPlaybackActive, allowsAutomaticPresentation, !messages.isEmpty { isPresented = true }
     }
 
     /// Zoom's chat clock starts at the meeting, not at the beginning of each MP4.
@@ -126,8 +153,10 @@ final class RecordingChatModel {
     }
 
     func adoptState(from other: RecordingChatModel) {
-        guard meeting?.id == other.meeting?.id else { return }
+        guard let meeting, meeting.id == other.meeting?.id,
+              meeting.chatFiles == other.meeting?.chatFiles, preview == other.preview else { return }
         isPresented = other.isPresented
+        allowsAutomaticPresentation = other.allowsAutomaticPresentation
         followsPlayback = other.followsPlayback
         if other.hasLoaded {
             messages = other.messages
@@ -139,6 +168,8 @@ final class RecordingChatModel {
 
     func clear() {
         isPresented = false
+        isPlaybackActive = false
+        allowsAutomaticPresentation = true
         resetContent()
         meeting = nil
         preview = false

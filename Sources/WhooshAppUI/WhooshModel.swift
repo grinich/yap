@@ -85,6 +85,7 @@ public final class WhooshModel {
     public var showJoinSheet = false { didSet { joinInputError = nil } }
     public var joinLink = "" { didSet { joinInputError = nil } }
     public private(set) var joinInputError: String?
+    public var unsupportedZoomLink: URL?
     public var error: String?
     public var selectedEvent: CalendarEvent?
     public var sidebar: MeetingSidebar?
@@ -113,6 +114,7 @@ public final class WhooshModel {
     @ObservationIgnored private var activeRefresh: Task<Bool, Never>?
     @ObservationIgnored private var activeRefreshID: UUID?
     @ObservationIgnored private var pendingCalendarJoinID: UUID?
+    @ObservationIgnored private var meetingLinkRevision = UUID()
     @ObservationIgnored private var activeRefreshPresentsErrors = false
     @ObservationIgnored private var liveCalendarLoadCount = 0
     @ObservationIgnored private var generation = UUID()
@@ -273,7 +275,7 @@ public final class WhooshModel {
             case .signInExpired, .notConnected:
                 events = []; liveCalendarEvents = []; calendars = []; lastRefreshed = nil
                 isCalendarConnected = false
-                selectedEvent = nil; joinLink = ""; showJoinSheet = false
+                clearCalendarJoinDraft()
                 await reminders.disable()
                 guard current == generation, selection == selectionRevision, !isPreview else { return }
             case .httpStatus(403), .httpStatus(404):
@@ -281,12 +283,18 @@ public final class WhooshModel {
                 guard current == generation, selection == selectionRevision, !isPreview else { return }
                 events = snapshot?.events.filter { selectedCalendarIDs.contains($0.calendarID) } ?? []
                 lastRefreshed = snapshot?.fetchedAt
-                selectedEvent = nil; joinLink = ""; showJoinSheet = false
+                clearCalendarJoinDraft()
                 await synchronizeReminders()
                 guard current == generation, selection == selectionRevision, !isPreview else { return }
             default: break
             }
         }
+    }
+
+    private func clearCalendarJoinDraft() {
+        // Calendar failures cannot invalidate a pasted or incoming meeting link.
+        guard selectedEvent != nil else { return }
+        selectedEvent = nil; joinLink = ""; showJoinSheet = false
     }
 
     public func connectGoogle() async {
@@ -395,7 +403,7 @@ public final class WhooshModel {
             case .signInExpired, .notConnected:
                 events = []; liveCalendarEvents = []; calendars = []; lastRefreshed = nil
                 isCalendarConnected = false
-                selectedEvent = nil; joinLink = ""; showJoinSheet = false
+                clearCalendarJoinDraft()
                 await reminders.disable()
                 guard generation == current, selectionRevision == selection, !isPreview else { return false }
             case .httpStatus(403), .httpStatus(404):
@@ -614,12 +622,34 @@ public final class WhooshModel {
         await meeting.join(url: url, displayName: displayName, title: event.title)
     }
 
+    public func receiveMeetingLink(_ url: URL) {
+        pendingCalendarJoinID = nil
+        meetingLinkRevision = UUID()
+        guard let meetingURL = WhooshDeepLink.meetingURL(from: url),
+              MeetingCoordinator.isZoomMeetingURL(meetingURL) else {
+            if WhooshDeepLink.isZoomApplicationURL(url) {
+                showJoinSheet = false
+                unsupportedZoomLink = url
+            }
+            else { error = "This isn’t a supported Zoom meeting link." }
+            return
+        }
+        guard !activeCall else {
+            error = "Leave your current meeting before joining another."
+            return
+        }
+        unsupportedZoomLink = nil
+        selectedEvent = nil
+        joinLink = meetingURL.absoluteString
+        showJoinSheet = true
+    }
+
     public func joinPastedLink() async {
         guard !Task.isCancelled else { return }
         joinInputError = nil
         guard !activeCall else { joinInputError = "Leave your current meeting before joining another."; return }
         guard isPreview || !zoomConnection.isBusy else { joinInputError = "Finish connecting your Zoom account before joining a meeting."; return }
-        guard let url = ZoomMeetingLinkParser.validatedURL(joinLink.trimmingCharacters(in: .whitespacesAndNewlines)),
+        guard let url = ZoomMeetingLinkParser.normalizedJoinURL(joinLink.trimmingCharacters(in: .whitespacesAndNewlines)),
               MeetingCoordinator.isZoomMeetingURL(url) else {
             joinInputError = "Enter a Zoom meeting link such as https://zoom.us/j/12345678901."; return
         }
@@ -720,7 +750,10 @@ public final class WhooshModel {
             case .joinNextMeeting:
                 await joinNextCalendarMeeting()
             case .showMeeting(let id):
-                guard !isPreview, await refresh() else {
+                let linkRevision = meetingLinkRevision
+                let refreshed = isPreview ? false : await refresh()
+                guard linkRevision == meetingLinkRevision else { return }
+                guard refreshed else {
                     selectedEvent = nil; joinLink = ""; showJoinSheet = false
                     error = "Your calendar couldn’t be refreshed. Check the agenda before joining this meeting."
                     return

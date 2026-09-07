@@ -54,17 +54,37 @@ struct RecordingMonthWindow: Equatable, Sendable {
 
 @MainActor @Observable
 public final class RecordingLibraryModel {
-    static let playbackSpeeds: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5]
+    static let playbackSpeeds: [Float] = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75]
+
+    enum DetailTab: String, CaseIterable { case chat = "Chat", transcript = "Transcript" }
+    var detailTab: DetailTab = .chat
 
     public var isPresented = false
     private(set) var isPreview = false
     var search = ""
     private(set) var meetings: [ZoomRecordingMeeting] = []
     private(set) var selectedMeeting: ZoomRecordingMeeting? {
-        didSet { chat.select(selectedMeeting, isPreview: isPreview) }
+        didSet {
+            if oldValue?.id != selectedMeeting?.id { allowsAutomaticTranscriptPresentation = true }
+            chat.select(selectedMeeting, isPreview: isPreview)
+            transcript.select(selectedMeeting, isPreview: isPreview)
+        }
     }
-    private(set) var selectedFile: ZoomRecordingFile?
+    private(set) var selectedFile: ZoomRecordingFile? {
+        didSet {
+            chat.setPlaybackActive(selectedFile != nil)
+            transcript.setPlaybackActive(selectedFile != nil)
+            if allowsAutomaticTranscriptPresentation, oldValue == nil, selectedFile != nil, let meeting = selectedMeeting,
+               !meeting.transcriptFiles.isEmpty,
+               detailTab == .transcript || meeting.chatFiles.isEmpty {
+                detailTab = .transcript
+                setDetailPresented(true)
+            }
+        }
+    }
     private(set) var isLoading = false
+    private(set) var isRefreshing = false
+    private(set) var isLoadingOlder = false
     private(set) var hasLoadedInitial = false
     private(set) var oldestLoadedDate: Date?
     private(set) var error: String?
@@ -78,13 +98,21 @@ public final class RecordingLibraryModel {
     private(set) var playerWindows: [String: RecordingPlayerWindowController] = [:]
     let player = AVPlayer()
     let chat: RecordingChatModel
+    let transcript: RecordingTranscriptModel
 
     @ObservationIgnored private let client: ZoomAccountClient
     @ObservationIgnored private let fetchPage: @Sendable (Date, Date, String) async throws -> ZoomRecordingPage
     @ObservationIgnored private let makePlaybackSource: @MainActor (ZoomRecordingFile) -> RecordingPlaybackSource
     @ObservationIgnored private let downloadVideo: @Sendable (ZoomRecordingFile, URL) async throws -> Void
     @ObservationIgnored private let fetchChat: @Sendable (ZoomRecordingFile) async throws -> String
+    @ObservationIgnored private let fetchTranscript: @Sendable (ZoomRecordingFile) async throws -> String
+    @ObservationIgnored private var allowsAutomaticTranscriptPresentation = true
     @ObservationIgnored private var nextWindow: RecordingMonthWindow?
+    @ObservationIgnored private var pendingLibraryLoad: LibraryLoad?
+    @ObservationIgnored private var activeLibraryLoad: LibraryLoad.Kind?
+    @ObservationIgnored private var libraryLoadWaiters: [CheckedContinuation<Bool, Never>] = []
+    @ObservationIgnored private var olderLoadRequestCount = 0
+    @ObservationIgnored private var completedOlderLoad = UUID()
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var mediaLoader: RecordingMediaLoader?
     @ObservationIgnored private var itemObservation: NSKeyValueObservation?
@@ -94,6 +122,7 @@ public final class RecordingLibraryModel {
     @ObservationIgnored private var resumedItemRevision: UUID?
     @ObservationIgnored private var downloadTask: Task<Void, Never>?
     @ObservationIgnored private var playbackGeneration = UUID()
+    @ObservationIgnored private var pauseRevision = UUID()
     @ObservationIgnored private var temporaryVideo: URL?
     @ObservationIgnored private var temporaryVideoFileID: String?
     @ObservationIgnored private var playbackSources: [String: RecordingPlaybackSource] = [:]
@@ -101,17 +130,23 @@ public final class RecordingLibraryModel {
     @ObservationIgnored private var preparationTask: Task<Void, Never>?
     @ObservationIgnored private var pendingPosition: RecordingPlaybackPosition?
     @ObservationIgnored private var playbackTimeObserver: Any?
-    @ObservationIgnored private var chatSeekTask: Task<Void, Never>?
+    @ObservationIgnored private var manualSeekTask: Task<Void, Never>?
+    @ObservationIgnored private var manualSeekRevision = UUID()
+    @ObservationIgnored private var pendingSeekTime: CMTime?
 
     init(client: ZoomAccountClient,
          fetchPage: (@Sendable (Date, Date, String) async throws -> ZoomRecordingPage)? = nil,
          makePlaybackSource: (@MainActor (ZoomRecordingFile) -> RecordingPlaybackSource)? = nil,
          downloadVideo: (@Sendable (ZoomRecordingFile, URL) async throws -> Void)? = nil,
-         fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil) {
+         fetchChat: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil,
+         fetchTranscript: (@Sendable (ZoomRecordingFile) async throws -> String)? = nil) {
         self.client = client
         let fetchChat = fetchChat ?? { file in try await RecordingChatLoader.load(client: client, file: file) }
         self.fetchChat = fetchChat
         chat = RecordingChatModel(fetch: fetchChat)
+        let fetchTranscript = fetchTranscript ?? { file in try await RecordingTranscriptLoader.load(client: client, file: file) }
+        self.fetchTranscript = fetchTranscript
+        transcript = RecordingTranscriptModel(fetch: fetchTranscript)
         self.fetchPage = fetchPage ?? { from, to, token in
             try await client.recordings(from: from, to: to, nextPageToken: token)
         }
@@ -136,6 +171,29 @@ public final class RecordingLibraryModel {
         applyPlaybackSpeed(speed)
     }
 
+    func cyclePlaybackSpeed() {
+        guard !isPreview, selectedFile != nil else { return }
+        synchronizeDefaultPlaybackSpeed()
+        setPlaybackSpeed(Self.playbackSpeeds.first(where: { $0 > playbackSpeed }) ?? Self.playbackSpeeds[0])
+    }
+
+    func cyclePlaybackView() {
+        guard !isPreview, let meeting = selectedMeeting, let selectedFile else { return }
+        let files = meeting.playableVideoFiles
+        guard files.count > 1, let index = files.firstIndex(where: { $0.id == selectedFile.id }) else { return }
+        play(files[(index + 1) % files.count])
+    }
+
+    func jogPlayback(by seconds: Double) {
+        guard !isPreview, !isPreparing, playbackError == nil, selectedFile != nil,
+              seconds.isFinite, seconds != 0, let item = player.currentItem, item.status == .readyToPlay else { return }
+        let current = (pendingSeekTime ?? player.currentTime()).seconds
+        let duration = item.duration.seconds
+        guard current.isFinite, duration.isFinite, duration > 0 else { return }
+        let target = min(max(0, current + seconds), max(0, duration - 1.0 / 600))
+        seekManually(to: CMTime(seconds: target, preferredTimescale: 600))
+    }
+
     private func synchronizeDefaultPlaybackSpeed() {
         let speed = player.defaultRate
         if speed != playbackSpeed { applyPlaybackSpeed(speed) }
@@ -155,43 +213,144 @@ public final class RecordingLibraryModel {
 
     var filteredMeetings: [ZoomRecordingMeeting] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty ? meetings : meetings.filter { $0.topic.localizedStandardContains(query) }
+        guard !query.isEmpty else { return meetings }
+        let matcher = RecordingSearch(query: query)
+        return meetings.filter { matcher.matches($0) }
     }
 
     public func toggle() {
         if isPresented { dismiss() }
-        else { isPresented = true }
+        else {
+            isPresented = true
+            prepareForPresentation()
+        }
     }
 
     public func dismiss() {
         isPresented = false
-        stopPlayback()
+        suspendPlayback()
+    }
+
+    /// Hiding a view pauses it without discarding the item, seek position, or downloaded fallback.
+    public func suspendPlayback() {
+        pausePlayback()
+        chat.setPlaybackActive(false)
+        transcript.setPlaybackActive(false)
+    }
+
+    /// A selected recording should already have usable native controls when its view appears.
+    /// Recovery stays paused and never competes with a dedicated player for the same meeting.
+    func prepareForPresentation() {
+        guard !isPreview, let meeting = selectedMeeting, playerWindows[meeting.id] == nil else { return }
+        if selectedFile != nil {
+            chat.setPlaybackActive(true)
+            transcript.setPlaybackActive(true)
+            return
+        }
+        guard !isPreparing, playbackError == nil, let file = meeting.playableVideoFiles.first else { return }
+        play(file, resuming: RecordingPlaybackPosition(time: .zero, rate: 0))
+    }
+
+    private struct LibraryLoad {
+        enum Kind { case initial, older, refresh }
+        let kind: Kind
+        var windows: [RecordingMonthWindow]
     }
 
     func loadInitial(now: Date = .now) async {
-        guard !isPreview, !hasLoadedInitial, !isLoading else { return }
-        let expected = generation
-        if nextWindow == nil { nextWindow = .containing(now) }
-        await loadMonths(3)
-        if expected == generation, error == nil, !Task.isCancelled { hasLoadedInitial = true }
+        guard !isPreview, !hasLoadedInitial, activeLibraryLoad == nil else { return }
+        if let pendingLibraryLoad, pendingLibraryLoad.kind == .initial {
+            await load(pendingLibraryLoad)
+        } else {
+            let current = RecordingMonthWindow.containing(now)
+            await load(.init(kind: .initial, windows: [current, current.previous, current.previous.previous]))
+        }
     }
 
-    func loadOlder() async { await loadMonths(1) }
-
-    func refresh() async {
-        resetLibrary(closingPlayerWindows: false)
-        await loadInitial()
+    func loadOlder() async {
+        guard !isPreview, !Task.isCancelled else { return }
+        let expected = generation
+        let requestedWindow = nextWindow
+        let previousOlderLoad = completedOlderLoad
+        olderLoadRequestCount += 1
+        isLoadingOlder = true
+        defer {
+            if expected == generation {
+                olderLoadRequestCount -= 1
+                isLoadingOlder = olderLoadRequestCount > 0
+            }
+        }
+        while let activeLibraryLoad {
+            let cancelled = await withCheckedContinuation { libraryLoadWaiters.append($0) }
+            guard expected == generation, !Task.isCancelled, !isPreview else { return }
+            if activeLibraryLoad == .older, !cancelled { return }
+            if completedOlderLoad != previousOlderLoad { return }
+            // Several explicit clicks can wait for the same refresh. The first
+            // completed older fetch satisfies all requests for that same month.
+            if let requestedWindow, let oldestLoadedDate, oldestLoadedDate <= requestedWindow.from { return }
+        }
+        guard hasLoadedInitial, let nextWindow else { await loadInitial(); return }
+        await load(.init(kind: .older, windows: [nextWindow]))
     }
 
-    private func loadMonths(_ count: Int) async {
-        guard !isLoading, !Task.isCancelled else { return }
+    /// Reopening refreshes metadata without changing any playback or selection state.
+    func refreshForPresentation(now: Date = .now) async { await refresh(now: now) }
+
+    func refresh(now: Date = .now) async {
+        guard !isPreview, !Task.isCancelled else { return }
         let expected = generation
-        isLoading = true
+        if let activeLibraryLoad {
+            // Presentation tasks can overlap when a view is quickly hidden and
+            // reopened. Share a successful fetch, but retry a cancelled fetch.
+            let cancelled = await withCheckedContinuation { libraryLoadWaiters.append($0) }
+            guard expected == generation, !Task.isCancelled, !isPreview else { return }
+            if !cancelled, activeLibraryLoad != .older { return }
+            await refresh(now: now)
+            return
+        }
+        guard hasLoadedInitial else { await loadInitial(now: now); return }
+        var window = RecordingMonthWindow.containing(now)
+        let oldest = oldestLoadedDate ?? window.previous.previous.from
+        var windows = [window]
+        while window.from > oldest {
+            window = window.previous
+            windows.append(window)
+        }
+        await load(.init(kind: .refresh, windows: windows))
+    }
+
+    func retryLoading() async {
+        guard !isPreview, activeLibraryLoad == nil else { return }
+        if let pendingLibraryLoad { await load(pendingLibraryLoad) }
+        else if !hasLoadedInitial { await loadInitial() }
+        else { await refresh() }
+    }
+
+    private func load(_ request: LibraryLoad) async {
+        guard !isPreview, activeLibraryLoad == nil, !Task.isCancelled else { return }
+        let expected = generation
+        activeLibraryLoad = request.kind
+        isRefreshing = request.kind == .refresh
+        isLoading = !isRefreshing
         error = nil
-        defer { if expected == generation { isLoading = false } }
+        pendingLibraryLoad = request
+        var wasCancelled = false
+        defer {
+            if expected == generation {
+                isLoading = false
+                isRefreshing = false
+                activeLibraryLoad = nil
+                if request.kind == .older, !Task.isCancelled, !wasCancelled { completedOlderLoad = UUID() }
+                let waiters = libraryLoadWaiters
+                libraryLoadWaiters = []
+                for waiter in waiters { waiter.resume(returning: Task.isCancelled || wasCancelled) }
+            }
+        }
         do {
-            for _ in 0..<count {
-                guard let window = nextWindow else { break }
+            for (index, window) in request.windows.enumerated() {
+                try Task.checkCancellation()
+                guard generation == expected else { return }
+                pendingLibraryLoad = .init(kind: request.kind, windows: Array(request.windows[index...]))
                 var token = ""
                 var seenTokens: Set<String> = []
                 var batch: [ZoomRecordingMeeting] = []
@@ -205,18 +364,30 @@ public final class RecordingLibraryModel {
                         throw ZoomAccountError.invalidResponse
                     }
                 } while !token.isEmpty
-                var byID = Dictionary(meetings.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
-                for meeting in batch { byID[meeting.id] = meeting }
-                meetings = byID.values.sorted {
-                    $0.startTime == $1.startTime ? $0.id < $1.id : $0.startTime > $1.startTime
+                merge(batch)
+                if oldestLoadedDate == nil || window.from < oldestLoadedDate! {
+                    oldestLoadedDate = window.from
+                    nextWindow = window.previous
                 }
-                oldestLoadedDate = window.from
-                nextWindow = window.previous
             }
+            pendingLibraryLoad = nil
+            if request.kind == .initial { hasLoadedInitial = true }
         } catch is CancellationError {
+            wasCancelled = true
         } catch {
             if generation == expected, !Task.isCancelled { self.error = error.localizedDescription }
         }
+    }
+
+    private func merge(_ batch: [ZoomRecordingMeeting]) {
+        // Missing records are retained: a partial API response is not evidence
+        // of deletion, and selected playback owns its existing immutable snapshot.
+        var byID = Dictionary(meetings.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+        for meeting in batch { byID[meeting.id] = meeting }
+        let merged = byID.values.sorted {
+            $0.startTime == $1.startTime ? $0.id < $1.id : $0.startTime > $1.startTime
+        }
+        if merged != meetings { meetings = merged }
     }
 
     func select(_ meeting: ZoomRecordingMeeting) {
@@ -225,9 +396,21 @@ public final class RecordingLibraryModel {
         if let file = meeting.playableVideoFiles.first { play(file) }
     }
 
+    func setDetailPresented(_ value: Bool) {
+        allowsAutomaticTranscriptPresentation = false
+        chat.setPresented(value)
+        transcript.setPresented(value && detailTab == .transcript)
+    }
+
+    func setDetailTab(_ tab: DetailTab) {
+        detailTab = tab
+        transcript.setPresented(chat.isPresented && tab == .transcript)
+    }
+
     func selectFromList(_ meeting: ZoomRecordingMeeting) {
         if let existing = playerWindows[meeting.id] {
             chat.clear()
+            transcript.clear()
             stopPlayback()
             selectedMeeting = meeting
             existing.present()
@@ -247,6 +430,7 @@ public final class RecordingLibraryModel {
     func openPlayerWindow(for meeting: ZoomRecordingMeeting) {
         if let existing = playerWindows[meeting.id] {
             chat.clear()
+            transcript.clear()
             stopPlayback()
             selectedMeeting = meeting
             existing.present()
@@ -255,7 +439,7 @@ public final class RecordingLibraryModel {
         synchronizeDefaultPlaybackSpeed()
         let file = selectedMeeting?.id == meeting.id ? selectedFile : nil
         let position = file == nil ? nil : pendingPosition
-            ?? RecordingPlaybackPosition(time: player.currentTime(), rate: player.rate)
+            ?? RecordingPlaybackPosition(time: pendingSeekTime ?? player.currentTime(), rate: player.rate)
         let localVideo = file?.id == temporaryVideoFileID ? temporaryVideo : nil
         if localVideo != nil {
             // Move ownership before stopping the inline player can remove its fallback file.
@@ -263,13 +447,17 @@ public final class RecordingLibraryModel {
             temporaryVideoFileID = nil
         }
         let playback = RecordingLibraryModel(client: client, makePlaybackSource: makePlaybackSource,
-                                             downloadVideo: downloadVideo, fetchChat: fetchChat)
+                                             downloadVideo: downloadVideo, fetchChat: fetchChat, fetchTranscript: fetchTranscript)
         let transferredSpeed = position.flatMap { $0.rate > 0 ? $0.rate : nil } ?? playbackSpeed
         playback.applyPlaybackSpeed(transferredSpeed)
         playback.isPreview = isPreview
         playback.selectedMeeting = meeting
         playback.chat.adoptState(from: chat)
+        playback.detailTab = detailTab
+        playback.transcript.adoptState(from: transcript)
+        playback.allowsAutomaticTranscriptPresentation = allowsAutomaticTranscriptPresentation
         chat.clear()
+        transcript.clear()
         // Opening a player moves audio out of the library; other windows remain available.
         stopPlayback()
         playerWindows.values.forEach { $0.playback.pausePlayback() }
@@ -287,7 +475,15 @@ public final class RecordingLibraryModel {
             } else { playback.play(video, resuming: position) }
         }
         let controller = RecordingPlayerWindowController(playback: playback, meeting: meeting)
-        controller.onClose = { [weak self] in self?.playerWindows.removeValue(forKey: meeting.id) }
+        controller.onClose = { [weak self] in
+            guard let self else { return }
+            self.playerWindows.removeValue(forKey: meeting.id)
+            if self.selectedMeeting?.id == meeting.id, self.selectedFile == nil {
+                self.selectedMeeting = nil
+                self.chat.clear()
+                self.transcript.clear()
+            }
+        }
         playerWindows[meeting.id] = controller
         controller.present()
     }
@@ -299,6 +495,7 @@ public final class RecordingLibraryModel {
     }
 
     private func pausePlayback() {
+        pauseRevision = UUID()
         player.pause()
         if let position = pendingPosition {
             pendingPosition = RecordingPlaybackPosition(time: position.time, rate: 0)
@@ -317,11 +514,10 @@ public final class RecordingLibraryModel {
         // Carry the original intent through until the replacement has finished seeking.
         let position = resumePosition ?? pendingPosition ?? (selectedFile == nil
             ? RecordingPlaybackPosition(time: .zero, rate: playbackSpeed)
-            : RecordingPlaybackPosition(time: player.currentTime(), rate: player.rate))
+            : RecordingPlaybackPosition(time: pendingSeekTime ?? player.currentTime(), rate: player.rate))
         if position.rate > 0 { applyPlaybackSpeed(position.rate) }
         playbackGeneration = UUID()
-        chatSeekTask?.cancel()
-        chatSeekTask = nil
+        cancelManualSeek()
         preparationTask?.cancel()
         preparationTask = nil
         player.currentItem?.cancelPendingSeeks()
@@ -388,6 +584,7 @@ public final class RecordingLibraryModel {
 
     private func installPlayerItem(_ item: AVPlayerItem, generation expected: UUID,
                                    position: RecordingPlaybackPosition) {
+        cancelManualSeek()
         let revision = UUID()
         itemRevision = revision
         if let playbackTimeObserver { player.removeTimeObserver(playbackTimeObserver) }
@@ -438,8 +635,7 @@ public final class RecordingLibraryModel {
 
     public func stopPlayback() {
         playbackGeneration = UUID()
-        chatSeekTask?.cancel()
-        chatSeekTask = nil
+        cancelManualSeek()
         if let playbackTimeObserver { player.removeTimeObserver(playbackTimeObserver) }
         playbackTimeObserver = nil
         preparationTask?.cancel()
@@ -464,23 +660,49 @@ public final class RecordingLibraryModel {
         isPreparing = false
         playbackError = nil
         chat.synchronize(playerTime: nil, file: nil, duration: nil)
+        transcript.synchronize(playerTime: nil, file: nil, duration: nil)
     }
 
     private func synchronizeChat(at time: CMTime) {
         chat.synchronize(playerTime: time.seconds, file: selectedFile, duration: player.currentItem?.duration.seconds)
+        transcript.synchronize(playerTime: time.seconds, file: selectedFile, duration: player.currentItem?.duration.seconds)
     }
 
     func seekToChatMessage(_ message: ZoomRecordingChatMessage) {
         guard !isPreparing, let seconds = chat.playbackTime(for: message), player.currentItem != nil else { return }
         chat.followsPlayback = true
+        seekManually(to: CMTime(seconds: seconds, preferredTimescale: 600))
+    }
+
+    func seekToTranscriptCue(_ cue: ZoomRecordingTranscriptCue, followingPlayback: Bool = true) {
+        guard !isPreparing, let seconds = transcript.playbackTime(for: cue), player.currentItem != nil else { return }
+        transcript.followsPlayback = followingPlayback
+        seekManually(to: CMTime(seconds: seconds, preferredTimescale: 600))
+    }
+
+    private func cancelManualSeek() {
+        manualSeekRevision = UUID()
+        if manualSeekTask != nil { player.currentItem?.cancelPendingSeeks() }
+        manualSeekTask?.cancel()
+        manualSeekTask = nil
+        pendingSeekTime = nil
+    }
+
+    private func seekManually(to target: CMTime) {
+        guard let item = player.currentItem else { return }
+        cancelManualSeek()
+        pendingSeekTime = target
         let expected = playbackGeneration
-        chatSeekTask?.cancel()
-        chatSeekTask = Task { [weak self] in
-            guard let self else { return }
-            let completed = await self.player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
-                                                   toleranceBefore: .zero, toleranceAfter: .zero)
-            guard completed, !Task.isCancelled, self.playbackGeneration == expected else { return }
-            self.synchronizeChat(at: self.player.currentTime())
+        let revision = manualSeekRevision
+        manualSeekTask = Task { [weak self] in
+            guard let self, !Task.isCancelled, self.playbackGeneration == expected,
+                  self.manualSeekRevision == revision, self.player.currentItem === item else { return }
+            let completed = await self.player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+            guard !Task.isCancelled, self.playbackGeneration == expected,
+                  self.manualSeekRevision == revision, self.player.currentItem === item else { return }
+            self.pendingSeekTime = nil
+            self.manualSeekTask = nil
+            if completed { self.synchronizeChat(at: self.player.currentTime()) }
         }
     }
 
@@ -496,7 +718,8 @@ public final class RecordingLibraryModel {
         guard !isPreview, let file = selectedFile, !isDownloading else { return }
         synchronizeDefaultPlaybackSpeed()
         let expected = playbackGeneration
-        let position = pendingPosition ?? RecordingPlaybackPosition(time: player.currentTime(), rate: player.rate)
+        let expectedPause = pauseRevision
+        let position = pendingPosition ?? RecordingPlaybackPosition(time: pendingSeekTime ?? player.currentTime(), rate: player.rate)
         let target = destination ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("Zooom-recording-\(UUID().uuidString).mp4")
         isDownloading = true
@@ -516,14 +739,16 @@ public final class RecordingLibraryModel {
                 }
                 self.isDownloading = false
                 if destination == nil {
-                    // A speed or pause change made while downloading belongs to
-                    // the fallback too. AVPlayer.rate can briefly lag a requested
-                    // speed change; use it only for paused/playing intent, and
-                    // restore the selected speed. Failed streams retain their intent.
-                    let resume = self.pendingPosition ?? RecordingPlaybackPosition(time: position.time,
+                    // Keep the selected speed and a failed stream's saved intent.
+                    // A later model pause takes precedence over AVPlayer's transient rate.
+                    let positionToResume = self.pendingPosition ?? RecordingPlaybackPosition(time: position.time,
                         rate: self.player.currentItem?.status == .readyToPlay && self.playbackError == nil
                             ? (self.player.rate == 0 ? 0 : self.playbackSpeed)
                             : (position.rate == 0 ? 0 : self.playbackSpeed))
+                    // A hide/pause request revokes this download's automatic resume,
+                    // even if AVPlayer still reports the rate from before that request.
+                    let resume = RecordingPlaybackPosition(time: positionToResume.time,
+                        rate: self.pauseRevision == expectedPause ? positionToResume.rate : 0)
                     self.preparationTask?.cancel()
                     self.preparationTask = nil
                     self.player.pause()
@@ -562,12 +787,22 @@ public final class RecordingLibraryModel {
         generation = UUID()
         if closingPlayerWindows { closePlayerWindows() }
         chat.clear()
+        transcript.clear()
+        detailTab = .chat
         stopPlayback()
         meetings = []
         selectedMeeting = nil
         search = ""
         error = nil
         isLoading = false
+        isRefreshing = false
+        isLoadingOlder = false
+        olderLoadRequestCount = 0
+        activeLibraryLoad = nil
+        pendingLibraryLoad = nil
+        let waiters = libraryLoadWaiters
+        libraryLoadWaiters = []
+        for waiter in waiters { waiter.resume(returning: false) }
         hasLoadedInitial = false
         oldestLoadedDate = nil
         nextWindow = nil

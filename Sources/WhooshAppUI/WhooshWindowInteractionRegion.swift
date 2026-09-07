@@ -31,7 +31,7 @@ final class WhooshWindowInteractionTrackingView: NSView {
     }
     private weak var observedWindow: NSWindow?
     private var localMonitor: Any?
-    private var savedMovability: Bool?
+    private var movabilitySuspension: WhooshWindowMovabilitySuspension?
 
     override var isOpaque: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -68,16 +68,14 @@ final class WhooshWindowInteractionTrackingView: NSView {
         guard isEnabled, !isHiddenOrHasHiddenAncestor,
               let window = observedWindow, event.window === window,
               bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
-        savedMovability = window.isMovable
-        window.isMovable = false
+        movabilitySuspension = WhooshWindowMovabilitySuspension.acquire(in: window)
     }
 
     @objc private func interactionEnded(_ notification: Notification) { finishInteraction() }
 
     private func finishInteraction() {
-        guard let savedMovability else { return }
-        observedWindow?.isMovable = savedMovability
-        self.savedMovability = nil
+        movabilitySuspension?.release()
+        movabilitySuspension = nil
     }
 
     func detach() {
@@ -86,5 +84,39 @@ final class WhooshWindowInteractionTrackingView: NSView {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         localMonitor = nil
         observedWindow = nil
+    }
+}
+
+/// Nested regions share the original state. Releasing an outer region cannot
+/// enable dragging while an inner control is still tracking, or restore a stale false.
+@MainActor
+private final class WhooshWindowMovabilitySuspension {
+    private static let active = NSMapTable<NSWindow, WhooshWindowMovabilitySuspension>(
+        keyOptions: .weakMemory, valueOptions: .strongMemory)
+    private weak var window: NSWindow?
+    private let originalMovability: Bool
+    private var owners = 1
+
+    private init(window: NSWindow) {
+        self.window = window
+        originalMovability = window.isMovable
+        window.isMovable = false
+    }
+
+    static func acquire(in window: NSWindow) -> WhooshWindowMovabilitySuspension {
+        if let suspension = active.object(forKey: window) {
+            suspension.owners += 1
+            return suspension
+        }
+        let suspension = WhooshWindowMovabilitySuspension(window: window)
+        active.setObject(suspension, forKey: window)
+        return suspension
+    }
+
+    func release() {
+        owners -= 1
+        guard owners == 0, let window else { return }
+        window.isMovable = originalMovability
+        Self.active.removeObject(forKey: window)
     }
 }

@@ -338,7 +338,9 @@ struct RecordingPlayerView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 24).padding(.bottom, 16)
-                downloadStatus.padding(.horizontal, 24).padding(.bottom, 20)
+                if model.isDownloading || model.downloadError != nil || model.downloadedFile != nil {
+                    downloadStatus.padding(.horizontal, 24).padding(.bottom, 20)
+                }
             } else {
                 emptyPlayer(title: "No video available yet", subtitle: "Zoom may still be processing this meeting, or it was recorded as audio only. Refresh the library to check again.")
             }
@@ -391,9 +393,6 @@ struct RecordingPlayerView: View {
                 Spacer()
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }.controlSize(.small)
             }
-        } else {
-            Text("Cloud recording").font(.system(size: 11)).foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

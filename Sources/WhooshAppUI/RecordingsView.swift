@@ -11,6 +11,7 @@ struct RecordingSidebar: View {
     let openSettings: () -> Void
 
     var body: some View {
+        let filteredMeetings = model.filteredMeetings
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
@@ -31,9 +32,10 @@ struct RecordingSidebar: View {
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                TextField("Search recordings", text: $model.search)
+                TextField("Search titles or dates", text: $model.search)
                     .textFieldStyle(.plain).font(.system(size: 12))
-                    .accessibilityLabel("Search loaded recordings")
+                    .accessibilityLabel("Search loaded recordings by title or date")
+                    .help("Search titles or dates, like Aug 31, 8/31, or last Monday")
                 if !model.search.isEmpty {
                     Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Clear search")
@@ -45,10 +47,10 @@ struct RecordingSidebar: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(model.filteredMeetings) { meeting in
+                    ForEach(filteredMeetings) { meeting in
                         recordingRow(meeting)
                     }
-                    if model.filteredMeetings.isEmpty, !model.isLoading {
+                    if filteredMeetings.isEmpty, !model.isLoading {
                         if isPreview {
                             sidebarMessage("Connect to your library", detail: "Exit preview to browse your Zoom cloud recordings.")
                         } else if model.error == nil {

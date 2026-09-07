@@ -182,7 +182,9 @@ public final class RecordingLibraryModel {
 
     var filteredMeetings: [ZoomRecordingMeeting] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty ? meetings : meetings.filter { $0.topic.localizedStandardContains(query) }
+        guard !query.isEmpty else { return meetings }
+        let matcher = RecordingSearch(query: query)
+        return meetings.filter { matcher.matches($0) }
     }
 
     public func toggle() {

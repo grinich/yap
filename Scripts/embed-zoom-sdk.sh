@@ -7,13 +7,13 @@ set -euo pipefail
 # Signing is inside-out; --deep is used only for verification, never signing.
 # https://godevelopers.zoom.us/blog/msdk-macos-upgrade/
 if [ "$#" -ne 2 ]; then
-    printf 'Usage: %s /path/to/Zooom.app /path/to/ZoomSDK\n' "$0" >&2
+    printf 'Usage: %s /path/to/Yap.app /path/to/ZoomSDK\n' "$0" >&2
     exit 2
 fi
 
-WHOOSH_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WHOOSH_SIGNING_IDENTITY="$(python3 "$WHOOSH_ROOT/Scripts/resolve-signing-identity.py" "$WHOOSH_ROOT")"
-export WHOOSH_SIGNING_IDENTITY
+YAP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+YAP_SIGNING_IDENTITY="$(python3 "$YAP_ROOT/Scripts/resolve-signing-identity.py" "$YAP_ROOT")"
+export YAP_SIGNING_IDENTITY
 
 python3 - "$1" "$2" <<'PY'
 import os
@@ -26,13 +26,13 @@ import tempfile
 
 app = Path(sys.argv[1]).resolve()
 sdk = Path(sys.argv[2]).resolve()
-signing_identity = os.environ.get("WHOOSH_SIGNING_IDENTITY") or "-"
+signing_identity = os.environ.get("YAP_SIGNING_IDENTITY") or "-"
 frameworks = app / "Contents/Frameworks"
 plugins = app / "Contents/PlugIns"
-if app.suffix != ".app" or not (app / "Contents/MacOS/Whoosh").is_file():
-    raise SystemExit("A staged Zooom application bundle with its Whoosh executable is required.")
+if app.suffix != ".app" or not (app / "Contents/MacOS/Yap").is_file():
+    raise SystemExit("A staged Yap application bundle with its Yap executable is required.")
 if not (sdk / "ZoomSDK.framework/ZoomSDK").is_file():
-    raise SystemExit("The linked Zoom SDK runtime is missing; check WHOOSH_ZOOM_SDK_PATH.")
+    raise SystemExit("The linked Zoom SDK runtime is missing; check YAP_ZOOM_SDK_PATH.")
 driver = sdk.parent / "Plugins/ZoomAudioDevice.driver"
 if not driver.is_dir():
     raise SystemExit("The official Zoom SDK audio driver is missing from the SDK package.")
@@ -92,12 +92,12 @@ def executable_for(path):
             with (parent / "Contents/Info.plist").open("rb") as stream:
                 name = plistlib.load(stream)["CFBundleExecutable"]
             return parent / "Contents/MacOS" / name
-    return app / "Contents/MacOS/Whoosh"
+    return app / "Contents/MacOS/Yap"
 
 def expand(value, loader, executable):
     return Path(value.replace("@loader_path", str(loader.parent)).replace("@executable_path", str(executable.parent)))
 
-main = app / "Contents/MacOS/Whoosh"
+main = app / "Contents/MacOS/Yap"
 # SwiftPM tests need the downloaded SDK's absolute runpath. The distributed
 # executable must resolve its runtime from its own bundle, even on this Mac.
 for value in rpaths(main):
@@ -105,7 +105,7 @@ for value in rpaths(main):
         subprocess.run(["/usr/bin/install_name_tool", "-delete_rpath", value, str(main)], check=True)
         load_commands.pop(main, None)
 if "@executable_path/../Frameworks" not in rpaths(main) and "@loader_path/../Frameworks" not in rpaths(main):
-    raise SystemExit("Whoosh must link with an executable-relative Contents/Frameworks runpath.")
+    raise SystemExit("Yap must link with an executable-relative Contents/Frameworks runpath.")
 for path in [main] + machos:
     executable = executable_for(path)
     search = {expand(value, path, executable) for value in rpaths(path)}
@@ -167,7 +167,7 @@ for bundle in bundles:
 
 targets = bundles + [path for path in machos if path.resolve() not in bundle_executables]
 targets.sort(key=lambda path: (-len(path.parts), str(path)))
-with tempfile.TemporaryDirectory(prefix="whoosh-zoom-sign-") as temporary:
+with tempfile.TemporaryDirectory(prefix="yap-zoom-sign-") as temporary:
     for index, target in enumerate(targets):
         command = ["/usr/bin/codesign", "--force", "--sign", signing_identity, "--options", "runtime"]
         if target.suffix == ".app":

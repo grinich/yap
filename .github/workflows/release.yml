@@ -15,7 +15,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: zooom-release
+  group: yap-release
   cancel-in-progress: false
 jobs:
   release:
@@ -26,30 +26,30 @@ jobs:
     environment: release
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      ZOOOM_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      ZOOOM_RELEASE_REPOSITORY: ${{ vars.ZOOOM_RELEASE_REPOSITORY }}
-      ZOOOM_UPDATE_FEED_URL: ${{ vars.ZOOOM_UPDATE_FEED_URL }}
-      ZOOOM_UPDATE_PUBLIC_KEY: ${{ vars.ZOOOM_UPDATE_PUBLIC_KEY }}
+      YAP_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      YAP_RELEASE_REPOSITORY: ${{ vars.YAP_RELEASE_REPOSITORY }}
+      YAP_UPDATE_FEED_URL: ${{ vars.YAP_UPDATE_FEED_URL }}
+      YAP_UPDATE_PUBLIC_KEY: ${{ vars.YAP_UPDATE_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.ZOOOM_RELEASE_TAG }}
+          ref: ${{ env.YAP_RELEASE_TAG }}
           fetch-depth: 0
           persist-credentials: false
       - name: Validate release configuration and tag
         env:
-          GH_TOKEN: ${{ env.ZOOOM_RELEASE_REPOSITORY == github.repository && github.token || secrets.ZOOOM_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ env.YAP_RELEASE_REPOSITORY == github.repository && github.token || secrets.YAP_RELEASE_TOKEN }}
         run: |
           test -n "$GH_TOKEN"
-          test -n "$ZOOOM_RELEASE_REPOSITORY"
-          test "$(gh api "repos/$ZOOOM_RELEASE_REPOSITORY" --jq .visibility)" = public
-          test "$ZOOOM_UPDATE_FEED_URL" = "https://github.com/$ZOOOM_RELEASE_REPOSITORY/releases/latest/download/appcast.xml"
+          test -n "$YAP_RELEASE_REPOSITORY"
+          test "$(gh api "repos/$YAP_RELEASE_REPOSITORY" --jq .visibility)" = public
+          test "$YAP_UPDATE_FEED_URL" = "https://github.com/$YAP_RELEASE_REPOSITORY/releases/latest/download/appcast.xml"
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
-          test "$ZOOOM_RELEASE_TAG" = "v$version"
-          git rev-parse --verify "refs/tags/$ZOOOM_RELEASE_TAG"
+          test "$YAP_RELEASE_TAG" = "v$version"
+          git rev-parse --verify "refs/tags/$YAP_RELEASE_TAG"
           git merge-base --is-ancestor HEAD origin/main
           cp Resources/Info.plist "$RUNNER_TEMP/preflight-info.plist"
-          ZOOOM_RELEASE=1 python3 Scripts/configure-updates.py "$RUNNER_TEMP/preflight-info.plist"
+          YAP_RELEASE=1 python3 Scripts/configure-updates.py "$RUNNER_TEMP/preflight-info.plist"
           python3 Scripts/validate-release-version.py
       - name: Download and verify private Zoom SDK
         env:
@@ -59,7 +59,7 @@ jobs:
         run: |
           python3 Scripts/download-zoom-sdk.py "$RUNNER_TEMP/zoom-sdk.zip"
           sdk_path=$(python3 Scripts/prepare-zoom-sdk.py "$RUNNER_TEMP/zoom-sdk.zip" "$RUNNER_TEMP/zoom-sdk")
-          echo "WHOOSH_ZOOM_SDK_PATH=$sdk_path" >> "$GITHUB_ENV"
+          echo "YAP_ZOOM_SDK_PATH=$sdk_path" >> "$GITHUB_ENV"
       - name: Resolve locked dependencies and run tests with Zoom SDK
         run: |
           swift package resolve --force-resolved-versions
@@ -77,30 +77,30 @@ jobs:
         run: /bin/bash Scripts/ci-signing-setup.sh
       - name: Build signed and notarized release
         env:
-          WHOOSH_SIGNING_IDENTITY: 'Developer ID Application: Michael Grinich (VSVHNQP588)'
-          ZOOOM_NOTARY_PROFILE: zooom-ci
+          YAP_SIGNING_IDENTITY: 'Developer ID Application: Michael Grinich (VSVHNQP588)'
+          YAP_NOTARY_PROFILE: yap-ci
         run: /bin/bash Scripts/package-release.sh
       - name: Retain verified release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Zooom-${{ env.ZOOOM_RELEASE_TAG }}
+          name: Yap-${{ env.YAP_RELEASE_TAG }}
           path: |
-            dist/Zooom-macOS.zip
-            dist/Zooom-macOS.zip.sha256
-            dist/Zooom.dmg
-            dist/Zooom.dmg.sha256
+            dist/Yap-macOS.zip
+            dist/Yap-macOS.zip.sha256
+            dist/Yap.dmg
+            dist/Yap.dmg.sha256
             dist/appcast.xml
           if-no-files-found: error
           retention-days: 14
       - name: Publish installers and feed together
         if: github.event_name == 'push' || inputs.publish
         env:
-          GH_TOKEN: ${{ env.ZOOOM_RELEASE_REPOSITORY == github.repository && github.token || secrets.ZOOOM_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ env.YAP_RELEASE_REPOSITORY == github.repository && github.token || secrets.YAP_RELEASE_TOKEN }}
         run: /bin/bash Scripts/publish-release.sh
       - name: Remove temporary signing credentials and SDK
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/zoom-sdk.zip"
           rm -rf "$RUNNER_TEMP/zoom-sdk"
-          if [ -n "${ZOOOM_NOTARY_KEYCHAIN:-}" ]; then security delete-keychain "$ZOOOM_NOTARY_KEYCHAIN"; fi
+          if [ -n "${YAP_NOTARY_KEYCHAIN:-}" ]; then security delete-keychain "$YAP_NOTARY_KEYCHAIN"; fi
           rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/sparkle-key.txt"

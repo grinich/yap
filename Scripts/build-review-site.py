@@ -18,11 +18,11 @@ from urllib.parse import quote, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = Path("Services/zoom-auth")
-REPOSITORY = "https://github.com/grinich/zooom"
+REPOSITORY = "https://github.com/grinich/yap"
 CANONICAL_URL = "https://meetings.grinich.app"
 ROUTES = {"README.md": "/", "PRIVACY.md": "/privacy/", "TERMS.md": "/terms/",
           "THIRD_PARTY_NOTICES.md": "/notices/", str(SERVICE / "site/guide.md"): "/guide/"}
-ASSETS = {"Resources/WhooshIcon.png": "assets/icon.png",
+ASSETS = {"Resources/YapIcon.png": "assets/icon.png",
           "Documentation/Images/recordings.jpg": "assets/recordings.jpg",
           "Documentation/Images/agenda.jpg": "assets/agenda.jpg"}
 TOKEN = re.compile(r"`([^`\n]+)`|(!?)\[([^\]\n]+)\]\(([^\s)]+)\)|\*\*([^*\n]+)\*\*|(?<!\*)\*([^*\n]+)\*(?!\*)")

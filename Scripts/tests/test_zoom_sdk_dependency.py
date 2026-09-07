@@ -26,7 +26,7 @@ class ZoomSDKDependencyTests(unittest.TestCase):
             "ZOOM_SDK_ASSET_ID": "123",
             "GH_TOKEN": "dependency-read-token-fixture",
             "GITHUB_REPOSITORY": "owner/public-source",
-            "ZOOOM_RELEASE_REPOSITORY": "owner/public-releases",
+            "YAP_RELEASE_REPOSITORY": "owner/public-releases",
         }
         self.metadata = {"private": True, "visibility": "private", "full_name": "owner/private-dependencies"}
 
@@ -138,7 +138,7 @@ class ZoomSDKDependencyTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).iterdir()), [archive])
 
     def test_shared_public_source_and_distribution_still_require_a_separate_private_sdk_repository(self):
-        env = {**self.env, "ZOOOM_RELEASE_REPOSITORY": self.env["GITHUB_REPOSITORY"]}
+        env = {**self.env, "YAP_RELEASE_REPOSITORY": self.env["GITHUB_REPOSITORY"]}
         calls = []
 
         def run(args, **kwargs):

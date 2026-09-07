@@ -54,7 +54,7 @@ jobs:
     timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      WHOOSH_ZOOM_SDK_PATH: /tmp/zooom-ci-without-proprietary-sdk
+      YAP_ZOOM_SDK_PATH: /tmp/yap-ci-without-proprietary-sdk
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,5 +68,5 @@ jobs:
           python3 Scripts/test-update-signatures.py
       - name: Build standalone app and validate nested signatures
         env:
-          WHOOSH_SIGNING_IDENTITY: '-'
+          YAP_SIGNING_IDENTITY: '-'
         run: /bin/bash Scripts/build-app.sh release

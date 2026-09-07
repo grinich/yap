@@ -32,6 +32,6 @@ def validate(feed, archive, info, repository):
 if __name__ == "__main__":
     try:
         validate(Path(sys.argv[1]).read_bytes(), Path(sys.argv[2]),
-                 plistlib.loads(Path(sys.argv[3]).read_bytes()), os.environ["ZOOOM_RELEASE_REPOSITORY"])
+                 plistlib.loads(Path(sys.argv[3]).read_bytes()), os.environ["YAP_RELEASE_REPOSITORY"])
     except (ValueError, KeyError, ET.ParseError) as error:
         sys.exit(str(error))

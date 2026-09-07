@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated September 7, 2026. Zooom is an independent macOS application developed and operated by **Michael Grinich**, an individual. Contact [mgrinich@gmail.com](mailto:mgrinich@gmail.com) for privacy or security matters.
+Last updated September 7, 2026. Yap is an independent macOS application developed and operated by **Michael Grinich**, an individual. Contact [mgrinich@gmail.com](mailto:mgrinich@gmail.com) for privacy or security matters.
 
 This policy describes personal developer mode and the managed connection option prepared for the free preview. Managed mode is available only in builds configured with the project's authorization service. Publishing the source or this policy does not mean Zoom has approved external use.
 
@@ -37,8 +37,12 @@ Deleting the app does not automatically erase exported files, every preference o
 
 When configured, Sparkle contacts the release host to check for and download updates. System-profile sending is disabled. Unconfigured developer builds do not check a feed. GitHub and other sites you open receive normal web requests under their own policies.
 
-[GitHub Issues](https://github.com/grinich/zooom/issues) are public. The app does not automatically attach logs, credentials, meeting links or transcripts to reports. Use email for private matters and avoid including tokens or unnecessary meeting content. App lifecycle diagnostics exist locally; proprietary SDK logging is disabled.
+[GitHub Issues](https://github.com/grinich/yap/issues) are public. The app does not automatically attach logs, credentials, meeting links or transcripts to reports. Use email for private matters and avoid including tokens or unnecessary meeting content. App lifecycle diagnostics exist locally; proprietary SDK logging is disabled.
 
 Camera, microphone, screen sharing and notification access are controlled by macOS. Meeting access and recording remain subject to Zoom permissions and consent. You can stop sharing, leave a call, disconnect an account or change macOS permissions. Material changes to these data practices will be reflected in this policy; any additional consent required for a new use will be requested before that use.
 
 Implementation details: [credential storage](Documentation/Credential-Storage.md), [Calendar](Documentation/GoogleCalendar.md), [recordings](Documentation/Recordings.md), and [authorization service](Services/zoom-auth/src/index.ts). The [Terms draft](TERMS.md) describes the free preview's proposed service terms.
+
+## Moving from a previous app version
+
+Yap can migrate supported preferences, the agenda cache and saved connections from its earlier bundle identities. The active credential vault uses the `app.yap.credentials` Keychain service. The previous consolidated vault is retained under its existing protection; once the Yap vault exists, it takes precedence and the old vault is not reread. Disconnect clears active authorization and records removal markers so legacy data cannot restore that connection. Older app bundles and their protected migration copies are not automatically erased. Normal macOS approval may be needed for the new app identity. See [Bundle identity](Documentation/Bundle-Identity.md) for the exact migration boundaries.

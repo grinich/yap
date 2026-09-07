@@ -1,42 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: extract-app-intents.sh <SwiftPM-built Whoosh binary> <app Contents/Resources>
+# Usage: extract-app-intents.sh <SwiftPM-built Yap binary> <app Contents/Resources>
 # The matching SwiftPM Modules directory must be next to the binary, or provided
-# through WHOOSH_MODULES_DIR. Run after compilation and before signing the app.
+# through YAP_MODULES_DIR. Run after compilation and before signing the app.
 # Xcode's compiler produces the constants; its metadata processor validates and
 # merges them. No metadata is synthesized or errors suppressed.
 
 if [[ $# -ne 2 ]]; then
-    printf '%s\n' 'Usage: extract-app-intents.sh <Whoosh binary> <app Resources directory>' >&2
+    printf '%s\n' 'Usage: extract-app-intents.sh <Yap binary> <app Resources directory>' >&2
     exit 64
 fi
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 binary="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 resources="$2"
-modules_dir="${WHOOSH_MODULES_DIR:-$(dirname "$binary")/Modules}"
+modules_dir="${YAP_MODULES_DIR:-$(dirname "$binary")/Modules}"
 
 if [[ ! -x "$binary" || ! -d "$modules_dir" ]]; then
-    printf '%s\n' 'Build Whoosh first and pass its SwiftPM binary with the matching Modules directory.' >&2
+    printf '%s\n' 'Build Yap first and pass its SwiftPM binary with the matching Modules directory.' >&2
     exit 66
 fi
 
 architectures="$(xcrun lipo -archs "$binary")"
 if [[ "$architectures" != "arm64" ]]; then
-    printf '%s\n' 'This extraction step targets the Apple silicon Whoosh build (arm64).' >&2
+    printf '%s\n' 'This extraction step targets the Apple silicon Yap build (arm64).' >&2
     exit 65
 fi
 
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/whoosh-app-intents.XXXXXX")"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/yap-app-intents.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$scratch/module-cache}"
 sdk_root="$(xcrun --sdk macosx --show-sdk-path)"
 toolchain_dir="$(dirname "$(dirname "$(dirname "$(xcrun --find swiftc)")")")"
 xcode_version="$(xcodebuild -version | awk '/Build version/ { print $3 }')"
-deployment_target="${WHOOSH_DEPLOYMENT_TARGET:-26.0}"
+deployment_target="${YAP_DEPLOYMENT_TARGET:-26.0}"
 target_triple="arm64-apple-macosx${deployment_target}"
-bundle_identifier="${WHOOSH_BUNDLE_ID:-com.grinich.zooom}"
+bundle_identifier="${YAP_BUNDLE_ID:-com.grinich.yap}"
 if [[ -f "$(dirname "$resources")/Info.plist" ]]; then
     bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$(dirname "$resources")/Info.plist")"
 fi
@@ -48,18 +48,18 @@ fi
 native_dependencies=()
 binary_libraries="$(otool -L "$binary")"
 if [[ "$binary_libraries" == *"ZoomSDK.framework/"* ]]; then
-    bridge_modulemap="$(dirname "$modules_dir")/WhooshZoomBridge.build/module.modulemap"
-    bridge_headers="$project_root/Sources/WhooshZoomBridge/include"
-    zoom_sdk_path="${WHOOSH_ZOOM_SDK_PATH:-$project_root/Vendor/Zoom/zoom-sdk-macos-7.1.5.84750/ZoomSDK}"
+    bridge_modulemap="$(dirname "$modules_dir")/YapZoomBridge.build/module.modulemap"
+    bridge_headers="$project_root/Sources/YapZoomBridge/include"
+    zoom_sdk_path="${YAP_ZOOM_SDK_PATH:-$project_root/Vendor/Zoom/zoom-sdk-macos-7.1.5.84750/ZoomSDK}"
     if [[ ! -f "$bridge_modulemap" || ! -d "$bridge_headers" || ! -f "$zoom_sdk_path/ZoomSDK.framework/Headers/ZoomSDK.h" ]]; then
-        printf '%s\n' 'The SDK build needs its matching WhooshZoomBridge module map, public headers, and Zoom SDK to extract App Intents.' >&2
+        printf '%s\n' 'The SDK build needs its matching YapZoomBridge module map, public headers, and Zoom SDK to extract App Intents.' >&2
         exit 66
     fi
     native_dependencies=(-Xcc "-fmodule-map-file=$bridge_modulemap" \
         -Xcc "-I$bridge_headers" -F "$zoom_sdk_path")
 fi
 
-# These are the protocol conformances currently used by Whoosh's intents.
+# These are the protocol conformances currently used by Yap's intents.
 if [[ "$binary_libraries" == *"Sparkle.framework/"* ]]; then
     test -f "$(dirname "$binary")/Sparkle.framework/Sparkle"
     native_dependencies+=(-F "$(dirname "$binary")")
@@ -78,7 +78,7 @@ compile_constants() {
     fi
     for source in "${sources[@]}"; do
         if [[ "$source" -nt "$binary" ]]; then
-            printf 'Rebuild Whoosh before extracting metadata: %s changed after the binary.\n' "$source" >&2
+            printf 'Rebuild Yap before extracting metadata: %s changed after the binary.\n' "$source" >&2
             exit 65
         fi
     done
@@ -112,13 +112,13 @@ extract_metadata() {
         --validate-assistant-intents "$@" 2>&1 | tee "$scratch/$module.log"
 }
 
-compile_constants WhooshSystem
-extract_metadata WhooshSystem
+compile_constants YapSystem
+extract_metadata YapSystem
 # The processor expects the actual actionsdata file, not Metadata.appintents's
 # containing directory. The dependency is statically linked by SwiftPM.
-printf '%s\n' "$scratch/WhooshSystem/Metadata.appintents/extract.actionsdata" > "$scratch/static-dependencies"
-compile_constants Whoosh
-extract_metadata Whoosh \
+printf '%s\n' "$scratch/YapSystem/Metadata.appintents/extract.actionsdata" > "$scratch/static-dependencies"
+compile_constants Yap
+extract_metadata Yap \
     --static-metadata-file-list "$scratch/static-dependencies" \
     --binary-file "$binary" --bundle-identifier "$bundle_identifier"
 
@@ -128,7 +128,7 @@ import sys
 from pathlib import Path
 
 scratch = Path(sys.argv[1])
-for module in ("WhooshSystem", "Whoosh"):
+for module in ("YapSystem", "Yap"):
     log = (scratch / f"{module}.log").read_text()
     # Some processor errors still exit with status zero. Verify both diagnostics
     # and the emitted data so an unusable bundle cannot pass this build step.
@@ -138,22 +138,22 @@ for module in ("WhooshSystem", "Whoosh"):
     for name in ("version.json", "extract.actionsdata", "extract.packagedata"):
         json.loads((metadata / name).read_text())
 
-actions = json.loads((scratch / "Whoosh/Metadata.appintents/extract.actionsdata").read_text())
-required = {"OpenWhooshIntent", "ShowUpcomingMeetingsIntent", "JoinNextMeetingIntent"}
+actions = json.loads((scratch / "Yap/Metadata.appintents/extract.actionsdata").read_text())
+required = {"OpenYapIntent", "ShowUpcomingMeetingsIntent", "JoinNextMeetingIntent"}
 if not required.issubset(actions.get("actions", {})):
-    raise SystemExit("The app metadata is missing one or more Zooom actions.")
-if actions["actions"]["OpenWhooshIntent"].get("title", {}).get("key") != "Open Zooom":
-    raise SystemExit("The OpenWhooshIntent metadata must display Open Zooom.")
+    raise SystemExit("The app metadata is missing one or more Yap actions.")
+if actions["actions"]["OpenYapIntent"].get("title", {}).get("key") != "Open Yap":
+    raise SystemExit("The OpenYapIntent metadata must display Open Yap.")
 if len(actions.get("autoShortcuts", [])) != 3:
-    raise SystemExit("Zooom needs its three AppShortcut builders in the executable app target.")
-open_shortcuts = [item for item in actions["autoShortcuts"] if item.get("actionIdentifier") == "OpenWhooshIntent"]
-if len(open_shortcuts) != 1 or open_shortcuts[0].get("shortTitle", {}).get("key") != "Open Zooom":
-    raise SystemExit("The OpenWhooshIntent shortcut must display Open Zooom.")
+    raise SystemExit("Yap needs its three AppShortcut builders in the executable app target.")
+open_shortcuts = [item for item in actions["autoShortcuts"] if item.get("actionIdentifier") == "OpenYapIntent"]
+if len(open_shortcuts) != 1 or open_shortcuts[0].get("shortTitle", {}).get("key") != "Open Yap":
+    raise SystemExit("The OpenYapIntent shortcut must display Open Yap.")
 if not actions.get("autoShortcutProviderMangledName"):
     raise SystemExit("The app metadata has no AppShortcutsProvider.")
-print("Validated 3 Zooom App Intents and 3 App Shortcuts.")
+print("Validated 3 Yap App Intents and 3 App Shortcuts.")
 PY
 
 mkdir -p "$resources"
 rm -rf "$resources/Metadata.appintents"
-cp -R "$scratch/Whoosh/Metadata.appintents" "$resources/Metadata.appintents"
+cp -R "$scratch/Yap/Metadata.appintents" "$resources/Metadata.appintents"

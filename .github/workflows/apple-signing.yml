@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: zooom-apple-signing
+  group: yap-apple-signing
   cancel-in-progress: false
 jobs:
   verify:
@@ -34,9 +34,9 @@ jobs:
         run: /bin/bash Scripts/ci-signing-setup.sh
       - name: Sign, notarize, and verify a disposable app
         env:
-          WHOOSH_SIGNING_IDENTITY: 'Developer ID Application: Michael Grinich (VSVHNQP588)'
-          ZOOOM_NOTARY_PROFILE: zooom-ci
-          ZOOOM_SIGNING_REPORT_DIR: ${{ runner.temp }}/apple-signing-report
+          YAP_SIGNING_IDENTITY: 'Developer ID Application: Michael Grinich (VSVHNQP588)'
+          YAP_NOTARY_PROFILE: yap-ci
+          YAP_SIGNING_REPORT_DIR: ${{ runner.temp }}/apple-signing-report
         run: /bin/bash Scripts/verify-apple-signing.sh
       - name: Keep the validation report
         if: always()
@@ -49,7 +49,7 @@ jobs:
       - name: Remove temporary signing credentials
         if: always()
         run: |
-          if [ -n "${ZOOOM_NOTARY_KEYCHAIN:-}" ]; then
-            security delete-keychain "$ZOOOM_NOTARY_KEYCHAIN" || true
+          if [ -n "${YAP_NOTARY_KEYCHAIN:-}" ]; then
+            security delete-keychain "$YAP_NOTARY_KEYCHAIN" || true
           fi
           rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/sparkle-key.txt"

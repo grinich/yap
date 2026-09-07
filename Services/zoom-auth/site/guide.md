@@ -1,14 +1,14 @@
 # User guide
 
-This guide covers {{brand}}'s current preview. Availability depends on the build, your provider account, and the permissions granted to the app. Start with the [preview status](https://github.com/grinich/zooom/blob/main/Documentation/Distribution.md); a public source repository does not mean that Zoom has approved external use.
+This guide covers {{brand}}'s current preview. Availability depends on the build, your provider account, and the permissions granted to the app. Start with the [preview status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md); a public source repository does not mean that Zoom has approved external use.
 
 ## Install and connect
 
-{{brand}} requires **Apple silicon and macOS 26 or newer**. Use an official signed installer when one is available from the project's [releases](https://github.com/grinich/zooom/releases), move the app to Applications, and open it. Current developer build instructions are in the [source README](https://github.com/grinich/zooom#try-zooom).
+{{brand}} requires **Apple silicon and macOS 26 or newer**. Use an official signed installer when one is available from the project's [releases](https://github.com/grinich/yap/releases), move the app to Applications, and open it. Current developer build instructions are in the [source README](https://github.com/grinich/yap#try-yap).
 
 Open **Settings → Your meetings → Zoom**, then choose **Sign in with Zoom**. The browser opens Zoom's sign-in and consent page. Approve access with the account you want to use, and return to the app. The app does not ask for your Zoom password directly.
 
-Builds with the managed connection already know the project's public client and authorization service. If you see **Enter Zoom configuration…**, that build or connection is using personal developer mode; follow the [personal Zoom setup](https://github.com/grinich/zooom/blob/main/Documentation/Zoom-Setup.md). Do not use another person's SDK secret. See [Privacy](/privacy/) for the two connection modes and their data flows.
+Builds with the managed connection already know the project's public client and authorization service. If you see **Enter Zoom configuration…**, that build or connection is using personal developer mode; follow the [personal Zoom setup](https://github.com/grinich/yap/blob/main/Documentation/Zoom-Setup.md). Do not use another person's SDK secret. See [Privacy](/privacy/) for the two connection modes and their data flows.
 
 ## Join or start a meeting
 
@@ -22,7 +22,7 @@ An optional setting lets the app handle Zoom's native meeting links. Unsupported
 
 ## Add your calendar
 
-Google Calendar is optional. Choose **Connect Google Calendar**, complete Google's browser consent, and select which calendars appear. If your build asks for developer configuration, follow the [Calendar setup instructions](https://github.com/grinich/zooom/blob/main/Documentation/GoogleCalendar.md).
+Google Calendar is optional. Choose **Connect Google Calendar**, complete Google's browser consent, and select which calendars appear. If your build asks for developer configuration, follow the [Calendar setup instructions](https://github.com/grinich/yap/blob/main/Documentation/GoogleCalendar.md).
 
 The agenda shows upcoming events with supported Zoom links. Join from the agenda or the menu bar. Calendar access is read-only: the app does not create events, invite people, or change your RSVP. You can deselect calendars or disconnect the account in Settings.
 

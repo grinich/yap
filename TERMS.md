@@ -1,6 +1,6 @@
 # Terms for the free preview
 
-**Draft prepared September 7, 2026 for release review. Not yet published or in effect.** These proposed terms apply to the official Zooom macOS preview and its project-operated authorization service. The developer and operator is **Michael Grinich**, an individual, contactable at [mgrinich@gmail.com](mailto:mgrinich@gmail.com).
+**Draft prepared September 7, 2026 for release review. Not yet published or in effect.** These proposed terms apply to the official Yap macOS preview and its project-operated authorization service. The developer and operator is **Michael Grinich**, an individual, contactable at [mgrinich@gmail.com](mailto:mgrinich@gmail.com).
 
 ## Using the preview
 
@@ -12,7 +12,7 @@ Only send, share, record, download or export content you are entitled to handle.
 
 ## Independent services and software
 
-Zooom is independently developed and is not affiliated with or endorsed by Zoom, Google or Apple. You must comply with the terms, permissions, subscriptions and policies applicable to your third-party accounts. These terms do not grant rights to third-party services, proprietary SDKs, trademarks or other people's content, or expand your Zoom account's entitlements. Access to some features depends on provider approval, account settings and available recording files.
+Yap is independently developed and is not affiliated with or endorsed by Zoom, Google or Apple. You must comply with the terms, permissions, subscriptions and policies applicable to your third-party accounts. These terms do not grant rights to third-party services, proprietary SDKs, trademarks or other people's content, or expand your Zoom account's entitlements. Access to some features depends on provider approval, account settings and available recording files.
 
 The personal developer mode requires your own permitted developer setup; the managed mode uses the project's authorization service. Neither mode allows you to bypass Zoom's distribution or meeting-access requirements. Source availability alone is not a grant of a license to proprietary Zoom components. Any separate software license supplied with a component continues to govern that component.
 
@@ -26,4 +26,4 @@ To the extent permitted by applicable law, the preview is provided as is and as 
 
 Access to the authorization service may be limited or suspended to address abuse, security problems, legal requirements or provider restrictions. You may stop using the preview at any time: leave calls, disconnect accounts, quit and remove the app. Remove provider authorizations separately if desired. Explicit exports, preferences and SDK-owned storage are not all removed by deleting the application; see Privacy for details.
 
-For support, report non-sensitive issues through [GitHub Issues](https://github.com/grinich/zooom/issues). For private privacy/security questions, email [mgrinich@gmail.com](mailto:mgrinich@gmail.com). Do not post tokens or private meeting information publicly. Updated terms will be published with a revision date; any material change requiring further agreement will be presented before it applies.
+For support, report non-sensitive issues through [GitHub Issues](https://github.com/grinich/yap/issues). For private privacy/security questions, email [mgrinich@gmail.com](mailto:mgrinich@gmail.com). Do not post tokens or private meeting information publicly. Updated terms will be published with a revision date; any material change requiring further agreement will be presented before it applies.

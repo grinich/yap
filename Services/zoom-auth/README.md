@@ -1,6 +1,6 @@
-# Zoom authentication service
+# Yap authentication service for Zoom
 
-This Cloudflare Worker handles the managed application's public-client OAuth token exchange and refresh, then issues short-lived Meeting SDK signatures. It receives authorization codes, PKCE verifiers, and OAuth tokens. It validates the fixed client, binds signing grants to an access token, and checks current Zoom authorization before signing. Meeting media and recording files do not pass through this service.
+This Cloudflare Worker handles public-client OAuth token exchange and refresh for Yap's managed connection, then issues short-lived Meeting SDK signatures. It receives authorization codes, PKCE verifiers, and OAuth tokens. It validates the fixed client, binds signing grants to an access token, and checks current Zoom authorization before signing. Meeting media and recording files do not pass through this service.
 
 ## Local checks
 
@@ -48,6 +48,6 @@ python3 -m unittest discover -s Scripts/tests -p test_review_site.py -v
 
 The generator uses Python's standard library and an escaped Markdown subset, with no network access or new dependencies. Privacy, terms, and notices render directly from their root documents; the homepage and support page reuse README content. Edit `site/guide.md` for the user guide and `site/site.css` for styling. Branding comes from the README heading. The canonical host is `https://meetings.grinich.app`, set once in the generator.
 
-The only copied images are the original project icon and the two sample screenshots described in `Documentation/Images/README.md`. Files under `public/` are an explicit allowlist. Generation validates local links and anchors; `--check` also rejects stale pages or unexpected files. CI checks generated output before bundling. The site has no scripts, forms, analytics, external fonts, or remote image requests. Its `_headers` policy applies to static asset responses; API headers remain the Worker's responsibility.
+The only copied images are Yap's app icon and the two sample screenshots described in `Documentation/Images/README.md`. Files under `public/` are an explicit allowlist. Generation validates local links and anchors; `--check` also rejects stale pages or unexpected files. CI checks generated output before bundling. The site has no scripts, forms, analytics, external fonts, or remote image requests. Its `_headers` policy applies to static asset responses; API headers remain the Worker's responsibility.
 
 The routes are `/`, `/guide/`, `/support/`, `/privacy/`, `/terms/`, and `/notices/`, with a separate 404 page. A draft notice in the source terms stays visible on the generated page; generating or deploying that page does not adopt the terms. Review final publication status and regenerate before a release.

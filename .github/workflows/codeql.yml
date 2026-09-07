@@ -44,7 +44,7 @@ jobs:
         run: |
           test -d /Applications/Xcode_26.6.app/Contents/Developer
           echo 'DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer' >> "$GITHUB_ENV"
-          echo 'WHOOSH_ZOOM_SDK_PATH=/tmp/zooom-codeql-without-proprietary-sdk' >> "$GITHUB_ENV"
+          echo 'YAP_ZOOM_SDK_PATH=/tmp/yap-codeql-without-proprietary-sdk' >> "$GITHUB_ENV"
       - name: Resolve locked Swift dependencies
         if: matrix.language == 'swift'
         run: swift package resolve --force-resolved-versions
@@ -62,7 +62,7 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
-          swift build --disable-sandbox --arch arm64 --product Whoosh --scratch-path "$RUNNER_TEMP/codeql-swift-build" --force-resolved-versions
+          swift build --disable-sandbox --arch arm64 --product Yap --scratch-path "$RUNNER_TEMP/codeql-swift-build" --force-resolved-versions
       - name: Analyze and upload findings
         uses: github/codeql-action/analyze@v4
         with:

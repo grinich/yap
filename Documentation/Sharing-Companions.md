@@ -1,14 +1,16 @@
 # Sharing companions
 
+**Historical evidence:** recorded checks in this document predate the Yap rename. References to earlier app identities and original evidence files describe those checkpoints, not validation of the renamed build. See [Bundle Identity](Bundle-Identity.md).
+
 Updated September 7, 2026. Background picture in picture is now a larger, interactive window with uncropped video, whole-window dragging, and a visible resize grip. Current native fixture verification is described below. Earlier live Zoom sharing evidence is retained separately; it does not establish the new window’s live video performance. The separate QA harness supplies synthetic meeting state; interface preview never captures or transmits media.
 
 ## Native Zoom references
 
-Zoom's macOS participant panel can show speaker or gallery views, shrink, or hide. Moving its gallery panel to the top or bottom of the display produces a horizontal strip. This informs Whoosh's camera-adjacent placement. [Zoom participant video panel](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0061332).
+Zoom's macOS participant panel can show speaker or gallery views, shrink, or hide. Moving its gallery panel to the top or bottom of the display produces a horizontal strip. This informs Yap's camera-adjacent placement. [Zoom participant video panel](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0061332).
 
-Zoom moves sharing controls into a movable floating toolbar with Stop share, Chat, and a hide-controls command. It also offers a separate floating chat window during sharing. Zoom's statement that its own chat window is not shared applies to Zoom's client; it does not establish the same protection for Whoosh's custom panels. [Zoom sharing controls](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0060596), [Zoom floating chat](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0064400).
+Zoom moves sharing controls into a movable floating toolbar with Stop share, Chat, and a hide-controls command. It also offers a separate floating chat window during sharing. Zoom's statement that its own chat window is not shared applies to Zoom's client; it does not establish the same protection for Yap's custom panels. [Zoom sharing controls](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0060596), [Zoom floating chat](https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0064400).
 
-## Whoosh behavior
+## Yap behavior
 
 - **Picture in picture:** when a real meeting is connected and the main meeting is backgrounded, hidden, or minimized, a floating window presents up to six unique remote participants from the current visible set. A solo call shows self-view. It starts near the display’s upper-right corner, below the menu bar. A single landscape video starts at 384 × 216 points inside a 400 × 248 window; portrait and group layouts adapt to the available display area.
 - **Video:** tiles use each camera’s aspect ratio and fit the complete frame. Native renderer bounds match the actual viewport, including while resizing. Returning to the main meeting reuses the same renderer and subscription.
@@ -34,10 +36,10 @@ CUA's virtual/background interaction can restore another physical foreground app
 
 ## Capture boundary
 
-Whoosh cannot promise these panels are excluded from a full-display share. `NSWindow.sharingType = .none` is a legacy hint: Apple's DTS response to a macOS 15.4+ ScreenCaptureKit report says there is no public API for universally preventing capture. [Apple sharing type](https://developer.apple.com/documentation/appkit/nswindow/sharingtype-swift.enum/none), [Apple DTS explanation](https://developer.apple.com/forums/thread/792152).
+Yap cannot promise these panels are excluded from a full-display share. `NSWindow.sharingType = .none` is a legacy hint: Apple's DTS response to a macOS 15.4+ ScreenCaptureKit report says there is no public API for universally preventing capture. [Apple sharing type](https://developer.apple.com/documentation/appkit/nswindow/sharingtype-swift.enum/none), [Apple DTS explanation](https://developer.apple.com/forums/thread/792152).
 
-Whoosh checks `isSupportShowZoomWindowWhenShare` before requesting `setShowZoomWindowWhenShare:NO`. The SDK setting may be unsupported, and its documentation covers Zoom meeting windows, not arbitrary custom panels. No public arbitrary-window exclusion API was found in the reviewed macOS Meeting SDK 7.1.5 headers. [Zoom SDK setting](https://marketplacefront.zoom.us/sdk/meeting/macos/interface_zoom_s_d_k_share_screen_setting.html).
+Yap checks `isSupportShowZoomWindowWhenShare` before requesting `setShowZoomWindowWhenShare:NO`. The SDK setting may be unsupported, and its documentation covers Zoom meeting windows, not arbitrary custom panels. No public arbitrary-window exclusion API was found in the reviewed macOS Meeting SDK 7.1.5 headers. [Zoom SDK setting](https://marketplacefront.zoom.us/sdk/meeting/macos/interface_zoom_s_d_k_share_screen_setting.html).
 
-[`SCContentFilter`](https://developer.apple.com/documentation/screencapturekit/sccontentfilter) can exclude content from a ScreenCaptureKit stream the app owns. Whoosh's current Zoom window/display sharing route does not accept that filter. Receiver-side checks must therefore establish what is actually transmitted; floating chat must not be described as private from the shared display.
+[`SCContentFilter`](https://developer.apple.com/documentation/screencapturekit/sccontentfilter) can exclude content from a ScreenCaptureKit stream the app owns. Yap's current Zoom window/display sharing route does not accept that filter. Receiver-side checks must therefore establish what is actually transmitted; floating chat must not be described as private from the shared display.
 
-Source: [overlay controller](../Sources/WhooshAppUI/WhooshSharingOverlayController.swift), [menu-bar actions](../Sources/WhooshAppUI/WhooshMenuBarController.swift). [Companion fixtures](../Tests/WhooshAppUITests/WhooshSharingOverlayTests.swift) cover state, geometry, resize bounds, and chat lifecycle. The earlier September 6 pure Swift checkpoint passed 247 tests in 34 suites, with no failures, skips, or compiler warnings ([test log](../../outputs/Whoosh-Pure-Swift-Test-Log.txt)); it does not prove live rendering or capture exclusion.
+Source: [overlay controller](../Sources/YapAppUI/YapSharingOverlayController.swift), [menu-bar actions](../Sources/YapAppUI/YapMenuBarController.swift). [Companion fixtures](../Tests/YapAppUITests/YapSharingOverlayTests.swift) cover state, geometry, resize bounds, and chat lifecycle. The earlier September 6 pure Swift checkpoint passed 247 tests in 34 suites, with no failures, skips, or compiler warnings ([test log](../../outputs/Whoosh-Pure-Swift-Test-Log.txt)); it does not prove live rendering or capture exclusion.

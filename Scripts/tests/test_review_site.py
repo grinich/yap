@@ -36,7 +36,7 @@ class ReviewSiteTests(unittest.TestCase):
         renderer = site.Markdown("README.md")
         value = renderer.render("[Privacy](PRIVACY.md) [Guide](Documentation/Recordings.md) [Contact](mailto:person@example.com)")
         self.assertIn('href="/privacy/"', value)
-        self.assertIn('href="https://github.com/grinich/zooom/blob/main/Documentation/Recordings.md"', value)
+        self.assertIn('href="https://github.com/grinich/yap/blob/main/Documentation/Recordings.md"', value)
         self.assertIn('href="mailto:person@example.com"', value)
 
     def test_lists_tables_quotes_and_heading_anchors_retain_content(self):

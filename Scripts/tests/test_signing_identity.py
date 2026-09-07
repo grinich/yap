@@ -24,11 +24,11 @@ class SigningIdentityTests(unittest.TestCase):
 
     def test_explicit_environment_overrides_local_configuration(self):
         (self.root / "signing.local.json").write_text(json.dumps({"certificateSHA1": "ab" * 20}))
-        self.assertEqual(signing.resolve(self.root, {"WHOOSH_SIGNING_IDENTITY": "Other Identity"}), "Other Identity")
+        self.assertEqual(signing.resolve(self.root, {"YAP_SIGNING_IDENTITY": "Other Identity"}), "Other Identity")
 
     def test_empty_environment_does_not_silently_fall_back(self):
         with self.assertRaises(ValueError):
-            signing.resolve(self.root, {"WHOOSH_SIGNING_IDENTITY": ""})
+            signing.resolve(self.root, {"YAP_SIGNING_IDENTITY": ""})
 
     def test_invalid_local_configuration_never_falls_back(self):
         for content in ("not JSON", "[]", '{"certificateSHA1":"-"}', '{"certificateSHA1":"abcd"}'):

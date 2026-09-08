@@ -1,6 +1,6 @@
 # User guide
 
-This guide covers **Yap 0.1.3 (build 4)**, the signed and notarized candidate for the first public installer. Independent package checks, the exact-source security scan, managed sign-in, recording playback and a solo hosted meeting passed within the recorded native scope. The review package is complete and Zoom submission is being prepared; approval and broader acceptance remain pending. There is no public download. Superseded 0.1.2, 0.1.1 and 0.1.0 drafts should not be installed. Check the [release status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md) for availability; the sample interface and source remain available.
+This guide covers **Yap 0.1.3 (build 4)**, the signed and notarized candidate for the first public installer. Independent package checks, the exact-source security scan, managed sign-in, recording playback and a solo hosted meeting passed within the recorded native scope. Yap 0.1.3 was submitted to Zoom on **September 7, 2026 (Pacific)** and is in functional review; approval and broader acceptance remain pending. There is no public download. Superseded 0.1.2, 0.1.1 and 0.1.0 drafts should not be installed. Check the [release status](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md) for availability; the sample interface and source remain available.
 
 ## Install and connect
 

@@ -100,6 +100,58 @@ struct ZoomConnectionTests {
         #expect((try nextLaunch.load(tokensKey) == nil) == denyLegacyCleanup)
         #expect(storage.contains(tokensKey))
     }
+
+    @Test(arguments: [false, true])
+    func failedManagedSwitchReconcilesAtomicVaultResultAndPreservesGoogle(denyLegacyCleanup: Bool) async throws {
+        let configurationKey = CredentialKey(service: "app.yap.zoom-personal", account: "configuration")
+        let tokensKey = CredentialKey(service: "app.yap.zoom-personal", account: "oauth-tokens")
+        let oldTokensKey = CredentialKey(service: "app.whoosh.zoom-personal", account: "oauth-tokens")
+        let oldConfigurationKey = CredentialKey(service: "app.whoosh.zoom-personal", account: "configuration")
+        let googleKey = CredentialKey(service: "app.yap.google-calendar", account: "personal")
+        let tokens = ZoomOAuthTokens(clientID: configuration.oauthPublicClientID, accessToken: "fixture-access",
+                                    refreshToken: "fixture-refresh", expiresAt: Date().addingTimeInterval(3_600))
+        let configurationData = try JSONEncoder().encode(configuration)
+        let tokenData = try JSONEncoder().encode(tokens)
+        let storage = ZoomDisconnectCredentialStorage(records: [
+            configurationKey: configurationData, tokensKey: tokenData,
+            oldConfigurationKey: configurationData, oldTokensKey: tokenData
+        ])
+        let vault = CredentialVault(storage: storage)
+        try vault.save(Data("saved-google".utf8), for: googleKey)
+        let managed = ZoomPublicConfiguration(oauthPublicClientID: "managed-public", sdkClientID: "managed-sdk",
+            sdkSignerURL: URL(string: "https://signer.example/v1/meeting-sdk/signature")!)
+        let client = ZoomAccountClient(store: KeychainZoomCredentialStore(vault: vault), publicConfiguration: managed)
+        let model = ZoomConnectionModel(client: client, openURL: { _ in Issue.record("Switching mode must not open authorization") })
+        await model.loadStatus()
+        #expect(model.configurationMode == .personal)
+        #expect(model.hasSavedConnection)
+        let previousRevision = model.accountRevision
+        var invalidations = 0
+        model.onAccountWillChange = { invalidations += 1 }
+        if denyLegacyCleanup { storage.denyDeletion(oldTokensKey) }
+        else { storage.denyNextDisconnect(legacyCleanup: false) }
+
+        await model.usePublicConfiguration()
+
+        #expect(model.configurationMode == (denyLegacyCleanup ? .managed : .personal))
+        #expect(model.hasSavedConnection == !denyLegacyCleanup)
+        #expect(model.isConfigured)
+        #expect(model.hasLoadedStatus)
+        #expect(!model.isBusy)
+        #expect(!model.isLoadingStatus)
+        #expect(model.statusError == nil)
+        #expect(model.error == ZoomAccountError.keychain(errSecAuthFailed).localizedDescription)
+        #expect(model.accountRevision != previousRevision)
+        #expect(invalidations == 1)
+        let nextLaunch = CredentialVault(storage: storage)
+        #expect((try nextLaunch.load(configurationKey) == nil) == denyLegacyCleanup)
+        #expect((try nextLaunch.load(tokensKey) == nil) == denyLegacyCleanup)
+        #expect(try nextLaunch.load(googleKey) == Data("saved-google".utf8))
+        #expect(storage.contains(oldTokensKey)) // Its existing protection was honored.
+        #expect(storage.contains(oldConfigurationKey) == !denyLegacyCleanup)
+        #expect(storage.deletions == (denyLegacyCleanup
+            ? [tokensKey, oldTokensKey, configurationKey, oldConfigurationKey] : []))
+    }
 }
 
 private final class ZoomDisconnectCredentialStorage: CredentialStorage, Sendable {
@@ -107,6 +159,8 @@ private final class ZoomDisconnectCredentialStorage: CredentialStorage, Sendable
         var records: [CredentialKey: Data]
         var denyWrite = false
         var denyDelete = false
+        var deniedKey: CredentialKey?
+        var deletions: [CredentialKey] = []
     }
     private let state: Mutex<State>
 
@@ -119,6 +173,8 @@ private final class ZoomDisconnectCredentialStorage: CredentialStorage, Sendable
         }
     }
     func contains(_ key: CredentialKey) -> Bool { state.withLock { $0.records[key] != nil } }
+    func denyDeletion(_ key: CredentialKey) { state.withLock { $0.deniedKey = key } }
+    var deletions: [CredentialKey] { state.withLock { $0.deletions } }
     func load(_ key: CredentialKey) -> Data? { state.withLock { $0.records[key] } }
     func save(_ data: Data, for key: CredentialKey) throws {
         try state.withLock {
@@ -128,7 +184,8 @@ private final class ZoomDisconnectCredentialStorage: CredentialStorage, Sendable
     }
     func delete(_ key: CredentialKey) throws {
         try state.withLock {
-            if $0.denyDelete { throw CredentialVaultError.keychain(errSecAuthFailed) }
+            $0.deletions.append(key)
+            if $0.denyDelete || $0.deniedKey == key { throw CredentialVaultError.keychain(errSecAuthFailed) }
             $0.records.removeValue(forKey: key)
         }
     }

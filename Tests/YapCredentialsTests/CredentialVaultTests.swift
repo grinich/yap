@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Synchronization
 import Testing
 @testable import YapCredentials
@@ -92,6 +93,70 @@ struct CredentialVaultTests {
         #expect(storage.value(keys[1]) != nil)
         #expect(try CredentialVault(storage: storage).load(keys[1]) == nil)
         #expect(storage.loads(keys[1]) == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func batchDeletionCommitsTogetherAndAttemptsAllCleanupBeforeReportingFirstFailure(denyCurrentItem: Bool) throws {
+        let storage = MemoryCredentialStorage()
+        let vault = CredentialVault(storage: storage)
+        for key in keys {
+            storage.put(Data("old".utf8), for: key)
+            try vault.save(Data("saved".utf8), for: key)
+        }
+        let oldTokens = CredentialKey(service: "app.whoosh.zoom-personal", account: "oauth-tokens")
+        let oldConfiguration = CredentialKey(service: "app.whoosh.zoom-personal", account: "configuration")
+        storage.put(Data("older-tokens".utf8), for: oldTokens)
+        storage.put(Data("older-configuration".utf8), for: oldConfiguration)
+        // This shared old vault may also hold Google credentials; never delete it.
+        storage.put(Data("untouched-old-vault".utf8), for: CredentialVault.legacyStorageKey)
+        let firstDenied = denyCurrentItem ? keys[3] : oldTokens
+        storage.denyDeletion(firstDenied, status: errSecAuthFailed)
+        storage.denyDeletion(oldConfiguration, status: errSecUserCanceled)
+        let savesBefore = storage.saves
+
+        do {
+            try vault.delete([keys[3], keys[2], keys[3]])
+            Issue.record("Expected the first Keychain cleanup failure")
+        } catch CredentialVaultError.keychain(let status) {
+            #expect(status == errSecAuthFailed)
+        }
+
+        #expect(storage.saves == savesBefore + 1)
+        #expect(storage.deletions == [keys[3], oldTokens, keys[2], oldConfiguration])
+        #expect(storage.value(firstDenied) != nil)
+        #expect(storage.value(oldConfiguration) != nil)
+        #expect(storage.value(keys[2]) == nil)
+        for source in [vault, CredentialVault(storage: storage)] {
+            #expect(try source.load(keys[2]) == nil)
+            #expect(try source.load(keys[3]) == nil)
+            for google in keys.prefix(2) { #expect(try source.load(google) == Data("saved".utf8)) }
+        }
+        #expect(storage.loads(oldTokens) == 0)
+        #expect(storage.loads(oldConfiguration) == 0)
+        #expect(storage.value(CredentialVault.legacyStorageKey) == Data("untouched-old-vault".utf8))
+        for google in keys.prefix(2) { #expect(storage.value(google) == Data("old".utf8)) }
+
+        storage.allowDeletions()
+        try vault.delete([keys[3], keys[2]])
+        #expect(storage.value(firstDenied) == nil)
+        #expect(storage.value(oldConfiguration) == nil)
+        #expect(try CredentialVault(storage: storage).load(keys[3]) == nil)
+    }
+
+    @Test func failedBatchCommitPreservesBothRecordsAndNeverAttemptsLegacyCleanup() throws {
+        let storage = MemoryCredentialStorage()
+        let vault = CredentialVault(storage: storage)
+        for key in keys { try vault.save(Data("saved".utf8), for: key) }
+        let persisted = storage.value(CredentialVault.storageKey)
+        storage.failNextWrite()
+
+        #expect(throws: CredentialVaultError.self) { try vault.delete([keys[3], keys[2]]) }
+
+        #expect(storage.deletions.isEmpty)
+        #expect(storage.value(CredentialVault.storageKey) == persisted)
+        for source in [vault, CredentialVault(storage: storage)] {
+            for key in keys { #expect(try source.load(key) == Data("saved".utf8)) }
+        }
     }
 
     @Test func concurrentSavesAreSerializedWithoutLosingOtherRecords() async throws {
@@ -198,6 +263,7 @@ private final class MemoryCredentialStorage: CredentialStorage, Sendable {
         var failRead = false
         var failWrite = false
         var failDelete = false
+        var deniedDeletions: [CredentialKey: OSStatus] = [:]
     }
     private let state = Mutex(State())
     var saves: Int { state.withLock { $0.saves } }
@@ -208,6 +274,8 @@ private final class MemoryCredentialStorage: CredentialStorage, Sendable {
     func failNextRead() { state.withLock { $0.failRead = true } }
     func failNextWrite() { state.withLock { $0.failWrite = true } }
     func failNextDeletion() { state.withLock { $0.failDelete = true } }
+    func denyDeletion(_ key: CredentialKey, status: OSStatus) { state.withLock { $0.deniedDeletions[key] = status } }
+    func allowDeletions() { state.withLock { $0.deniedDeletions = [:] } }
 
     func load(_ key: CredentialKey) throws -> Data? {
         try state.withLock {
@@ -225,8 +293,9 @@ private final class MemoryCredentialStorage: CredentialStorage, Sendable {
     }
     func delete(_ key: CredentialKey) throws {
         try state.withLock {
-            if $0.failDelete { $0.failDelete = false; throw CredentialVaultError.keychain(-128) }
             $0.deletions.append(key)
+            if $0.failDelete { $0.failDelete = false; throw CredentialVaultError.keychain(-128) }
+            if let status = $0.deniedDeletions[key] { throw CredentialVaultError.keychain(status) }
             $0.values.removeValue(forKey: key)
         }
     }

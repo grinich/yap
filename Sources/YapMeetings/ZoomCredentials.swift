@@ -123,7 +123,9 @@ public actor KeychainZoomCredentialStore: ZoomCredentialStore {
     public func loadTokens() throws -> ZoomOAuthTokens? { try load("oauth-tokens") }
     public func saveTokens(_ tokens: ZoomOAuthTokens) throws { try save(tokens, account: "oauth-tokens") }
     public func deleteTokens() throws { try delete("oauth-tokens") }
-    public func deleteAll() throws { try deleteTokens(); try delete("configuration") }
+    public func deleteAll() throws {
+        try access { try vault.delete([key("oauth-tokens"), key("configuration")]) }
+    }
 
     private func key(_ account: String) -> CredentialKey { CredentialKey(service: service, account: account) }
 

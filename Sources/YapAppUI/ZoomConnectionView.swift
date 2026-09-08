@@ -166,7 +166,12 @@ public final class ZoomConnectionModel {
         } catch is CancellationError {
         } catch {
             guard operationID == currentOperation, !Task.isCancelled else { return }
-            self.error = error.localizedDescription
+            let configurationError = error.localizedDescription
+            // The active override and tokens may already be removed even when
+            // legacy cleanup is denied. Show the saved mode, retaining the error.
+            await refreshStatus(for: currentOperation)
+            guard operationID == currentOperation, !Task.isCancelled else { return }
+            self.error = configurationError
         }
     }
 

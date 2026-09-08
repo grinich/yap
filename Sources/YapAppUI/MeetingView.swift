@@ -205,7 +205,9 @@ struct MeetingView: View {
                 Menu {
                     Picker("View", selection: Binding(get: { meeting.layout }, set: { meeting.setLayout($0) })) {
                         ForEach(MeetingLayout.allCases, id: \.self) { layout in
-                            Text(layout.title).tag(layout)
+                            Label { Text(layout.title) } icon: {
+                                Image(nsImage: (layout == .gallery ? RecordingPlaybackLayout.gallery : .speaker).image)
+                            }.tag(layout)
                         }
                     }
                     .pickerStyle(.inline).labelsHidden()
@@ -246,11 +248,15 @@ struct MeetingView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: meeting.layout.symbol).font(.system(size: 15))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
+                    HStack(spacing: 4) {
+                        Image(nsImage: (meeting.layout == .gallery ? RecordingPlaybackLayout.gallery : .speaker).image)
+                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                            .accessibilityHidden(true)
+                    }
+                    .frame(width: 56, height: 32)
+                    .contentShape(RoundedRectangle(cornerRadius: 10))
                 }
-                .menuStyle(.button).buttonStyle(.plain).fixedSize()
+                .menuStyle(.button).menuIndicator(.hidden).buttonStyle(.plain).fixedSize()
                 .yapIconHover()
                 .background(YapWindowInteractionRegion(isEnabled: showsControls))
                 .tint(nil as Color?).foregroundStyle(.primary)

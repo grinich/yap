@@ -227,8 +227,13 @@ struct TodayView: View {
     private var meetingActionButtons: some View {
         HStack(spacing: 8) {
             Button { Task { await model.hostMeeting() } } label: {
-                Label("Start a meeting", systemImage: "plus")
-                    .foregroundStyle(.white)
+                Label {
+                    HStack(spacing: 10) {
+                        Text("Start a meeting")
+                        Text("⇧⌘N").font(.system(size: 11, weight: .medium)).opacity(0.7).accessibilityHidden(true)
+                    }
+                } icon: { Image(systemName: "plus") }
+                .foregroundStyle(.white)
             }
             .buttonStyle(.glassProminent)
             .yapIconHover(cornerRadius: 100)
@@ -318,7 +323,7 @@ struct TodayView: View {
         Button { Task { await model.joinNextCalendarMeeting(expectedEventID: event.id) } } label: {
             HStack(spacing: 14) {
                 Text(model.isPreview ? "Preview meeting" : "Join meeting")
-                Image(systemName: "arrow.up.right")
+                Text("⌘↵").font(.system(size: 12, weight: .medium)).opacity(0.7).accessibilityHidden(true)
             }
             .font(.system(size: 13, weight: .semibold)).padding(.horizontal, 12).padding(.vertical, 9)
         }

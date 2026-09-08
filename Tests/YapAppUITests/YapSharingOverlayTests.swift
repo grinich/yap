@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import Testing
 import YapMeetings
 @testable import YapAppUI
@@ -167,6 +169,53 @@ struct YapSharingOverlayTests {
         #expect(small.size == minimum && small.maxY == original.maxY && small.minX == original.minX)
         let huge = PictureInPictureResize.frame(from: original, translation: CGSize(width: 9000, height: -9000), minimum: minimum, maximum: maximum)
         #expect(huge.size == maximum && huge.maxY == original.maxY)
+    }
+
+    @Test func allResizeCornersKeepTheOppositeCornerFixed() {
+        let original = CGRect(x: 300, y: 300, width: 400, height: 250)
+        for corner in PictureInPictureCorner.allCases {
+            let resized = PictureInPictureResize.frame(from: original,
+                translation: CGSize(width: corner.isLeft ? -80 : 80, height: corner.isTop ? 60 : -60),
+                minimum: CGSize(width: 240, height: 180), maximum: CGSize(width: 1000, height: 800), corner: corner)
+            #expect(resized.size == CGSize(width: 480, height: 310))
+            #expect(corner.isLeft ? resized.maxX == original.maxX : resized.minX == original.minX)
+            #expect(corner.isTop ? resized.minY == original.minY : resized.maxY == original.maxY)
+        }
+    }
+
+    @Test func videoClicksReturnButDraggingAndResizingDoNot() throws {
+        let view = SharingPictureInPictureView(rootView: Color.black, controls: Button("Mic") {})
+        let window = NSPanel(contentRect: CGRect(x: 300, y: 300, width: 400, height: 250),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.minSize = CGSize(width: 240, height: 180)
+        window.maxSize = CGSize(width: 1000, height: 800)
+        window.contentView = view
+        view.layoutSubtreeIfNeeded()
+        var opened = 0
+        view.openMeeting = { opened += 1 }
+        func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        try view.mouseDown(with: event(.leftMouseDown, CGPoint(x: 100, y: 100)))
+        try view.mouseUp(with: event(.leftMouseUp, CGPoint(x: 100, y: 100)))
+        #expect(opened == 1)
+        try view.mouseDown(with: event(.leftMouseDown, CGPoint(x: 100, y: 100)))
+        try view.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: 150, y: 150)))
+        try view.mouseUp(with: event(.leftMouseUp, CGPoint(x: 100, y: 100)))
+        #expect(window.frame.origin == CGPoint(x: 350, y: 350))
+        #expect(opened == 1)
+        for corner in PictureInPictureCorner.allCases {
+            let rect = corner.rect(in: view.bounds)
+            let point = CGPoint(x: rect.midX, y: rect.midY)
+            #expect(view.hitTest(point) === view)
+            try view.mouseDown(with: event(.leftMouseDown, point))
+            try view.mouseUp(with: event(.leftMouseUp, point))
+        }
+        #expect(opened == 1)
+        #expect(view.hitTest(CGPoint(x: 100, y: 20)) !== view)
+        #expect(view.hitTest(CGPoint(x: 100, y: 100)) === view)
+        window.contentView = nil
     }
 
     @Test func pendingSendSurvivesPresentationChangesAndKeepsNewDraft() async {

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Match Zoom's official sample: the entire ZoomSDK directory belongs in
+# Preserve Zoom's official runtime layout: the ZoomSDK directory belongs in
 # Contents/Frameworks, and the supplied audio driver belongs in Contents/PlugIns.
 # Copying the driver does not install it or request system-level privileges.
 # Signing is inside-out; --deep is used only for verification, never signing.
@@ -15,6 +15,7 @@ YAP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 YAP_SIGNING_IDENTITY="$(python3 "$YAP_ROOT/Scripts/resolve-signing-identity.py" "$YAP_ROOT")"
 export YAP_SIGNING_IDENTITY
 
+export YAP_ROOT
 python3 - "$1" "$2" <<'PY'
 import os
 from pathlib import Path
@@ -54,6 +55,11 @@ bundled_notice = licenses / "Zoom-OSS-LICENSE.pdf"
 subprocess.run(["/usr/bin/ditto", str(license_notice), str(bundled_notice)], check=True)
 if bundled_notice.read_bytes() != license_notice.read_bytes():
     raise SystemExit("The bundled Zoom SDK open-source notice differs from the original.")
+
+# Remove unsupported CPU slices and compile-time metadata only in our copy,
+# before computing dependency paths and signing every nested runtime again.
+for runtime in (frameworks, plugins):
+    subprocess.run([sys.executable, str(Path(os.environ["YAP_ROOT"]) / "Scripts/trim-runtime.py"), str(runtime)], check=True)
 
 magic = {bytes.fromhex(h) for h in (
     "feedface", "cefaedfe", "feedfacf", "cffaedfe",

@@ -28,8 +28,8 @@ export YAP_ZOOM_SDK_PATH="${YAP_ZOOM_SDK_PATH:-$YAP_ROOT/Vendor/Zoom/zoom-sdk-ma
 export CLANG_MODULE_CACHE_PATH="$YAP_WORK/module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$YAP_WORK/module-cache"
 cd "$YAP_ROOT"
-swift build --configuration "$YAP_CONFIGURATION" --disable-sandbox --cache-path "$YAP_WORK/spm-cache"
-YAP_BIN="$(swift build --configuration "$YAP_CONFIGURATION" --show-bin-path --disable-sandbox --cache-path "$YAP_WORK/spm-cache")"
+swift build --arch arm64 --configuration "$YAP_CONFIGURATION" --disable-sandbox --cache-path "$YAP_WORK/spm-cache"
+YAP_BIN="$(swift build --arch arm64 --configuration "$YAP_CONFIGURATION" --show-bin-path --disable-sandbox --cache-path "$YAP_WORK/spm-cache")"
 YAP_STAGE="$(mktemp -d "$YAP_OUTPUT/.yap-build.XXXXXX")"
 trap 'rm -rf "$YAP_STAGE"' EXIT
 YAP_APP="$YAP_STAGE/Yap.app"

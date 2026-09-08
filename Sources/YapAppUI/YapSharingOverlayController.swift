@@ -211,7 +211,8 @@ public final class YapSharingOverlayController: NSObject, NSWindowDelegate {
         let shouldPresent = YapSharingOverlayLayout.shouldPresent(
             isConnected: meeting.isConnected, isPreview: model.isPreview,
             hasMainWindow: presentation.mainWindow != nil,
-            applicationIsActive: NSApplication.shared.isActive,
+            applicationIsActive: NSApplication.shared.isActive &&
+                NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
             mainWindowIsKey: presentation.mainWindow?.isKeyWindow == true,
             mainWindowIsVisible: presentation.mainWindow?.isVisible == true,
             mainWindowIsMiniaturized: presentation.mainWindow?.isMiniaturized == true,

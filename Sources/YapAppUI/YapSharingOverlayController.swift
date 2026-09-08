@@ -2,6 +2,7 @@ import AppKit
 import Observation
 import SwiftUI
 import YapMeetings
+import YapSystem
 
 @MainActor @Observable
 public final class YapSharingPresentation {
@@ -81,9 +82,9 @@ enum YapSharingOverlayLayout {
     static func stripFrame(in screen: CGRect, aspectRatios: [Double]) -> CGRect {
         let single = aspectRatios.count <= 1
         let ratio = aspectRatios.first.flatMap { $0.isFinite && (0.125...8).contains($0) ? $0 : nil } ?? 16 / 9
-        let videoHeight = single ? min(384 / ratio, screen.height * 0.5 - 32) : min(380, screen.height * 0.5 - 32)
+        let videoHeight = single ? min(384 / ratio, screen.height * 0.5 - 52) : min(380, screen.height * 0.5 - 52)
         let width = single ? min(384, videoHeight * ratio) + 16 : min(720, screen.width * 0.65)
-        let size = CGSize(width: min(screen.width, max(200, width)), height: min(screen.height, max(140, videoHeight + 32)))
+        let size = CGSize(width: min(screen.width, max(240, width)), height: min(screen.height, max(180, videoHeight + 52)))
         return clampedStripFrame(CGRect(x: screen.maxX - size.width - 20, y: screen.maxY - size.height - 20,
                                        width: size.width, height: size.height), in: screen)
     }
@@ -249,14 +250,16 @@ public final class YapSharingOverlayController: NSObject, NSWindowDelegate {
         let frame = YapSharingOverlayLayout.clampedStripFrame(proposed, in: screen.visibleFrame)
         if stripPanel == nil {
             let panel = SharingPictureInPicturePanel(contentRect: frame,
-                styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
+                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             configure(panel)
             panel.title = "Picture in picture"
             panel.setAccessibilityLabel("Picture in picture")
             panel.isMovable = true
-            panel.minSize = NSSize(width: min(200, screen.visibleFrame.width), height: min(140, screen.visibleFrame.height))
+            panel.minSize = NSSize(width: min(240, screen.visibleFrame.width), height: min(180, screen.visibleFrame.height))
             panel.delegate = self
-            let content = SharingPictureInPictureView(rootView: SharingParticipantStrip(model: model))
+            let content = SharingPictureInPictureView(rootView: SharingParticipantStrip(model: model),
+                                                     controls: SharingCallControls(model: model))
+            content.openMeeting = { YapSystemActions.request(.openYap) }
             content.interactionChanged = { [weak self] active in
                 self?.isInteracting = active
                 if !active { self?.refresh() }
@@ -379,19 +382,59 @@ private struct SharingParticipantStrip: View {
         let people = YapSharingOverlayLayout.participants(from: model.meeting.visibleParticipants)
         MeetingTileLayout(aspectRatios: people.map(\.tileAspectRatio), spacing: 8) {
             ForEach(people) { participant in
-                ParticipantTile(participant: participant, meeting: model.meeting)
+                ParticipantTile(participant: participant, meeting: model.meeting, fillsFrame: people.count == 1)
             }
         }
-        .padding(8).padding(.bottom, 16)
-        .modifier(SharingGlass())
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.16), lineWidth: 0.75))
-        .overlay(alignment: .bottomTrailing) {
-            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.7))
-                .frame(width: 24, height: 24).accessibilityHidden(true)
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .environment(\.colorScheme, .dark)
         .allowsHitTesting(false)
+    }
+}
+
+private struct SharingCallControls: View {
+    @Bindable var model: YapModel
+    var body: some View {
+        let meeting = model.meeting
+        HStack(spacing: 8) {
+            Button {
+                Task { await meeting.setMicrophoneMuted(!meeting.isMicrophoneMuted) }
+            } label: {
+                Image(systemName: meeting.isMicrophoneMuted ? "mic.slash.fill" : "mic.fill")
+                    .frame(width: 38, height: 38).contentShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .help(meeting.isMicrophoneMuted ? "Unmute microphone" : "Mute microphone")
+            .accessibilityLabel(meeting.isMicrophoneMuted ? "Unmute microphone" : "Mute microphone")
+            .yapIconHover(cornerRadius: 10)
+            .disabled(!meeting.isConnected || meeting.isApplyingControl)
+            Button {
+                Task { await meeting.setCameraEnabled(!meeting.isCameraEnabled) }
+            } label: {
+                Image(systemName: meeting.isCameraEnabled ? "video.fill" : "video.slash.fill")
+                    .frame(width: 38, height: 38).contentShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .help(meeting.isCameraEnabled ? "Turn camera off" : "Turn camera on")
+            .accessibilityLabel(meeting.isCameraEnabled ? "Turn camera off" : "Turn camera on")
+            .yapIconHover(cornerRadius: 10)
+            .disabled(!meeting.isConnected || meeting.isApplyingControl)
+            MeetingCloudRecordingCallControl(meeting: meeting, iconOnly: true)
+            Button {
+                model.showLeaveConfirmation = true
+                YapSystemActions.request(.openYap)
+            } label: {
+                Image(systemName: "phone.down.fill")
+                    .frame(width: 38, height: 38).contentShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .foregroundStyle(.red)
+            .help(meeting.isHost ? "Leave or end meeting" : "Leave meeting")
+            .accessibilityLabel(meeting.isHost ? "Leave or end meeting" : "Leave meeting")
+            .yapIconHover(cornerRadius: 10)
+            .disabled(meeting.status == .leaving)
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(\.colorScheme, .dark)
     }
 }
 

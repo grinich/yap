@@ -1,44 +1,64 @@
 import AppKit
 import SwiftUI
 
-enum PictureInPictureResize {
-    static func frame(from original: CGRect, translation: CGSize, minimum: CGSize, maximum: CGSize) -> CGRect {
-        guard translation.width.isFinite, translation.height.isFinite else { return original }
-        let width = min(maximum.width, max(minimum.width, original.width + translation.width))
-        let height = min(maximum.height, max(minimum.height, original.height - translation.height))
-        return CGRect(x: original.minX, y: original.maxY - height, width: width, height: height)
+enum PictureInPictureCorner: CaseIterable {
+    case bottomLeft, bottomRight, topLeft, topRight
+    var isLeft: Bool { self == .bottomLeft || self == .topLeft }
+    var isTop: Bool { self == .topLeft || self == .topRight }
+    func rect(in bounds: CGRect) -> CGRect {
+        CGRect(x: isLeft ? bounds.minX : bounds.maxX - 16,
+               y: isTop ? bounds.maxY - 16 : bounds.minY, width: 16, height: 16)
+    }
+    var position: NSCursor.FrameResizePosition {
+        switch self {
+        case .bottomLeft: .bottomLeft
+        case .bottomRight: .bottomRight
+        case .topLeft: .topLeft
+        case .topRight: .topRight
+        }
     }
 }
 
-/// The video is a display surface; this native wrapper owns pointer tracking so
-/// dragging does not activate the meeting, disappear on hover, or lose mouse-up.
+enum PictureInPictureResize {
+    static func frame(from original: CGRect, translation: CGSize, minimum: CGSize, maximum: CGSize,
+                      corner: PictureInPictureCorner = .bottomRight) -> CGRect {
+        guard translation.width.isFinite, translation.height.isFinite else { return original }
+        let width = min(maximum.width, max(minimum.width, original.width + translation.width * (corner.isLeft ? -1 : 1)))
+        let height = min(maximum.height, max(minimum.height, original.height + translation.height * (corner.isTop ? 1 : -1)))
+        return CGRect(x: corner.isLeft ? original.maxX - width : original.minX,
+                      y: corner.isTop ? original.minY : original.maxY - height, width: width, height: height)
+    }
+}
+
+/// Own video gestures in AppKit; controls get their own hosting surface and hit testing.
 @MainActor
-final class SharingPictureInPictureView<Content: View>: NSView {
+final class SharingPictureInPictureView<Content: View, Controls: View>: NSView {
+    static var controlsHeight: CGFloat { 52 }
     var interactionChanged: ((Bool) -> Void)?
+    var openMeeting: (() -> Void)?
     private let content: NSHostingView<Content>
-    private let resizeHandle = PictureInPictureResizeHandle(frame: .zero)
+    private let controls: PictureInPictureControlsHost<Controls>
     private var originalFrame: CGRect?
     private var pointerOrigin: CGPoint?
-    private var resizing = false
+    private var resizing: PictureInPictureCorner?
+    private var didDrag = false
 
-    init(rootView: Content) {
+    init(rootView: Content, controls: Controls) {
         content = NSHostingView(rootView: rootView)
-        content.sizingOptions = []
+        self.controls = PictureInPictureControlsHost(rootView: controls)
         super.init(frame: .zero)
-        content.autoresizingMask = [.width, .height]
+        content.sizingOptions = []
+        self.controls.sizingOptions = []
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.masksToBounds = true
+        layer?.backgroundColor = NSColor(white: 0.09, alpha: 1).cgColor
         addSubview(content)
-        addSubview(resizeHandle)
-        resizeHandle.resizeBy = { [weak self] factor in
-            guard let self, let window else { return }
-            window.setFrame(PictureInPictureResize.frame(from: window.frame,
-                translation: CGSize(width: window.frame.width * factor, height: -window.frame.height * factor),
-                minimum: window.minSize, maximum: window.maxSize), display: true)
-            interactionChanged?(false)
-        }
-        toolTip = "Drag to move. Drag the lower-right corner to resize."
+        addSubview(self.controls)
+        toolTip = "Click the video to return to Yap. Drag to move; drag any corner to resize."
     }
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("Use init(rootView:)") }
+    required init?(coder: NSCoder) { fatalError("Use init(rootView:controls:)") }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func setFrameSize(_ newSize: NSSize) {
@@ -47,58 +67,61 @@ final class SharingPictureInPictureView<Content: View>: NSView {
     }
     override func layout() {
         super.layout()
-        content.frame = bounds
-        resizeHandle.frame = CGRect(x: max(0, bounds.maxX - 28), y: 0, width: 28, height: 28)
+        controls.frame = CGRect(x: 0, y: 0, width: bounds.width, height: Self.controlsHeight)
+        content.frame = CGRect(x: 0, y: Self.controlsHeight, width: bounds.width,
+                               height: max(0, bounds.height - Self.controlsHeight))
         window?.invalidateCursorRects(for: self)
     }
     override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(convert(point, from: superview)) ? self : nil
+        let local = convert(point, from: superview)
+        guard bounds.contains(local) else { return nil }
+        if PictureInPictureCorner.allCases.contains(where: { $0.rect(in: bounds).contains(local) }) { return self }
+        if controls.frame.contains(local) { return super.hitTest(point) }
+        return self
     }
     override func resetCursorRects() {
         super.resetCursorRects()
-        addCursorRect(bounds, cursor: .openHand)
-        addCursorRect(resizeHandle.frame, cursor: .frameResize(position: .bottomRight, directions: .all))
+        addCursorRect(content.frame, cursor: .openHand)
+        for corner in PictureInPictureCorner.allCases {
+            addCursorRect(corner.rect(in: bounds), cursor: .frameResize(position: corner.position, directions: .all))
+        }
     }
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }
         originalFrame = window.frame
         pointerOrigin = window.convertPoint(toScreen: event.locationInWindow)
-        resizing = resizeHandle.frame.contains(convert(event.locationInWindow, from: nil))
+        resizing = PictureInPictureCorner.allCases.first { $0.rect(in: bounds).contains(convert(event.locationInWindow, from: nil)) }
+        didDrag = false
         interactionChanged?(true)
-        if !resizing { NSCursor.closedHand.set() }
     }
     override func mouseDragged(with event: NSEvent) {
         guard let window, let originalFrame, let pointerOrigin else { return }
         let point = window.convertPoint(toScreen: event.locationInWindow)
         let delta = CGSize(width: point.x - pointerOrigin.x, height: point.y - pointerOrigin.y)
-        if resizing {
+        guard didDrag || hypot(delta.width, delta.height) >= 4 else { return }
+        didDrag = true
+        if let resizing {
             window.setFrame(PictureInPictureResize.frame(from: originalFrame, translation: delta,
-                minimum: window.minSize, maximum: window.maxSize), display: true)
+                minimum: window.minSize, maximum: window.maxSize, corner: resizing), display: true)
         } else {
+            NSCursor.closedHand.set()
             window.setFrameOrigin(CGPoint(x: originalFrame.minX + delta.width, y: originalFrame.minY + delta.height))
         }
     }
     override func mouseUp(with event: NSEvent) {
+        let shouldOpen = originalFrame != nil && !didDrag && resizing == nil
         originalFrame = nil
         pointerOrigin = nil
-        resizing = false
+        resizing = nil
+        didDrag = false
         interactionChanged?(false)
         window?.invalidateCursorRects(for: self)
+        if shouldOpen { openMeeting?() }
     }
 }
 
 @MainActor
-private final class PictureInPictureResizeHandle: NSView {
-    var resizeBy: ((CGFloat) -> Void)?
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        setAccessibilityElement(true)
-        setAccessibilityRole(.handle)
-        setAccessibilityLabel("Resize picture in picture")
-        toolTip = "Drag to resize"
-    }
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
-    override func accessibilityPerformIncrement() -> Bool { resizeBy?(0.15); return true }
-    override func accessibilityPerformDecrement() -> Bool { resizeBy?(-0.15); return true }
+private final class PictureInPictureControlsHost<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
 }

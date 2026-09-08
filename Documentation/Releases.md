@@ -1,16 +1,16 @@
 # GitHub releases and automatic updates
 
-## Public early preview: v0.1.4
+## Public early preview: v0.1.5
 
-**Yap 0.1.4 (build 5)** is the new public release, explicitly authorized for publication before Zoom review finishes. It includes the arm64 runtime reduction, bundled Google desktop client, polished OAuth completion and foreground handoff, and meeting-link registration fixes. [Downloads](https://github.com/grinich/yap/releases/tag/v0.1.4) · [Release notes and account limitations](ReleaseNotes/v0.1.4.md). The release pipeline runs actual-SDK tests, signs and notarizes new app/DMG bytes, and generates the signed update feed. Google remains Testing and Zoom remains in Functional review; neither approval is implied by publication.
+**Yap 0.1.5 (build 6)** is the new public release, explicitly authorized for publication before Zoom review finishes. It adds draggable, resizable picture-in-picture with call controls, matching video-layout menus, meeting shortcut hints, and a polished Google Calendar completion page and foreground handoff. It retains the reduced arm64 runtime and bundled Google desktop client. [Downloads](https://github.com/grinich/yap/releases/tag/v0.1.5) · [Release notes and account limitations](ReleaseNotes/v0.1.5.md). The release pipeline runs actual-SDK tests, signs and notarizes new app/DMG bytes, and generates the signed update feed. Google is in production but unverified and Zoom remains in Functional review; neither approval is implied by publication.
 
-The following 0.1.3 evidence is retained for the unchanged installer submitted to Zoom. It does not validate the new 0.1.4 artifact bytes.
+The following 0.1.3 evidence is retained for the unchanged installer submitted to Zoom. It does not validate the new 0.1.5 artifact bytes.
 
 ## Historical Zoom review candidate
 
 Yap's source and release destination are `grinich/yap`. The current candidate for the first public release is **0.1.3, build 4**, tag `v0.1.3`, source `b920870e4a4a1f53b31d6f73c818c5aa2f75e5cf`. It corrects the managed sign-in Keychain transition discovered in 0.1.2 and retains the Sparkle startup fix. Actual-SDK packaging, independent artifact verification, exact-tag CodeQL and scoped managed-native acceptance passed. The installer remains an unpublished draft while the submitted app is in Zoom functional review; approval and broader acceptance remain pending. Earlier 0.1.2, 0.1.1 and 0.1.0 tags/assets remain immutable, superseded evidence.
 
-The final native PNG gallery, agenda and recording screenshots are published in the README through [PR #9](https://github.com/grinich/yap/pull/9); their [capture provenance](Images/README.md) distinguishes sample content from live private meetings. Google consent is **Yap**; its desktop client and project display names are **Yap for Mac**. The current Zoom development and production identity is **Yap**. Google remains **Testing**, without public verification approval or a new public rollout decision. [Provider branding checkpoint](Distribution.md#provider-branding-checkpoint).
+The final native PNG gallery, agenda and recording screenshots are published in the README through [PR #9](https://github.com/grinich/yap/pull/9); their [capture provenance](Images/README.md) distinguishes sample content from live private meetings. Google consent is **Yap**; its desktop client and project display names are **Yap for Mac**. The current Zoom development and production identity is **Yap**. Google is **In production**, still **unverified** and subject to its warning and user cap. [Provider branding checkpoint](Distribution.md#provider-branding-checkpoint).
 
 Raw proprietary SDK dependencies remain in a separate private repository; no SDK archive belongs in public source or releases. The workflow verifies this separation before downloading. A public source repository does not establish permission to distribute the integrated SDK application. Complete the [distribution requirements](Distribution.md) before publication. A separate public binary repository is supported. Private updater delivery would require authenticated feed/download support; do not embed a GitHub token or point Sparkle at private GitHub URLs.
 
@@ -218,7 +218,7 @@ The Developer ID must belong to team `VSVHNQP588`, matching the project's existi
 For a separately authorized release whose exact artifacts have passed acceptance, update its release notes and explicitly promote those verified bytes:
 
 ```sh
-gh release edit v0.1.4 --repo grinich/yap --draft=false --latest
+gh release edit v0.1.5 --repo grinich/yap --draft=false --latest
 ```
 
 That operation makes the installers and latest update feed public. Do not delete a verified draft just to rerun the workflow or repack its signed artifacts during promotion.

@@ -2,7 +2,7 @@
 
 ## Live checkpoint — September 8, 2026
 
-Project **Yap for Mac**, ID `whoosh-personal`, number `696553061357`, owned by `mgrinich@gmail.com`. The released macOS app is Yap 0.1.4 (build 5), bundle `com.grinich.yap`. Its desktop OAuth client is `696553061357-u7j8v96hlg5qms17kc9rea8cjtb8ksoh.apps.googleusercontent.com`.
+Project **Yap for Mac**, ID `whoosh-personal`, number `696553061357`, owned by `mgrinich@gmail.com`. The released macOS app is Yap 0.1.5 (build 6), bundle `com.grinich.yap`. Its desktop OAuth client is `696553061357-u7j8v96hlg5qms17kc9rea8cjtb8ksoh.apps.googleusercontent.com`.
 
 The project began this check in Testing with empty website fields. It is now **In production**, still **unverified** and subject to Google's warning and 100-user cap. No new OAuth scopes or credentials were added.
 

@@ -1,8 +1,8 @@
 # Sharing the app with a team or the public
 
-## Public installer: 0.1.4
+## Public installer: 0.1.5
 
-The owner authorized publishing **Yap 0.1.4 (build 5)** before Zoom approval. [Download the early preview](https://github.com/grinich/yap/releases/tag/v0.1.4). It includes the smaller arm64-only runtime, bundled Google sign-in client, OAuth handoff and link-handler fixes. Zoom is still in Functional review and may restrict authorization/external meetings; Google remains Testing with access limited to approved test users. Publishing on GitHub changes installer availability, not provider approval. The 0.1.3 package submitted to Zoom remains unchanged. [Release notes](ReleaseNotes/v0.1.4.md).
+The owner authorized publishing **Yap 0.1.5 (build 6)** before Zoom approval. [Download the early preview](https://github.com/grinich/yap/releases/tag/v0.1.5). It adds draggable, resizable picture-in-picture with call controls, matching video-layout menus, meeting shortcut hints, and a polished Google Calendar sign-in finish. The smaller arm64-only runtime and bundled Google client remain included. Zoom is still in Functional review and may restrict authorization/external meetings; Google sign-in is in production but unverified, with Google’s warning and user cap still in effect. Publishing on GitHub changes installer availability, not provider approval. The 0.1.3 package submitted to Zoom remains unchanged. [Release notes](ReleaseNotes/v0.1.5.md).
 
 ## Zoom review candidate and approval requirements
 
@@ -12,9 +12,9 @@ Requirements checked against official documentation on **September 7, 2026**. Pu
 
 The five verified assets remain in unpublished draft **384441843**. The release operator confirmed the four-face Yap icon, including dark mode, the architecture and SSDLC attachments, and the separate Zoom App Gallery after reload. The completed submission retained **Overview 5/5** and **Security 3/3**. The portal records submission on **September 7, 2026 at 21:46 PDT**. At the **04:47:04 UTC on September 8, 2026** observation checkpoint, Publish showed **In review**, at the **Functional review** stage; persistent tracking confirmed it was waiting for Zoom approval. Reviewer instructions and manual activation were included in the submission. The current 0.1.3 SAST PDF, architecture and SSDLC attachments persisted in a fresh browser-tab server readback. Private reviewer delivery is verified against the exact DMG checksum, with access expiring October 8, 2026 at 04:29:19 UTC. The app is submitted for review; **external-use approval and external activation remain pending**. Manual activation will still be required after approval. The selected initial audience excludes the EU. The production Beta authorization URL was regenerated successfully and its warning cleared; native public-client configuration was unchanged.
 
-The final native PNG gallery, agenda and recording screenshots are published in the README through [PR #9](https://github.com/grinich/yap/pull/9); their [capture provenance](Images/README.md) distinguishes sample content from live private meetings. Google consent is **Yap**; its desktop client and project display names are **Yap for Mac**. The current Zoom development and production identity is **Yap**. Google remains **Testing**, without public verification approval or a new public rollout decision. [Provider branding checkpoint](#provider-branding-checkpoint).
+The final native PNG gallery, agenda and recording screenshots are published in the README through [PR #9](https://github.com/grinich/yap/pull/9); their [capture provenance](Images/README.md) distinguishes sample content from live private meetings. Google consent is **Yap**; its desktop client and project display names are **Yap for Mac**. The current Zoom development and production identity is **Yap**. Google is **In production**, still **unverified** and subject to its warning and user cap. [Provider branding checkpoint](#provider-branding-checkpoint).
 
-The managed authorization service is `https://meeting-auth.mgrinich.workers.dev`; public Home, Guide, Privacy, Terms and Support use GitHub. [Service evidence](SecurityEvidence.md#production-service-acceptance). Google Calendar remains optional; 0.1.4 bundles its desktop client, while Google account access remains limited to approved test users. The immutable 0.1.2, 0.1.1 and 0.1.0 candidates are superseded. Their [historical evidence](Releases.md#superseded-candidate-v012) is retained without reusing versions or replacing assets.
+The managed authorization service is `https://meeting-auth.mgrinich.workers.dev`; public Home, Guide, Privacy, Terms and Support use GitHub. [Service evidence](SecurityEvidence.md#production-service-acceptance). Google Calendar remains optional; 0.1.5 bundles its desktop client, while Google’s unverified-app warning and user cap still apply. The immutable 0.1.2, 0.1.1 and 0.1.0 candidates are superseded. Their [historical evidence](Releases.md#superseded-candidate-v012) is retained without reusing versions or replacing assets.
 
 ## Runtime packaging for subsequent builds
 
@@ -30,7 +30,7 @@ The release operator verified the correct Google Auth Platform project by matchi
 | Google desktop OAuth client name | **Yap for Mac** |
 | Exact desktop client | `696553061357-u7j8v96hlg5qms17kc9rea8cjtb8ksoh.apps.googleusercontent.com` |
 | Google project display name | **Yap for Mac** |
-| Google publishing status | **Testing**; no Google verification approval is asserted |
+| Google publishing status | **In production**, unverified; Google’s warning and user cap apply |
 | Current Zoom development app | **Yap**, confirmed in Created Apps and the development header |
 | Current Zoom production app | **Yap** with the selected icon, as confirmed in the production readback |
 
@@ -69,7 +69,7 @@ Approved external beta sharing normally lasts four weeks. During that window, it
 
 ## Prepare Google Calendar distribution
 
-Google Calendar is optional. The next packaged build includes Yap’s desktop client from the Google project owned by `mgrinich@gmail.com`, so users start with **Sign in with Google** rather than importing JSON. The existing notarized 0.1.3 candidate predates this change. The project remains **Testing**: bundling the client does not enable access for unlisted users or establish Google approval. The following is preparation guidance for public availability, not a completed rollout.
+Google Calendar is optional. The next packaged build includes Yap’s desktop client from the Google project owned by `mgrinich@gmail.com`, so users start with **Sign in with Google** rather than importing JSON. The existing notarized 0.1.3 candidate predates this change. The project is now **In production**, but Google verification remains pending. Google’s unverified-app warning and user cap still apply. See [Google verification](Google-Verification.md) for the current review checkpoint.
 
 Use a Google **Desktop app** OAuth client, enable the Calendar API, and retain the browser/PKCE/loopback flow. The client identifier is public configuration; user tokens remain private. Current scopes are `https://www.googleapis.com/auth/calendar.events.readonly` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly`. Declare both in Data Access; do not expand access for distribution. [Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app), [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [implementation](GoogleCalendar.md)
 

@@ -1,34 +1,74 @@
 # GitHub releases and automatic updates
 
-Yap's source and release destination are `grinich/yap`. The current candidate for the first public release is **0.1.2, build 3**, tag `v0.1.2`, source `01078d5918db5bd8c33e368ec49fce030e4a03be`. It fixes the native Sparkle startup failure found in 0.1.1. Its actual-SDK release workflow and independent downloaded-artifact verification passed; the signed/notarized package remains an unpublished draft. The exact-tag CodeQL scan passed. Initial native installation/updater and personal-mode recording/SDK checks passed; managed native authorization and broader acceptance remain pending. The immutable `v0.1.1` and `v0.1.0` tags and assets are superseded: retain them as historical evidence, but do not install or promote those candidates. Raw proprietary SDK dependencies remain in a separate private repository; no SDK archive belongs in the public source repository or its releases. The release workflow verifies that separation before downloading the SDK. Publishing the source is separate from authorizing a distributable Zoom integration: complete the [team and public distribution requirements](Distribution.md) before publishing a working installer.
+Yap's source and release destination are `grinich/yap`. The current candidate for the first public release is **0.1.3, build 4**, tag `v0.1.3`, source `b920870e4a4a1f53b31d6f73c818c5aa2f75e5cf`. It corrects the managed sign-in Keychain transition discovered in 0.1.2 and retains the Sparkle startup fix. Actual-SDK packaging, independent artifact verification, exact-tag CodeQL and scoped managed-native acceptance passed. The installer remains an unpublished draft while Zoom review is prepared; approval and broader acceptance remain pending. Earlier 0.1.2, 0.1.1 and 0.1.0 tags/assets remain immutable, superseded evidence.
 
-**Do not promote 0.1.2.** Its signed artifacts and SAST passed, but the reproducible Keychain error when switching from saved personal developer configuration to managed Yap sign-in remains a release blocker. The final full-resolution native PNG screenshots are captured and integrated in the README locally; publishing them on GitHub remains required before shipping. [Capture provenance](Images/README.md). Provider branding is now saved and verified after reload: Google consent is **Yap**, its desktop client/project display names are **Yap for Mac**, and the current Zoom development/production app is **Yap**. Google remains **Testing**, with no public verification approval claimed. [Provider branding checkpoint](Distribution.md#provider-branding-checkpoint). Complete the corrected candidate and managed native acceptance before promotion; no replacement version is asserted here.
+The final native PNG gallery, agenda and recording screenshots are published in the README through [PR #9](https://github.com/grinich/yap/pull/9); their [capture provenance](Images/README.md) distinguishes sample content from live private meetings. Google consent is **Yap**; its desktop client and project display names are **Yap for Mac**. The current Zoom development and production identity is **Yap**. Google remains **Testing**, without public verification approval or a new public rollout decision. [Provider branding checkpoint](Distribution.md#provider-branding-checkpoint).
 
-The workflow can also publish to a separately configured public binary repository. Private installers would require an authenticated feed/download service and additional client support; do not point Sparkle at private GitHub asset URLs or ship a GitHub token.
+Raw proprietary SDK dependencies remain in a separate private repository; no SDK archive belongs in public source or releases. The workflow verifies this separation before downloading. A public source repository does not establish permission to distribute the integrated SDK application. Complete the [distribution requirements](Distribution.md) before publication. A separate public binary repository is supported. Private updater delivery would require authenticated feed/download support; do not embed a GitHub token or point Sparkle at private GitHub URLs.
 
-## First release: v0.1.2
+## First release: v0.1.3
 
-**Signed and notarized GitHub draft; no public download.** [release run 34181128184](https://github.com/grinich/yap/actions/runs/34181128184) passed at `01078d5918db5bd8c33e368ec49fce030e4a03be`; independent downloaded verification passed at **03:05:38 UTC on September 8, 2026**. All five assets below are present in draft **384418390**. Their public URLs become available only after publication, which still requires native acceptance and Zoom distribution approval.
+**Signed and notarized GitHub draft; no public download.** Draft **384441843** contains the five independently verified assets below. These planned public URLs become available only after publication:
 
 | Draft asset | Purpose |
 | --- | --- |
-| [Yap.dmg](https://github.com/grinich/yap/releases/download/v0.1.2/Yap.dmg) | Installer for Apple silicon, macOS 26 or newer |
-| [Yap.dmg.sha256](https://github.com/grinich/yap/releases/download/v0.1.2/Yap.dmg.sha256) | DMG checksum |
-| [Yap-macOS.zip](https://github.com/grinich/yap/releases/download/v0.1.2/Yap-macOS.zip) | App archive and Sparkle update payload |
-| [Yap-macOS.zip.sha256](https://github.com/grinich/yap/releases/download/v0.1.2/Yap-macOS.zip.sha256) | ZIP checksum |
-| [appcast.xml](https://github.com/grinich/yap/releases/download/v0.1.2/appcast.xml) | Signed update feed for this release |
+| [Yap.dmg](https://github.com/grinich/yap/releases/download/v0.1.3/Yap.dmg) | Installer for Apple silicon, macOS 26 or newer |
+| [Yap.dmg.sha256](https://github.com/grinich/yap/releases/download/v0.1.3/Yap.dmg.sha256) | DMG checksum |
+| [Yap-macOS.zip](https://github.com/grinich/yap/releases/download/v0.1.3/Yap-macOS.zip) | App archive and Sparkle update payload |
+| [Yap-macOS.zip.sha256](https://github.com/grinich/yap/releases/download/v0.1.3/Yap-macOS.zip.sha256) | ZIP checksum |
+| [appcast.xml](https://github.com/grinich/yap/releases/download/v0.1.3/appcast.xml) | Signed update feed |
 
-Once published and approved for your account, download `Yap.dmg`, open it, drag **Yap.app** to **Applications**, eject the disk image, and open Yap from Applications. The ZIP can instead be expanded and its Yap.app moved to Applications. The downloaded bundle was verified as `com.grinich.yap`, version `0.1.2`, build `3`, signed by Developer ID team `VSVHNQP588`. Its managed endpoint, update feed and both Sparkle verification prerequisites match the release configuration. This artifact verification did not launch or install the app. Use the normal macOS verification flow; do not remove quarantine attributes or disable Gatekeeper.
+Once approved for the intended audience and published, open the DMG, drag **Yap.app** to **Applications**, eject the disk image, and launch Yap. Alternatively expand the ZIP and move its app to Applications. Use normal macOS verification; do not remove quarantine or disable Gatekeeper. Optionally place the matching checksum beside its artifact and run `shasum -a 256 -c Yap.dmg.sha256` or `shasum -a 256 -c Yap-macOS.zip.sha256`. Checksums are separate from Apple signature/notarization verification.
 
-For an optional integrity check, download the matching checksum beside the artifact, then run `shasum -a 256 -c Yap.dmg.sha256` or `shasum -a 256 -c Yap-macOS.zip.sha256` in that directory. A checksum is separate from Apple's signature/notarization verification.
+Each user authorizes their own Zoom account through the bundled managed configuration. Google Calendar is optional and currently uses an imported desktop-client JSON; its project remains Testing. Previous app users should quit the older app and review [identity migration](Bundle-Identity.md). The [release notes](ReleaseNotes/v0.1.3.md) describe the correction and availability limits.
 
-New users need Zoom authorization that is available to their account. Production browser authentication/service checks passed within the in-memory scope below; native onboarding and external approval remain pending. Google Calendar is optional and requires an eligible OAuth configuration. Previous app users should quit the older app first, retain it until the new app's account access is confirmed, and review the [identity migration](Bundle-Identity.md).
-
-The prepared [release notes](ReleaseNotes/v0.1.2.md) describe this candidate and its availability limits. Before publication, record the exact notarized artifacts, test results and approved audience; change the availability wording only when that evidence exists. Push the tag **or** dispatch its preparation workflow, not both. A tag push builds, notarizes and uploads a **draft** release; it does not publish the release or update the latest feed. For a fresh release, publication requires an explicit manual dispatch with `publish=true` after the distribution permission and acceptance checks are complete. A verified existing draft is promoted separately as described below; rerunning the workflow does not overwrite it.
+A tag push or preparation dispatch creates a draft; it does not publish the installer or latest feed. Use one preparation trigger. Promotion of a verified existing draft is described below and must preserve its exact assets.
 
 ## Current candidate evidence
 
-**Yap 0.1.2 (build 3)**, artifact checkpoint **03:05:38 UTC on September 8, 2026**. Current evidence belongs to `01078d5918db5bd8c33e368ec49fce030e4a03be`, tag `v0.1.2`; older artifact hashes and scan results do not verify this source or its new package.
+**Yap 0.1.3 (build 4)**, source `b920870e4a4a1f53b31d6f73c818c5aa2f75e5cf`, artifact checkpoint **04:20:13 UTC on September 8, 2026**.
+
+| Check | Result / evidence |
+| --- | --- |
+| Source and tests | [PR #10](https://github.com/grinich/yap/pull/10) merged as the exact tag/source above. [PR CI 34185005400](https://github.com/grinich/yap/actions/runs/34185005400) passed **647 Swift tests / 77 suites, 40 Python tests and 24 service tests**. The isolated actual-SDK suite also passed 647 tests / 77 suites. |
+| Keychain transition regression | Active Zoom tokens and personal configuration are removed in one vault commit; failed writes leave both intact. Scoped legacy cleanup attempts continue after an error, the first denial is reported and UI state reconciles. Tests cover tombstones, retry/no revival, protected cleanup and Google preservation. Keychain ACLs are unchanged. |
+| Actual-SDK release | [Run 34185478572](https://github.com/grinich/yap/actions/runs/34185478572) passed actual-SDK tests, packaging, signing, notarization, stapling and Gatekeeper; draft **384441843** is unpublished. |
+| App notarization | Apple Accepted; submission `43bbd9f1-2025-46f2-b422-50c6eafe7a30`, **04:09:22 UTC on September 8, 2026**. |
+| DMG notarization | Apple Accepted; submission `5954c923-c9fb-4562-ab4b-ff92d99c7d21`, **04:12:36 UTC on September 8, 2026**. |
+| Independent downloads | All five GitHub digests, both checksum files, app/DMG Developer ID signatures, stapled notarization, Gatekeeper and DMG integrity passed. Bundle version/identity, managed public configuration, endpoint/feed and both Sparkle prerequisites match. This check did not launch or install the app. |
+| Update signatures | The bundled public key independently verified ZIP and complete signed appcast content with CryptoKit. Content length/trailing data checks and tampered-content rejection passed; N → N+1 delivery remains unverified. |
+| Exact-tag SAST | [Run 34185481943](https://github.com/grinich/yap/actions/runs/34185481943) passed at **04:33:08 UTC**. Swift analysis **1738803023: 28 rules / 0 results**; JavaScript/TypeScript **1738719791: 103 / 0**; CodeQL 2.26.4, empty analysis errors/warnings. Open tag/repository alerts: **0** at **04:33:54 UTC**. [Exact coverage and limits](SecurityEvidence.md#codeql-configuration-and-coverage). |
+| Native acceptance | Normal installation, managed Zoom/Google persistence, real cloud video/chat/transcript, playback shortcuts, fullscreen, solo managed hosting/ending, About/icon and login switch passed. [Scope and remaining tests](#native-acceptance). |
+| Distribution | Portal **Overview 5/5**, **Security 3/3**, **Publish Ready**; gallery saved. Current SAST/architecture/SSDLC attachments persisted in a fresh server readback; the private reviewer installer matches the verified DMG. The review package is complete and submission is being prepared. No submission, approval or public release is asserted. |
+
+**Current 0.1.3 downloaded asset SHA-256**, independently checked against GitHub; ZIP/DMG also match their checksum files:
+
+| Asset | Bytes | GitHub asset ID | SHA-256 |
+| --- | ---: | ---: | --- |
+| `Yap-macOS.zip` | 291320319 | 549840571 | `13775750dae24b38a52b423035cdf827756ab5b0c6c7b58802fc8df0e64172bf` |
+| `Yap-macOS.zip.sha256` | 80 | 549840581 | `9cd4dbd7c83e63016bb9851afe06a1771ef12291483b894c15b05aad21841550` |
+| `Yap.dmg` | 351085520 | 549840579 | `9c21f613318d0a3cd7d6e7a71d81e30cb20a355208c07ff3cd2cdbe1eb865175` |
+| `Yap.dmg.sha256` | 74 | 549840572 | `c684b3ba4a26a7d4cc1d4af84c6e0953a14b088a30a6ce6615137f7ed9a818e7` |
+| `appcast.xml` | 1250 | 549840575 | `660e1a3aa124c325ebfc2b5b67c690bc1b77cec45c5c24013f4b1f78755cf448` |
+
+## Private reviewer delivery
+
+A separate private reviewer endpoint was verified at **04:33:56 UTC on September 8, 2026** by downloading the complete **351,085,520-byte** DMG and matching SHA-256 `9c21f613318d0a3cd7d6e7a71d81e30cb20a355208c07ff3cd2cdbe1eb865175`. Authorized GET/HEAD and byte ranges passed; anonymous and incorrect-token requests were rejected. The temporary uploader was deleted and the final downloader check still passed. The URL is kept private and access expires **October 8, 2026 at 04:29:19 UTC**. This reviewer delivery does not publish the GitHub draft or activate the public update feed.
+
+## Native acceptance
+
+The release operator separately installed the independently verified, downloaded **0.1.3 (build 4)** normally. Startup had no updater error; Google and selected calendars persisted, and Zoom remained connected in **managed mode**. Real cloud video, automatic chat presentation and an actual timestamped transcript loaded. Space paused at 12 seconds, S selected 1.25× and Right moved to 22 seconds; V changed the view while preserving that position, pause and speed. F entered and exited fullscreen. A managed one-person hosted meeting started with microphone muted and camera off, and normal End for Everyone returned to the agenda. About showed Yap 0.1.3 (4) and the clean four-face icon; the login switch was turned on and restored to its original off state. Help → Report a Bug opened the GitHub issue-template chooser without creating an issue. Both accounts ended connected with no active meeting.
+
+The preceding local optimized build at `66dac66` separately passed personal-to-managed switching, local disconnect/account-state clearing, production PKCE reauthorization, restart and Google preservation. macOS still reported denial of protected legacy-item cleanup; the active-vault change and UI state now completed correctly without bypassing Keychain protections. Local disconnect is not provider-side revocation. **Fresh-Mac onboarding, multiuser/external meetings, live token refresh, provider-side revocation and N → N+1 update installation remain unverified.**
+
+<a id="first-release-v012"></a>
+
+## Superseded candidate: v0.1.2
+
+**Do not install or promote the 0.1.2 draft.** Its managed sign-in transition failed after partial credential cleanup; 0.1.3 corrects the active-vault and UI-state behavior. Draft **384418390**, tag/source and all five assets remain unchanged. These historical results do not verify the new 0.1.3 bytes.
+
+
+**Historical Yap 0.1.2 (build 3)**, artifact checkpoint **03:05:38 UTC on September 8, 2026**. This evidence belongs to `01078d5918db5bd8c33e368ec49fce030e4a03be`, tag `v0.1.2`; older artifact hashes and scan results do not verify this source or its new package.
 
 | Check | Result / evidence |
 | --- | --- |
@@ -40,10 +80,10 @@ The prepared [release notes](ReleaseNotes/v0.1.2.md) describe this candidate and
 | Independent downloaded verification | Passed at **03:05:38 UTC on September 8, 2026**. All five GitHub digests and both checksum files match. Strict app/DMG Developer ID signatures, stapled notarization, Gatekeeper and DMG integrity passed. Bundle identity/version, workers.dev endpoint, update feed and both Sparkle verification prerequisites were confirmed. This verification step did not launch or install the app. |
 | Downloaded update signatures | CryptoKit verified the ZIP and complete signed appcast content with the bundled public key. Appcast content length and absence of extra unsigned trailing content were checked; an in-memory tampered copy was rejected. These signature checks do not establish native behavior; the separate startup result below passed, while N → N+1 installation remains pending. |
 | Exact-tag security scan | [Run 34181127659](https://github.com/grinich/yap/actions/runs/34181127659) passed at **03:16:39 UTC on September 8, 2026** on the exact tag/source above. CodeQL 2.26.4: Swift [1738606742](https://api.github.com/repos/grinich/yap/code-scanning/analyses/1738606742), **28 rules / 0 results**; JavaScript/TypeScript [1738537368](https://api.github.com/repos/grinich/yap/code-scanning/analyses/1738537368), **103 / 0**; empty errors/warnings. Zero open tag/repository alerts at **03:16:43 UTC**. [Coverage](SecurityEvidence.md#codeql-configuration-and-coverage). |
-| Native acceptance | Installed About/version/icon, login toggle and updater startup passed; actual feed check receives HTTP 404 while the draft is unpublished. **Personal developer mode:** cloud streaming/chat/transcript, no-restart selection, position-preserving view swap/refresh, older pagination and a one-person SDK/camera check passed. Switching to managed sign-in hit a Keychain error after token clearing; Zoom is disconnected during diagnosis. Managed authorization, second-participant/external meeting, refresh/revocation, fresh-Mac and N → N+1 checks remain pending. |
-| Distribution | No current public reviewer download, Zoom submission or approval. Reload readback confirms the Yap icon and architecture/SSDLC attachments; Overview is **4/5**, Security **3/3**. The exact 0.1.2 scan passed; its prepared-report upload and the separate Zoom App Gallery upload remain pending. The final native PNG README captures are integrated locally, awaiting GitHub publication. |
+| Native acceptance | Startup, icon/login and personal-mode recording/SDK checks passed. Switching to managed sign-in exposed a Keychain transition bug; that failure superseded 0.1.2. These personal-mode checks are not managed acceptance. The fix and current managed checks belong to 0.1.3 above. |
+| Distribution | Draft 384418390 remains superseded and unpublished. Its tag and five assets are preserved unchanged; use the current 0.1.3 candidate above for submission. |
 
-**Current 0.1.2 downloaded asset SHA-256**, independently checked against GitHub asset digests. ZIP and DMG also match their uploaded checksum-file contents:
+**Historical 0.1.2 downloaded asset SHA-256**, independently checked against GitHub asset digests. ZIP and DMG also match their uploaded checksum-file contents:
 
 | Asset | Bytes | GitHub asset ID | SHA-256 |
 | --- | ---: | ---: | --- |
@@ -84,11 +124,11 @@ Native 0.1.1 validation passed the installed icon/About presentation, login-item
 
 ## Superseded candidate: v0.1.0
 
-**Do not install or promote the 0.1.0 draft.** Its tag and five signed assets remain unchanged for traceability. It predates the corrected icon and current managed endpoint. The successful packaging evidence below applies only to those historical bytes, not to 0.1.2. See the [historical release notes](ReleaseNotes/v0.1.0.md).
+**Do not install or promote the 0.1.0 draft.** Its tag and five signed assets remain unchanged for traceability. It predates the corrected icon and current managed endpoint. The successful packaging evidence below applies only to those historical bytes, not to the current 0.1.3 candidate. See the [historical release notes](ReleaseNotes/v0.1.0.md).
 
 ## Release-candidate evidence
 
-**Historical 0.1.0 (build 1) evidence**, reported by the release operator on **September 7, 2026**. The source is [PR #4](https://github.com/grinich/yap/pull/4), merged at `ac394cd9a0834da2d3b58faed5e52efee980d246`. The superseded draft is not for installation. All artifact hashes, notarization submissions and release-run results in this section belong to 0.1.0. Historical 0.1.1 and current 0.1.2 results are recorded separately above.
+**Historical 0.1.0 (build 1) evidence**, reported by the release operator on **September 7, 2026**. The source is [PR #4](https://github.com/grinich/yap/pull/4), merged at `ac394cd9a0834da2d3b58faed5e52efee980d246`. The superseded draft is not for installation. All artifact hashes, notarization submissions and release-run results in this section belong to 0.1.0. Historical 0.1.1/0.1.2 and current 0.1.3 results are recorded separately above.
 
 | Check | Result / evidence |
 | --- | --- |
@@ -110,13 +150,13 @@ Native 0.1.1 validation passed the installed icon/About presentation, login-item
 | `Yap.dmg` | `cc502c293122d40bff5a5b7fd32f28dfb35706329d15c2074e6eb4c1b05f9040` |
 | `appcast.xml` | `ddc1246f00471132e73797bb529179ed551c0c1a08fd564b1da008ea46fb827e` |
 
-The 0.1.0 draft remains private and superseded; its successful checks do not authorize installation or publication. Preserve its workflow logs, assets and notarization results without repacking or reusing the version. Use the separate current-candidate evidence above when evaluating 0.1.2.
+The 0.1.0 draft remains private and superseded; its successful checks do not authorize installation or publication. Preserve its workflow logs, assets and notarization results without repacking or reusing the version. Use the separate current-candidate evidence above when evaluating 0.1.3.
 
 ## Current service validation
 
 Service fix [`9d4e1dd`](https://github.com/grinich/yap/commit/9d4e1dd) passed **24 service tests** and an actual local `workerd` before/after regression check. Live production browser PKCE/callback, token exchange with all three required scopes, one bounded recordings-list page and an SDK-signature response passed at `https://meeting-auth.mgrinich.workers.dev` on deployment `31a76568-0191-4f73-a3e7-d530fbc52966`. Credentials remained in process memory. The current API-only deployment is `23757fca-b323-4f65-a8ce-42255449c072`; it removes static document serving without changing authentication logic. Its health endpoint returns 200 and `/terms` returns 404. Public documentation and Terms use GitHub. [Scope and limits](SecurityEvidence.md#production-service-acceptance).
 
-Native **0.1.2 (build 3)** installation checks passed About/version/icon, the login-item toggle (original state restored), and updater startup without error 5. A real update check receives HTTP 404 because the draft feed is unpublished. Cloud-library loading, streaming, saved chat/transcript loading, active-row no-restart, video-view position preservation, refresh without losing the paused position, and older-month pagination passed. A one-person hosted SDK session and brief local camera rendering also passed; the camera was turned off and the meeting ended. **These Zoom checks used saved personal developer configuration, not managed Yap sign-in.** The configuration menu and source precedence confirmed that mode. Switching to managed sign-in encountered a Keychain error after clearing prior tokens; the current Zoom UI is disconnected during diagnosis. Managed native authorization, refresh/revocation, a second participant/external meeting, fresh-Mac onboarding and N → N+1 update installation remain pending.
+The current downloaded 0.1.3 managed-native acceptance and its remaining limits are recorded [above](#native-acceptance). Historical personal-mode checks do not substitute for that evidence.
 
 ## Implemented
 
@@ -165,12 +205,12 @@ The Developer ID must belong to team `VSVHNQP588`, matching the project's existi
 
 3. Create a **separate private dependency repository** and store the unmodified `zoom-sdk-macos-7.1.5.84750.zip` as one of its release assets. Set the repository, numeric asset ID, and read-only token above. `download-zoom-sdk.py` requires GitHub to confirm that exact repository is private and different from both source and distribution repositories before requesting any asset bytes. `prepare-zoom-sdk.py` verifies the pinned checksum before extraction. Temporary SDK downloads and extraction are removed after the job; public artifacts contain only the integrated app and installers. Local developers obtain the SDK directly from Zoom.
 4. The existing production Sparkle key remains stored under the legacy Keychain account `com.grinich.zooom`; the bundle rename does not create a new update-signing key. When recovering it, export that exact account using `.build/artifacts/sparkle/Sparkle/bin/generate_keys --account com.grinich.zooom -x /protected/path/sparkle-key.txt`. Do not generate a replacement for an existing update trust chain. `test-update-signatures.py` uses published RFC 8032 test keys only; those **must never be used for releases**.
-5. Complete the signer/onboarding and Zoom distribution work in [Distribution](Distribution.md). Commit the final source and `Package.resolved` to main. Increase both `CFBundleShortVersionString` (x.y.z) and integer `CFBundleVersion` for every release. Tag the commit, e.g. `v0.1.2`. A tag push or manual dispatch with `publish=false` prepares a GitHub draft and leaves the public release/feed unchanged. SDK-integrated Actions artifact uploads are disabled on that draft path. Only explicit `publish=true` for a fresh release publishes the complete release and allows its Actions artifact upload. The workflow rejects an existing draft or published release rather than overwriting it. [GitHub artifact access](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
+5. Complete the signer/onboarding and Zoom distribution work in [Distribution](Distribution.md). Commit the final source and `Package.resolved` to main. Increase both `CFBundleShortVersionString` (x.y.z) and integer `CFBundleVersion` for every release. Tag the commit with its new version; the current immutable tag is `v0.1.3`. A tag push or manual dispatch with `publish=false` prepares a GitHub draft and leaves the public release/feed unchanged. SDK-integrated Actions artifact uploads are disabled on that draft path. Only explicit `publish=true` for a fresh release publishes the complete release and allows its Actions artifact upload. The workflow rejects an existing draft or published release rather than overwriting it. [GitHub artifact access](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
 
 Once Zoom approval covers public distribution and the draft's exact artifacts have passed acceptance, update the draft's review-only release notes and explicitly promote those verified bytes:
 
 ```sh
-gh release edit v0.1.2 --repo grinich/yap --draft=false --latest
+gh release edit v0.1.3 --repo grinich/yap --draft=false --latest
 ```
 
 That operation makes the installers and latest update feed public. Do not run it while approval is pending, delete a verified draft just to rerun the workflow, or repack its signed artifacts during promotion.
@@ -181,7 +221,7 @@ The **Apple Signing** workflow independently checks the saved GitHub credentials
 
 Personal installs made before the update feed was configured need a one-time normal install of the first notarized updater-enabled release. Installations on `com.grinich.zooom`, `com.grinich.woosh` or `app.whoosh.personal` need the explicit identity migration described in [Bundle Identity](Bundle-Identity.md). Subsequent `com.grinich.yap` updates retain the new identity; Sparkle does not change application identity.
 
-Before calling the updater live, install version N from the DMG, publish N+1, and verify manual update, automatic discovery, on-quit installation, relaunch, retained accounts/preferences, call-in-progress veto, offline errors, and denied folder-write access. The superseded 0.1.1 app/DMG passed signing and notarization but failed native updater startup. The corrected 0.1.2 package passed its artifact/signature checks and native updater startup. Its real update check receives HTTP 404 while the draft feed remains unpublished; N → N+1 update installation and broader native acceptance remain pending. Public publication and an actual N → N+1 installation have **not yet run**. Signing success does not establish end-to-end update delivery.
+Before calling the updater live, install version N from the DMG, publish N+1, and verify manual update, automatic discovery, on-quit installation, relaunch, retained accounts/preferences, call-in-progress veto, offline errors, and denied folder-write access. The superseded 0.1.1 app/DMG passed signing and notarization but failed native updater startup. The corrected 0.1.3 package passed artifact/signature checks and native updater startup. The unpublished draft feed cannot deliver a public update; the preceding 0.1.2 check received HTTP 404 for that reason. Current managed-native results are recorded above; N → N+1 update installation and broader acceptance remain unverified. Public publication and an actual N → N+1 installation have **not yet run**. Signing success does not establish end-to-end update delivery.
 
 Local production packaging uses `Scripts/package-release.sh` with the same variables as CI plus `YAP_ZOOM_SDK_PATH`, `YAP_SIGNING_IDENTITY`, `YAP_NOTARY_PROFILE`, optional `YAP_NOTARY_KEYCHAIN`, and `YAP_UPDATE_PRIVATE_KEY_FILE`. It fails if notarization or update signing is unavailable. It does not publish or launch the app. Personal debug builds remain available through `Scripts/build-app.sh` without release credentials. Set `YAP_OUTPUT_DIR` to stage a separate build while someone is running `outputs/Yap.app`; the builder refuses to replace a running output bundle.
 

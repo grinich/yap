@@ -76,15 +76,34 @@ public final class CredentialVault: @unchecked Sendable {
     }
 
     public func delete(_ key: CredentialKey) throws {
+        try delete([key])
+    }
+
+    /// Remove related active records in one durable write before cleaning up
+    /// their explicitly named legacy items. Cleanup failures remain visible.
+    public func delete(_ keys: [CredentialKey]) throws {
+        guard !keys.isEmpty else { return }
         try lock.withLock {
             var snapshot = try current()
-            snapshot.records.removeValue(forKey: key.identifier)
-            snapshot.migrated.insert(key.identifier)
+            var cleanupKeys: [CredentialKey] = []
+            var seen: Set<CredentialKey> = []
+            for key in keys {
+                snapshot.records.removeValue(forKey: key.identifier)
+                snapshot.migrated.insert(key.identifier)
+                if seen.insert(key).inserted { cleanupKeys.append(key) }
+                if let previous = Self.legacyKey(for: key), seen.insert(previous).inserted {
+                    cleanupKeys.append(previous)
+                }
+            }
             try commit(snapshot)
-            // Also remove the legacy token/configuration if it still exists.
-            // A failure is reported, while the durable tombstone stays in place.
-            try storage.delete(key)
-            if let previous = Self.legacyKey(for: key) { try storage.delete(previous) }
+            // A denied old item must not prevent removal of the other scoped
+            // items. Durable tombstones prevent any failed cleanup reviving them.
+            var firstError: (any Error)?
+            for key in cleanupKeys {
+                do { try storage.delete(key) }
+                catch { if firstError == nil { firstError = error } }
+            }
+            if let firstError { throw firstError }
         }
     }
 

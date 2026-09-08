@@ -4,7 +4,17 @@
 
 Project **Yap for Mac**, ID `whoosh-personal`, number `696553061357`, owned by `mgrinich@gmail.com`. The released macOS app is Yap 0.1.4 (build 5), bundle `com.grinich.yap`. Its desktop OAuth client is `696553061357-u7j8v96hlg5qms17kc9rea8cjtb8ksoh.apps.googleusercontent.com`.
 
-The Cloud Console Verification Center reports that the project is in **Testing** and therefore has no verification request in progress. Branding already has the Yap name, logo, support email and developer contact. Homepage, privacy-policy URL, Terms URL and authorized domains are blank. Google review has **not** been submitted.
+The project began this check in Testing with empty website fields. It is now **In production**, still **unverified** and subject to Google's warning and 100-user cap. No new OAuth scopes or credentials were added.
+
+Completed:
+
+- Published the existing allowlisted homepage, guide, Privacy and effective Terms using [GitHub Pages](https://grinich.github.io/yap/), without a custom domain or changes to grinich.app. [PR #18](https://github.com/grinich/yap/pull/18), [successful deployment](https://github.com/grinich/yap/actions/runs/34201825375).
+- Saved homepage `https://grinich.github.io/yap/`, privacy `/yap/privacy/`, Terms `/yap/terms/`, and authorized domain `grinich.github.io` in Google branding. All four public pages return HTTP 200, with original full-resolution PNGs and no private app files.
+- Search Console confirmed **Ownership verified**, using an HTML tag, for the exact URL-prefix property `https://grinich.github.io/yap/` under the same Google account as the Cloud project. The public tag is retained in `Resources/GoogleSiteVerification.txt` and the generated homepage.
+- Started automated brand verification. Google returned the single finding that the homepage was not registered to the developer, despite the exact-property verification above.
+- Opened **I believe the issues found are incorrect → Request additional review**. The resulting combined submission form still requires the sensitive-scope justification and an unlisted YouTube demo URL. The justification is prepared below and staged in the live form, but Save and final Confirm remain unavailable without the video.
+
+**The final manual-review/sensitive-scope request has not been submitted.** Search Console ownership is not itself OAuth brand approval. A dedicated private `Yap Review Demo` calendar was created with no real meeting content; creating a sample event for the video is awaiting the user's explicit approval. No event, demonstration video or YouTube upload has been created yet.
 
 The live Data Access page matches the two scopes in `GoogleOAuthConfiguration.scopes`:
 
@@ -40,11 +50,15 @@ Use a dedicated demo calendar containing only synthetic meetings; do not upload 
 
 ## Remaining submission steps
 
-- Publish the homepage, Privacy and Terms on a verifiable GitHub-hosted site. Verify site ownership in Search Console using the same Google account as the Cloud project. A normal github.com repository URL cannot carry an ownership-verification file; GitHub Pages is the candidate hosting route. Google acceptance of that authorized domain remains to be tested.
-- Save the matching branding URLs and authorized domain, then complete brand verification.
-- Move the project from Testing to the appropriate production audience as required by the Console. This alone does not remove the unverified warning or constitute approval.
-- Submit the existing sensitive event scope with the justification above, the real demo video and the user guide. Publish approved branding when Google marks it ready.
-- Record the submitted status and monitor the developer/support contact for Google follow-up. Do not report approval before Google's live status confirms it.
+1. Create the explicitly approved synthetic demo event and record the actual Google authorization and Yap Calendar flow, then inspect the recording before sharing it. The video must show the real client/consent screens and functionality; do not substitute rendered mockups.
+2. Upload the reviewed demo to YouTube as Unlisted and add its URL plus the prepared justification to Data Access. No private work events, passcodes, tokens or unrelated account content should be in it.
+3. Complete the ownership appeal with the exact Search Console property and HTML-tag verification evidence. The OAuth checker may require additional domain-ownership proof; do not claim that the GitHub Pages domain is approved yet.
+4. Submit the completed form and record Google's acknowledgement. Publish approved branding if Google requires that step, and finish any separate Calendar-scope review steps it then exposes.
+5. Respond to review follow-up through the configured developer/support contact. Do not report approval until the live status confirms it.
+
+### Ownership appeal text (prepared)
+
+The exact submitted homepage, https://grinich.github.io/yap/, was verified in Google Search Console on September 8, 2026 using an HTML meta tag by mgrinich@gmail.com, the same account that owns Cloud project whoosh-personal. Search Console displayed Ownership verified for this URL-prefix property. The verification meta tag remains in the public homepage. The website is served from the grinich/yap repository through GitHub Pages, with matching publicly accessible Privacy and Terms pages. Please review this ownership evidence; we can provide additional proof if the OAuth verification system requires it.
 
 ## Official references
 

@@ -41,7 +41,7 @@ When configured, Sparkle contacts the release host to check for and download upd
 
 Camera, microphone, screen sharing and notification access are controlled by macOS. Meeting access and recording remain subject to Zoom permissions and consent. You can stop sharing, leave a call, disconnect an account or change macOS permissions. Material changes to these data practices will be reflected in this policy; any additional consent required for a new use will be requested before that use.
 
-Implementation details: [credential storage](Documentation/Credential-Storage.md), [Calendar](Documentation/GoogleCalendar.md), [recordings](Documentation/Recordings.md), and [authorization service](Services/zoom-auth/src/index.ts). The [Terms draft](TERMS.md) describes the free preview's proposed service terms.
+Implementation details: [credential storage](Documentation/Credential-Storage.md), [Calendar](Documentation/GoogleCalendar.md), [recordings](Documentation/Recordings.md), and [authorization service](Services/zoom-auth/src/index.ts). The [Terms](TERMS.md) describe the free preview's service terms.
 
 ## Moving from a previous app version
 

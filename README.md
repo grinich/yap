@@ -19,7 +19,7 @@ Yap brings your next meeting and your past conversations into one small Mac app.
 
 Built with **SwiftUI, AppKit, and the Zoom Meeting SDK**. Requires **macOS 26 or newer and Apple silicon**.
 
-> **Preview — no public download yet.** Yap 0.1.3 has passed signed-package verification, security scanning and scoped native managed-account testing. It is now submitted to Zoom and in functional review; approval remains pending. Explore the source and sample interface below. Yap is independent, not affiliated with or endorsed by Zoom. [Release status](Documentation/Distribution.md).
+> **Early preview.** [Download Yap 0.1.4](https://github.com/grinich/yap/releases/tag/v0.1.4). Zoom Marketplace review is still pending, so Zoom may restrict sign-in and external meetings. Google Calendar sign-in is currently limited to approved test users. Yap is independent, not affiliated with or endorsed by Zoom. [Availability details](Documentation/Distribution.md).
 
 ## A meeting window that feels like a Mac app
 
@@ -63,11 +63,11 @@ Playback shortcuts stay out of the way while you type in a search field.
 
 ## Try Yap
 
-**Yap 0.1.3 (build 4)** targets **Apple silicon and macOS 26 or newer**. Its signed and notarized packages, exact-source security scan, managed sign-in, recordings and solo hosted meeting have passed their recorded checks. The installer remains an unpublished draft while the submitted app is in Zoom functional review. Broader acceptance and Zoom approval remain pending. Until public downloads open, explore the source and SDK-free sample interface below. [Current candidate and remaining checks](Documentation/Distribution.md).
+**Yap 0.1.4 (build 5)** requires **Apple silicon and macOS 26 or newer**. This release removes unused Intel code and developer metadata, simplifies Google sign-in, and improves the return to Yap after Zoom authorization.
 
-When published, download **Yap.dmg**, open it, drag **Yap.app** to **Applications**, then launch Yap from Applications. **Yap-macOS.zip** is the alternative app archive. Both have matching `.sha256` files. See the [0.1.3 candidate status and planned artifacts](Documentation/Releases.md#first-release-v013) and [release notes](Documentation/ReleaseNotes/v0.1.3.md).
+Download [**Yap.dmg**](https://github.com/grinich/yap/releases/download/v0.1.4/Yap.dmg), open it, drag **Yap.app** to **Applications**, then launch Yap. [**Yap-macOS.zip**](https://github.com/grinich/yap/releases/download/v0.1.4/Yap-macOS.zip) is the alternative archive. The [release](https://github.com/grinich/yap/releases/tag/v0.1.4) includes matching SHA-256 files and the signed update feed. [Release notes](Documentation/ReleaseNotes/v0.1.4.md).
 
-Connect your Zoom account in Settings when access is available to your account. Google Calendar is optional. Users of an earlier app should quit it first and review the [account and preference migration](Documentation/Bundle-Identity.md); ordinary macOS permissions may need approval again.
+Connect Zoom in Settings when access is available to your account. Google Calendar is optional; the packaged app includes its Google client, so approved test users can choose **Sign in with Google** without importing a credentials file. Provider approval is still pending; publishing the installer does not unlock access for every account.
 
 To explore the interface with sample data, install **Xcode 26.6 / Swift 6.3.3 or newer**, then:
 

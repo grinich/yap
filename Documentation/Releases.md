@@ -1,5 +1,13 @@
 # GitHub releases and automatic updates
 
+## Public early preview: v0.1.4
+
+**Yap 0.1.4 (build 5)** is the new public release, explicitly authorized for publication before Zoom review finishes. It includes the arm64 runtime reduction, bundled Google desktop client, polished OAuth completion and foreground handoff, and meeting-link registration fixes. [Downloads](https://github.com/grinich/yap/releases/tag/v0.1.4) · [Release notes and account limitations](ReleaseNotes/v0.1.4.md). The release pipeline runs actual-SDK tests, signs and notarizes new app/DMG bytes, and generates the signed update feed. Google remains Testing and Zoom remains in Functional review; neither approval is implied by publication.
+
+The following 0.1.3 evidence is retained for the unchanged installer submitted to Zoom. It does not validate the new 0.1.4 artifact bytes.
+
+## Historical Zoom review candidate
+
 Yap's source and release destination are `grinich/yap`. The current candidate for the first public release is **0.1.3, build 4**, tag `v0.1.3`, source `b920870e4a4a1f53b31d6f73c818c5aa2f75e5cf`. It corrects the managed sign-in Keychain transition discovered in 0.1.2 and retains the Sparkle startup fix. Actual-SDK packaging, independent artifact verification, exact-tag CodeQL and scoped managed-native acceptance passed. The installer remains an unpublished draft while the submitted app is in Zoom functional review; approval and broader acceptance remain pending. Earlier 0.1.2, 0.1.1 and 0.1.0 tags/assets remain immutable, superseded evidence.
 
 The final native PNG gallery, agenda and recording screenshots are published in the README through [PR #9](https://github.com/grinich/yap/pull/9); their [capture provenance](Images/README.md) distinguishes sample content from live private meetings. Google consent is **Yap**; its desktop client and project display names are **Yap for Mac**. The current Zoom development and production identity is **Yap**. Google remains **Testing**, without public verification approval or a new public rollout decision. [Provider branding checkpoint](Distribution.md#provider-branding-checkpoint).
@@ -207,13 +215,13 @@ The Developer ID must belong to team `VSVHNQP588`, matching the project's existi
 4. The existing production Sparkle key remains stored under the legacy Keychain account `com.grinich.zooom`; the bundle rename does not create a new update-signing key. When recovering it, export that exact account using `.build/artifacts/sparkle/Sparkle/bin/generate_keys --account com.grinich.zooom -x /protected/path/sparkle-key.txt`. Do not generate a replacement for an existing update trust chain. `test-update-signatures.py` uses published RFC 8032 test keys only; those **must never be used for releases**.
 5. Complete the signer/onboarding and Zoom distribution work in [Distribution](Distribution.md). Commit the final source and `Package.resolved` to main. Increase both `CFBundleShortVersionString` (x.y.z) and integer `CFBundleVersion` for every release. Tag the commit with its new version; the current immutable tag is `v0.1.3`. A tag push or manual dispatch with `publish=false` prepares a GitHub draft and leaves the public release/feed unchanged. SDK-integrated Actions artifact uploads are disabled on that draft path. Only explicit `publish=true` for a fresh release publishes the complete release and allows its Actions artifact upload. The workflow rejects an existing draft or published release rather than overwriting it. [GitHub artifact access](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
 
-Once Zoom approval covers public distribution and the draft's exact artifacts have passed acceptance, update the draft's review-only release notes and explicitly promote those verified bytes:
+For a separately authorized release whose exact artifacts have passed acceptance, update its release notes and explicitly promote those verified bytes:
 
 ```sh
-gh release edit v0.1.3 --repo grinich/yap --draft=false --latest
+gh release edit v0.1.4 --repo grinich/yap --draft=false --latest
 ```
 
-That operation makes the installers and latest update feed public. Do not run it while approval is pending, delete a verified draft just to rerun the workflow, or repack its signed artifacts during promotion.
+That operation makes the installers and latest update feed public. Do not delete a verified draft just to rerun the workflow or repack its signed artifacts during promotion.
 
 ## First-release acceptance
 

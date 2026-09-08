@@ -3,6 +3,7 @@ import SwiftUI
 import Observation
 import UniformTypeIdentifiers
 import YapMeetings
+import YapSystem
 
 @MainActor @Observable
 public final class ZoomConnectionModel {
@@ -26,11 +27,14 @@ public final class ZoomConnectionModel {
     @ObservationIgnored private var operationID = UUID()
     @ObservationIgnored private var statusRequestID = UUID()
     @ObservationIgnored private let openURL: @MainActor @Sendable (URL) -> Void
+    @ObservationIgnored private let onSignInCompleted: @MainActor () -> Void
 
     public init(client: ZoomAccountClient = ZoomAccountClient(),
-                openURL: @escaping @MainActor @Sendable (URL) -> Void = { NSWorkspace.shared.open($0) }) {
+                openURL: @escaping @MainActor @Sendable (URL) -> Void = { NSWorkspace.shared.open($0) },
+                onSignInCompleted: @escaping @MainActor () -> Void = { YapSystemActions.request(.openYap) }) {
         self.client = client
         self.openURL = openURL
+        self.onSignInCompleted = onSignInCompleted
     }
 
     public func loadStatus() async {
@@ -79,8 +83,10 @@ public final class ZoomConnectionModel {
         defer { if operationID == currentOperation { isConnecting = false } }
         do {
             try await client.connect(openURL: openURL)
-            guard operationID == currentOperation else { return }
+            guard operationID == currentOperation, !Task.isCancelled else { return }
             await refreshStatus(for: currentOperation)
+            guard operationID == currentOperation, !Task.isCancelled else { return }
+            onSignInCompleted()
         } catch is CancellationError {
         } catch {
             guard operationID == currentOperation, !Task.isCancelled else { return }

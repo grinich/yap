@@ -168,6 +168,10 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
             isObservingActions = true
         }
         incomingURLs.configure { [weak self, weak model] url in
+            if YapDeepLink.isOpenAppURL(url) {
+                self?.presentMainWindow()
+                return
+            }
             model?.receiveMeetingLink(url)
             self?.presentMainWindow()
         }

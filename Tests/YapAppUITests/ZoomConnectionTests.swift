@@ -30,7 +30,9 @@ struct ZoomConnectionTests {
     @Test func cancelSignInReturnsToDisconnectedStateWithoutError() async throws {
         let store = ZoomUIFixtureStore(configuration: configuration)
         let browser = ZoomBrowserProbe()
-        let model = ZoomConnectionModel(client: ZoomAccountClient(store: store), openURL: { _ in browser.opened() })
+        var completed = false
+        let model = ZoomConnectionModel(client: ZoomAccountClient(store: store), openURL: { _ in browser.opened() },
+                                        onSignInCompleted: { completed = true })
         await model.loadStatus()
         let signIn = Task { await model.connect() }
         let deadline = Task { try await Task.sleep(for: .seconds(5)); signIn.cancel(); browser.opened() }
@@ -44,6 +46,34 @@ struct ZoomConnectionTests {
         #expect(!model.hasSavedConnection)
         #expect(model.isConfigured)
         #expect(model.error == nil)
+        #expect(!completed)
+    }
+
+    @Test(arguments: [true, false])
+    func returnsToAppOnlyAfterSuccessfulTokenExchange(succeeds: Bool) async throws {
+        let store = ZoomUIFixtureStore(configuration: configuration)
+        let client = ZoomAccountClient(store: store, transport: ZoomHTTPTransport { request in
+            let body = request.url?.path == "/v2/users/me/zak" ? #"{"token":"fixture-zak"}"#
+                : #"{"access_token":"fixture-access","refresh_token":"fixture-refresh","token_type":"bearer","expires_in":3600,"scope":"user:read:zak"}"#
+            let data = Data(body.utf8)
+            return (data, HTTPURLResponse(url: request.url!, statusCode: succeeds ? 200 : 400,
+                                         httpVersion: nil, headerFields: nil)!)
+        })
+        var completed = 0
+        let model = ZoomConnectionModel(client: client, openURL: { url in
+            Task {
+                let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                guard let redirect = query.first(where: { $0.name == "redirect_uri" })?.value,
+                      let state = query.first(where: { $0.name == "state" })?.value,
+                      var callback = URLComponents(string: redirect) else { return }
+                callback.queryItems = [.init(name: "code", value: "fixture-code"), .init(name: "state", value: state)]
+                if let callbackURL = callback.url { _ = try? await URLSession.shared.data(from: callbackURL) }
+            }
+        }, onSignInCompleted: { completed += 1 })
+        await model.connect()
+        #expect(completed == (succeeds ? 1 : 0))
+        #expect(model.hasSavedConnection == succeeds)
+        #expect((model.error == nil) == succeeds)
     }
 
     @Test func failedImportPreservesConnectionAndSuccessfulImportClearsOldError() async throws {

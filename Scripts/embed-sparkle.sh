@@ -20,6 +20,7 @@ licenses="$app/Contents/Resources/ThirdPartyLicenses"
 mkdir -p "$licenses"
 ditto "$source_license" "$licenses/Sparkle.txt"
 cmp "$source_license" "$licenses/Sparkle.txt"
+python3 "$root/Scripts/trim-runtime.py" "$framework"
 # Follow Sparkle's manual distribution signing order. Keep versioned symlinks.
 for target in XPCServices/Installer.xpc XPCServices/Downloader.xpc Autoupdate Updater.app; do
     codesign --force --sign "$YAP_SIGNING_IDENTITY" --options runtime --timestamp \

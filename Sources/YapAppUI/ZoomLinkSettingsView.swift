@@ -7,6 +7,7 @@ struct ZoomLinkSettingsView: View {
     @State private var status: ZoomLinkHandlerStatus
     @State private var isChanging = false
     @State private var errorMessage: String?
+    @State private var requestedChoice: ZoomLinkHandlerChoice?
 
     init() {
         let service = ZoomLinkHandlerService()
@@ -64,11 +65,15 @@ struct ZoomLinkSettingsView: View {
         }
     }
 
-    private func refresh() { status = service.status() }
+    private func refresh() {
+        status = service.status()
+        if let requestedChoice, status.isApplied(requestedChoice) { errorMessage = nil }
+    }
 
     private func select(_ choice: ZoomLinkHandlerChoice) {
         guard !isChanging else { return }
         isChanging = true
+        requestedChoice = choice
         errorMessage = nil
         Task {
             defer { refresh(); isChanging = false }

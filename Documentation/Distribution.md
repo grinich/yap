@@ -10,6 +10,10 @@ The final native PNG gallery, agenda and recording screenshots are published in 
 
 The managed authorization service is `https://meeting-auth.mgrinich.workers.dev`; public Home, Guide, Privacy, Terms and Support use GitHub. [Service evidence](SecurityEvidence.md#production-service-acceptance). Google Calendar remains optional and uses manual desktop-client JSON setup; no public Google rollout is asserted. The immutable 0.1.2, 0.1.1 and 0.1.0 candidates are superseded. Their [historical evidence](Releases.md#superseded-candidate-v012) is retained without reusing versions or replacing assets.
 
+## Runtime packaging for subsequent builds
+
+Packaged apps explicitly target `arm64`. Before signing, the build strips other CPU slices from the copied Zoom and Sparkle runtimes (including nested helpers and the Zoom audio driver), and removes framework `Headers`, `PrivateHeaders`, and `Modules`. It preserves runtime resources, helper layout, versioned symlinks, and complete third-party license notices. The original SDK and SwiftPM artifacts remain untouched. The one explicit exclusion is SDK 7.1.5’s Intel-only MKL library, referenced by the removed Intel libcmlFramework slice; the retained arm64 slice uses CoreML. A missing arm64 implementation elsewhere fails the build, and all retained runtime dependency paths must resolve. Nested code is then re-signed and verified using the existing pipeline. The already notarized 0.1.3 review artifacts are unchanged; subsequent distributions need fresh signing, notarization, and checksums.
+
 ## Provider branding checkpoint
 
 The release operator verified the correct Google Auth Platform project by matching the candidate desktop-client filename to the exact OAuth Clients row. Project number **696553061357** retains the immutable project ID `whoosh-personal`. Its display name is now **Yap for Mac**, saved and confirmed after reload; Google's four-character minimum prevented using **Yap** as the project display name.

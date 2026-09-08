@@ -39,10 +39,16 @@ class ReleaseConfigurationTests(unittest.TestCase):
     def test_release_configuration_requires_signed_feed_and_private_profile(self):
         info = configure({"CFBundleIdentifier": "com.grinich.yap"}, self.env)
         self.assertTrue(info["SURequireSignedFeed"])
+        self.assertTrue(info["SUVerifyUpdateBeforeExtraction"])
         self.assertTrue(info["SUEnableAutomaticChecks"])
         self.assertTrue(info["SUAutomaticallyUpdate"])
         self.assertFalse(info["SUSendProfileInfo"])
         self.assertEqual(info["CFBundleIdentifier"], "com.grinich.yap")
+
+    def test_signed_feed_overrides_a_disabled_extraction_verification_setting(self):
+        info = configure({"SUVerifyUpdateBeforeExtraction": False}, self.env)
+        self.assertTrue(info["SURequireSignedFeed"])
+        self.assertTrue(info["SUVerifyUpdateBeforeExtraction"])
 
     def test_unsigned_misdirected_and_mismatched_appcasts_fail(self):
         with tempfile.TemporaryDirectory() as directory:

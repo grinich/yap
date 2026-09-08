@@ -26,6 +26,7 @@ def configure(info, env):
         raise ValueError("YAP_UPDATE_PUBLIC_KEY must contain a base64 Ed25519 public key (32 bytes).")
     return {**info, "SUFeedURL": feed, "SUPublicEDKey": key,
             "SUEnableAutomaticChecks": True, "SUAutomaticallyUpdate": True, "SURequireSignedFeed": True,
+            "SUVerifyUpdateBeforeExtraction": True,
             "SUScheduledCheckInterval": 21600, "SUSendProfileInfo": False}
 
 

@@ -4,6 +4,7 @@ import base64
 import os
 from pathlib import Path
 import plistlib
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,7 @@ import xml.etree.ElementTree as ET
 root = Path(__file__).resolve().parent.parent
 sparkle = root / ".build/artifacts/sparkle/Sparkle"
 tools = sparkle / "bin"
+configure = runpy.run_path(str(root / "Scripts/configure-updates.py"))["configure"]
 seed = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
 public = base64.b64encode(bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")).decode()
 with tempfile.TemporaryDirectory(prefix="yap-update-test-") as temporary:
@@ -26,14 +28,32 @@ with tempfile.TemporaryDirectory(prefix="yap-update-test-") as temporary:
     shutil.copyfile("/usr/bin/true", app / "Contents/MacOS/Yap")
     framework = sparkle / "Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
     subprocess.run(["ditto", str(framework), str(app / "Contents/Frameworks/Sparkle.framework")], check=True)
-    info = {"CFBundleName": "Yap", "CFBundleIdentifier": "com.grinich.yap.signature-fixture",
+    info = configure({"CFBundleName": "Yap", "CFBundleIdentifier": "com.grinich.yap.signature-fixture",
             "CFBundleExecutable": "Yap", "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": "0.1.1", "CFBundleVersion": "2", "LSMinimumSystemVersion": "26.0",
-            "SUFeedURL": "https://github.com/example/releases/releases/latest/download/appcast.xml",
-            "SUPublicEDKey": public, "SURequireSignedFeed": True}
+            "SUDefaultsDomain": "com.grinich.yap.updater-fixture." + scratch.name},
+            {"YAP_RELEASE": "1", "YAP_UPDATE_FEED_URL": "https://github.com/example/releases/releases/latest/download/appcast.xml",
+             "YAP_UPDATE_PUBLIC_KEY": public})
     plist = app / "Contents/Info.plist"
+    validator = scratch / "validate-updater-startup"
+    subprocess.run(["xcrun", "clang", "-fobjc-arc", "-framework", "Foundation", "-framework", "Sparkle",
+                    "-F", str(framework.parent), "-Wl,-rpath," + str(framework.parent),
+                    str(root / "Scripts/validate-updater-startup.m"), "-o", str(validator)], check=True)
+    # Crypto verification alone does not call Sparkle's updater startup checks.
+    # Reproduce v0.1.1's startup error, then validate the actual release configurator.
+    for verification in [None, False]:
+        invalid_info = {**info}
+        if verification is None:
+            invalid_info.pop("SUVerifyUpdateBeforeExtraction")
+        else:
+            invalid_info["SUVerifyUpdateBeforeExtraction"] = verification
+        plist.write_bytes(plistlib.dumps(invalid_info))
+        subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
+        rejected = subprocess.run([str(validator), str(app)], capture_output=True, text=True, timeout=30)
+        assert rejected.returncode == 1 and "SUVerifyUpdateBeforeExtraction" in rejected.stderr, rejected.stderr
     plist.write_bytes(plistlib.dumps(info))
     subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
+    subprocess.run([str(validator), str(app)], check=True, timeout=30)
     feed_dir = scratch / "feed"
     feed_dir.mkdir()
     archive = feed_dir / "Yap-macOS.zip"
@@ -52,4 +72,5 @@ with tempfile.TemporaryDirectory(prefix="yap-update-test-") as temporary:
     assert subprocess.run(sign + [str(archive), signature], capture_output=True).returncode != 0, "Tampered archive was accepted"
     feed.write_bytes(feed.read_bytes().replace(b"0.1.1", b"0.1.9"))
     assert subprocess.run(sign + [str(feed)], capture_output=True).returncode != 0, "Tampered feed was accepted"
-print("PASS: signed feed and archive verify; tampered feed and archive are rejected.")
+print("PASS: updater startup rejects missing/disabled extraction verification and accepts release settings; "
+      "signed feed and archive verify; tampered feed and archive are rejected.")

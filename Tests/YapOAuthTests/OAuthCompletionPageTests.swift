@@ -1,12 +1,12 @@
 import Foundation
 import Testing
-@testable import YapMeetings
+import YapOAuth
 
-@Suite("Zoom sign-in completion page")
-struct ZoomOAuthCompletionPageTests {
-    @Test(arguments: ZoomOAuthCompletionPage.Outcome.allCases)
-    func pageHasOnlyLocalContentAndAnExplicitAppLink(_ outcome: ZoomOAuthCompletionPage.Outcome) {
-        let page = ZoomOAuthCompletionPage(outcome: outcome)
+@Suite("Sign-in completion page")
+struct OAuthCompletionPageTests {
+    @Test(arguments: OAuthCompletionPage.Provider.allCases, OAuthCompletionPage.Outcome.allCases)
+    func pageHasOnlyLocalContentAndAnExplicitAppLink(_ provider: OAuthCompletionPage.Provider, _ outcome: OAuthCompletionPage.Outcome) {
+        let page = OAuthCompletionPage(provider: provider, outcome: outcome)
         #expect(page.body.contains("href=\"yap://open\""))
         #expect(page.body.contains("history.replaceState(null, \"\", location.pathname)"))
         #expect(!page.body.contains("http://"))
@@ -18,16 +18,17 @@ struct ZoomOAuthCompletionPageTests {
         #expect(page.body.contains("prefers-reduced-motion"))
     }
 
-    @Test func callbackDoesNotClaimTokenExchangeAlreadySucceeded() {
-        let page = ZoomOAuthCompletionPage(outcome: .received)
+    @Test(arguments: OAuthCompletionPage.Provider.allCases)
+    func callbackDoesNotClaimTokenExchangeAlreadySucceeded(_ provider: OAuthCompletionPage.Provider) {
+        let page = OAuthCompletionPage(provider: provider, outcome: .received)
         #expect(page.body.contains("as soon as your connection is ready"))
-        #expect(!page.body.contains("Zoom connected"))
+        #expect(!page.body.contains("Calendar connected"))
         #expect(!page.body.contains("Sign-in complete"))
     }
 
     @Test func responseNoncesAreUniqueAndMatchStyleAndScript() throws {
-        let first = ZoomOAuthCompletionPage(outcome: .received)
-        let second = ZoomOAuthCompletionPage(outcome: .received)
+        let first = OAuthCompletionPage(provider: .googleCalendar, outcome: .received)
+        let second = OAuthCompletionPage(provider: .googleCalendar, outcome: .received)
         #expect(first.contentSecurityPolicy != second.contentSecurityPolicy)
         let nonce = try #require(first.contentSecurityPolicy.components(separatedBy: "'nonce-").dropFirst().first?.components(separatedBy: "'").first)
         #expect(first.body.contains("<style nonce=\"\(nonce)\">"))

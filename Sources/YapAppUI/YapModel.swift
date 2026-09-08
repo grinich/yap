@@ -317,6 +317,7 @@ public final class YapModel {
             guard generation == current else { return }
             calendars = result
             isCalendarConnected = true
+            YapSystemActions.request(.openYap)
             selectInitialCalendars()
             await refresh(reloadCalendars: false)
         } catch { if generation == current { self.error = error.localizedDescription } }

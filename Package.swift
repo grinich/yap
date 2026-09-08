@@ -6,7 +6,7 @@ let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 let zoomSDKPath = ProcessInfo.processInfo.environment["YAP_ZOOM_SDK_PATH"]
     ?? packageDirectory.appendingPathComponent("Vendor/Zoom/zoom-sdk-macos-7.1.5.84750/ZoomSDK").path
 let hasZoomSDK = FileManager.default.fileExists(atPath: zoomSDKPath + "/ZoomSDK.framework/Headers/ZoomSDK.h")
-let meetingDependencies: [Target.Dependency] = hasZoomSDK ? ["YapCredentials", "YapZoomBridge"] : ["YapCredentials"]
+let meetingDependencies: [Target.Dependency] = hasZoomSDK ? ["YapCredentials", "YapOAuth", "YapZoomBridge"] : ["YapCredentials", "YapOAuth"]
 let zoomTargets: [Target] = hasZoomSDK ? [
     .target(name: "YapZoomBridge", publicHeadersPath: "include",
         cSettings: [.unsafeFlags(["-fobjc-arc", "-F", zoomSDKPath])],
@@ -23,13 +23,15 @@ let package = Package(
     dependencies: [.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")],
     targets: [
         .target(name: "YapCredentials"),
-        .target(name: "YapCalendar", dependencies: ["YapCredentials"]),
+        .target(name: "YapOAuth"),
+        .target(name: "YapCalendar", dependencies: ["YapCredentials", "YapOAuth"]),
         .target(name: "YapMeetings", dependencies: meetingDependencies),
         .target(name: "YapSystem"),
         .target(name: "YapUpdates", dependencies: [.product(name: "Sparkle", package: "Sparkle")]),
         .target(name: "YapAppUI", dependencies: ["YapCalendar", "YapMeetings", "YapSystem", "YapCredentials"]),
         .executableTarget(name: "Yap", dependencies: ["YapAppUI", "YapSystem", "YapUpdates"],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
+        .testTarget(name: "YapOAuthTests", dependencies: ["YapOAuth"]),
         .testTarget(name: "YapCredentialsTests", dependencies: ["YapCredentials"]),
         .testTarget(name: "YapCalendarTests", dependencies: ["YapCalendar"]),
         .testTarget(name: "YapMeetingsTests", dependencies: ["YapMeetings"]),

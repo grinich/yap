@@ -1,12 +1,13 @@
 import Foundation
 
 /// Self-contained loopback response. Never interpolate OAuth request parameters.
-struct ZoomOAuthCompletionPage {
-    enum Outcome: CaseIterable { case received, denied, invalid }
-    let body: String
-    let contentSecurityPolicy: String
+public struct OAuthCompletionPage: Sendable {
+    public enum Provider: String, CaseIterable, Sendable { case zoom = "Zoom", googleCalendar = "Google Calendar" }
+    public enum Outcome: CaseIterable, Sendable { case received, denied, invalid }
+    public let body: String
+    public let contentSecurityPolicy: String
 
-    init(outcome: Outcome, iconPNG: Data? = nil) {
+    public init(provider: Provider, outcome: Outcome, iconPNG: Data? = nil) {
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let title: String
         let detail: String
@@ -14,11 +15,11 @@ struct ZoomOAuthCompletionPage {
         switch outcome {
         case .received:
             title = "Ready to yap."
-            detail = "Your Zoom sign-in is received. Yap will come forward as soon as your connection is ready."
+            detail = "Your \(provider.rawValue) sign-in is received. Yap will come forward as soon as your connection is ready."
             status = "Sign-in received"
         case .denied:
             title = "Maybe next time."
-            detail = "Zoom access wasn’t granted. Head back to Yap whenever you’re ready to try again."
+            detail = "\(provider.rawValue) access wasn’t granted. Head back to Yap whenever you’re ready to try again."
             status = "Sign-in cancelled"
         case .invalid:
             title = "Let’s try that again."

@@ -139,6 +139,10 @@ struct GoogleOAuthTests {
         #expect(result.verifier.count == 43)
         #expect(await observed.waitForStatus() == 200)
         #expect(await !observed.callbackBody.contains("local-test-code"))
+        #expect(await observed.callbackBody.contains("Your Google Calendar sign-in is received."))
+        #expect(await observed.callbackBody.contains("href=\"yap://open\""))
+        #expect(await observed.callbackBody.contains("history.replaceState"))
+        #expect(await observed.callbackBody.contains("prefers-color-scheme:dark"))
         #expect(await observed.cacheControl == "no-store")
         #expect(await observed.referrerPolicy == "no-referrer")
         let items = await observed.authorizationQuery

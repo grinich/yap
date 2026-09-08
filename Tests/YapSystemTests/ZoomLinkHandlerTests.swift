@@ -56,6 +56,37 @@ struct ZoomLinkHandlerTests {
         #expect(workspace.changes.count == 2)
     }
 
+    @Test func waitsForDelayedRegistrationWithoutRollingBackSuccessfulSelection() async throws {
+        let workspace = LinkWorkspace()
+        workspace.set = { _, _, _ in }
+        workspace.wait = {
+            workspace.handlers = ["zoommtg": workspace.yap, "zoomus": workspace.yap]
+        }
+        let status = try await workspace.service().select(.yap)
+        #expect(status.isApplied(.yap))
+        #expect(workspace.changes.count == 2)
+    }
+
+    @Test func successfulRollbackWaitsForItsOwnRegistrationToSettle() async throws {
+        let workspace = LinkWorkspace()
+        var restoring = false
+        workspace.set = { application, scheme, call in
+            if call == 2 { throw LinkTestError.denied }
+            if call == 3 { restoring = true; return }
+            workspace.handlers[scheme] = application
+        }
+        workspace.wait = {
+            if restoring { workspace.handlers = ["zoommtg": workspace.zoom, "zoomus": workspace.zoom] }
+        }
+        do {
+            try await workspace.service().select(.yap)
+            Issue.record("Expected second-scheme failure")
+        } catch let error as ZoomLinkHandlerError {
+            #expect(!error.restorationIncomplete)
+            #expect(error.status.isApplied(.zoom))
+        }
+    }
+
     @Test func missingAppsAreUnavailableWithoutAttemptingChangesOrLaunches() async throws {
         let workspace = LinkWorkspace()
         workspace.available.removeAll()
@@ -263,6 +294,7 @@ private final class LinkWorkspace {
     var opens: [Open] = []
     var set: (@MainActor (URL, String, Int) async throws -> Void)?
     var openError: (any Error)?
+    var wait: (@MainActor () async throws -> Void)?
 
     init() {
         available = [.yap: yap, .zoom: zoom]
@@ -284,7 +316,8 @@ private final class LinkWorkspace {
             open: { url, application in
                 self.opens.append(.init(url: url, application: application))
                 if let error = self.openError { throw error }
-            }
+            },
+            waitForRegistration: { try await self.wait?() }
         ))
     }
 }

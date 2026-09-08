@@ -30,6 +30,14 @@ public struct ZoomLinkHandlerStatus: Sendable, Equatable {
         return Set(identities).count == 1 ? .other : .mixed
     }
 
+    public func isApplied(_ choice: ZoomLinkHandlerChoice) -> Bool {
+        guard let target = applicationURL(for: choice) else { return false }
+        return handlers.allSatisfy {
+            $0.applicationURL?.standardizedFileURL.resolvingSymlinksInPath()
+                == target.standardizedFileURL.resolvingSymlinksInPath()
+        }
+    }
+
     public func applicationURL(for choice: ZoomLinkHandlerChoice) -> URL? {
         choice == .yap ? yapApplicationURL : zoomApplicationURL
     }
@@ -83,6 +91,9 @@ public final class ZoomLinkHandlerService {
         var bundleIdentifier: @MainActor (URL) -> String?
         var setHandler: @MainActor (URL, String) async throws -> Void
         var open: @MainActor (URL, URL) async throws -> Void
+        var waitForRegistration: @MainActor () async throws -> Void = {
+            try await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     private let dependencies: Dependencies
@@ -154,8 +165,10 @@ public final class ZoomLinkHandlerService {
                 }
                 try Task.checkCancellation()
             }
-            let actual = status()
-            guard actual.handlers.allSatisfy({ Self.sameApplication($0.applicationURL, application) }) else {
+            // Launch Services can finish the request before its resolver sees
+            // the new registration. Give readback a bounded settling period.
+            let actual = try await settledStatus { $0.isApplied(choice) }
+            guard actual.isApplied(choice) else {
                 throw ZoomLinkHandlerError(reason: .notApplied, status: actual, restorationIncomplete: false)
             }
             return actual
@@ -163,7 +176,13 @@ public final class ZoomLinkHandlerService {
             // This task may be cancelled, so perform cleanup in an uncancelled task.
             // Never overwrite a handler another app changed while our call awaited.
             await restore(previous.handlers.filter { attemptedSchemes.contains($0.scheme) }, replacing: application)
-            let actual = status()
+            let actual = await Task { @MainActor in
+                (try? await settledStatus { current in
+                    zip(previous.handlers, current.handlers).allSatisfy {
+                        Self.sameApplication($0.0.applicationURL, $0.1.applicationURL)
+                    }
+                }) ?? status()
+            }.value
             let incomplete = zip(previous.handlers, actual.handlers).contains {
                 !Self.sameApplication($0.0.applicationURL, $0.1.applicationURL)
             }
@@ -199,6 +218,17 @@ public final class ZoomLinkHandlerService {
                 try? await dependencies.setHandler(originalURL, handler.scheme)
             }
         }.value
+    }
+
+    private func settledStatus(matching predicate: (ZoomLinkHandlerStatus) -> Bool) async throws -> ZoomLinkHandlerStatus {
+        var actual = status()
+        for _ in 0..<20 {
+            try Task.checkCancellation()
+            if predicate(actual) { return actual }
+            try await dependencies.waitForRegistration()
+            actual = status()
+        }
+        return actual
     }
 
     private func failure(_ reason: ZoomLinkHandlerError.Reason) -> ZoomLinkHandlerError {

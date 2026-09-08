@@ -38,6 +38,8 @@ JSON import remains available. The schema below uses labels, not actual credenti
 
 The created room uses host and participant video off, mute upon entry, waiting room on, join before host off, and no personal meeting ID. Automatic recording, meeting summary, and AI Companion questions are explicitly off. Yap sends no invitations. The prepared room ID is reused across retries until the SDK confirms InMeeting; cancellation after a confirmed creation retains that ID. An uncertain creation result blocks another POST until an explicit reconnect, avoiding duplicate meetings. Missing creation permission produces a reconnect/setup error instead of widening authorization silently.
 
+The local OAuth callback displays a self-contained Yap completion page with the app icon, light/dark appearance, reduced-motion support, and an explicit **Open Yap** button. The page clears the authorization query from the address bar. It does not claim the connection is complete before token exchange: Yap comes to the foreground only after the token exchange, ZAK check, and credential save succeed. The button uses the parameter-free `yap://open` route, which only reveals the main window. Callback pages load no external assets, prohibit caching, and use a nonce-based Content Security Policy.
+
 Token-bearing HTTP requests refuse redirects and use an ephemeral session. Error messages omit response bodies and token values. OAuth/token/meeting-creation unit tests use fixtures. Separately, real account authorization, ZAK retrieval, SDK host startup, and incoming camera video from an independent Zoom endpoint have been verified through Yap. The broader real-call acceptance matrix below remains in progress.
 
 ## Native bridge implementation contract

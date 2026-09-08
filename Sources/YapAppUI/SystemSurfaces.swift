@@ -132,17 +132,11 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
                 isKey: window.isKeyWindow || window.attachedSheet?.isKeyWindow == true)
         },
         activateApplication: { completion in
-            let applicationURL = NSRunningApplication.current.bundleURL ?? Bundle.main.bundleURL
-            guard applicationURL.pathExtension.lowercased() == "app" else { completion(false); return }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            configuration.createsNewApplicationInstance = false
-            configuration.allowsRunningApplicationSubstitution = false
-            configuration.addsToRecentItems = false
-            NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration) { application, error in
-                let succeeded = error == nil && application?.processIdentifier == ProcessInfo.processInfo.processIdentifier
-                Task { @MainActor in completion(succeeded) }
-            }
+            // OAuth finishes in another app. Activate this running process directly;
+            // reopening its bundle through Launch Services can target a stale instance
+            // after an in-place update and display an unnecessary launch-error alert.
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            completion(NSRunningApplication.current.activate(options: []))
         }))
 
     public func configure(model: YapModel, openMainWindow: @escaping () -> Void) {
@@ -168,6 +162,10 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
             isObservingActions = true
         }
         incomingURLs.configure { [weak self, weak model] url in
+            if YapDeepLink.isOpenAppURL(url) {
+                self?.presentMainWindow()
+                return
+            }
             model?.receiveMeetingLink(url)
             self?.presentMainWindow()
         }

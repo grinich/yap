@@ -23,8 +23,9 @@ CANONICAL_URL = "http://127.0.0.1:8000"
 ROUTES = {"README.md": "/", "PRIVACY.md": "/privacy/", "TERMS.md": "/terms/",
           "THIRD_PARTY_NOTICES.md": "/notices/", str(SERVICE / "site/guide.md"): "/guide/"}
 ASSETS = {"Resources/YapIcon.png": "assets/icon.png",
-          "Documentation/Images/recordings.jpg": "assets/recordings.jpg",
-          "Documentation/Images/agenda.jpg": "assets/agenda.jpg"}
+          "Documentation/Images/meeting-gallery.png": "assets/meeting-gallery.png",
+          "Documentation/Images/recordings.png": "assets/recordings.png",
+          "Documentation/Images/agenda.png": "assets/agenda.png"}
 TOKEN = re.compile(r"`([^`\n]+)`|(!?)\[([^\]\n]+)\]\(([^\s)]+)\)|\*\*([^*\n]+)\*\*|(?<!\*)\*([^*\n]+)\*(?!\*)")
 
 
@@ -177,12 +178,12 @@ def shell(brand: str, title: str, description: str, body: str, route: str, css_h
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(title)} · {html.escape(brand)}</title>
 <meta name="description" content="{html.escape(description, quote=True)}"><meta name="referrer" content="no-referrer">
-{canonical}<meta property="og:title" content="{html.escape(brand + ' · ' + title, quote=True)}"><meta property="og:description" content="{html.escape(description, quote=True)}"><meta property="og:image" content="{CANONICAL_URL}/assets/recordings.jpg"><meta property="og:type" content="website">
+{canonical}<meta property="og:title" content="{html.escape(brand + ' · ' + title, quote=True)}"><meta property="og:description" content="{html.escape(description, quote=True)}"><meta property="og:image" content="{CANONICAL_URL}/assets/meeting-gallery.png"><meta property="og:type" content="website">
 <link rel="icon" href="/assets/icon.png" type="image/png"><link rel="stylesheet" href="/assets/site.css?v={css_hash}">
 </head><body><a class="skip" href="#main">Skip to content</a>
 <header class="site-header"><div class="shell topbar"><a class="brand" href="/" aria-label="{html.escape(brand, quote=True)} home"><img src="/assets/icon.png" alt="" width="42" height="42">{html.escape(brand)}</a><nav class="nav" aria-label="Main">{nav("Guide", "/guide/")}{nav("Support", "/support/")}<a href="{REPOSITORY}">Source ↗</a></nav></div></header>
 <main id="main" class="shell">{body}</main>
-<footer class="site-footer"><div class="shell"><div class="footer-top"><span>{html.escape(brand)} · An independent Mac app</span><nav class="footer-links" aria-label="Legal and project">{nav("Privacy", "/privacy/")}{nav("Terms", "/terms/")}{nav("Notices", "/notices/")}<a href="{REPOSITORY}">GitHub</a></nav></div><p>Independent of Zoom, Google, and Apple. Screenshots use sample meetings and an original sample recording. This site uses no analytics, external fonts, or tracking scripts.</p></div></footer></body></html>
+<footer class="site-footer"><div class="shell"><div class="footer-top"><span>{html.escape(brand)} · An independent Mac app</span><nav class="footer-links" aria-label="Legal and project">{nav("Privacy", "/privacy/")}{nav("Terms", "/terms/")}{nav("Notices", "/notices/")}<a href="{REPOSITORY}">GitHub</a></nav></div><p>Independent of Zoom, Google, and Apple. Screenshots show the native interface with fictional participants, sample meetings, and an original sample recording. This site uses no analytics, external fonts, or tracking scripts.</p></div></footer></body></html>
 '''
 
 
@@ -266,11 +267,11 @@ def build_files(root: Path = ROOT) -> dict[str, bytes]:
     shortcuts = section(readme, "A few keys worth knowing")
     try_section = section(readme, "Try " + brand).split("\n\n", 1)[0]
     content = f'''<section class="hero"><span class="eyebrow">A little more room for your day</span><h1>{renderer.inline(tagline[1])}</h1><p class="deck">{renderer.inline(deck[1])}</p><div class="actions"><a class="button" href="/guide/">Meet {html.escape(brand)}</a><a class="button secondary" href="{REPOSITORY}">Explore the source ↗</a></div><p class="requirements">For Apple silicon · macOS 26 or newer</p></section>
-<figure><div class="showcase"><img src="/assets/recordings.jpg" alt="{html.escape(brand, quote=True)} recording player with a searchable, synchronized transcript and an original sample presentation" width="1200" height="760" fetchpriority="high"></div><figcaption>The native recording player, shown with sample content. Find a passage, change the view, and keep your place.</figcaption></figure>
+<figure><div class="showcase"><img src="/assets/meeting-gallery.png" alt="{html.escape(brand, quote=True)} meeting gallery with four fictional participants and native meeting controls" width="2624" height="1784" fetchpriority="high"></div><figcaption>The native meeting interface, shown with fictional participants. Keep people in view and meeting controls close.</figcaption></figure>
 <aside class="status" aria-label="Release status">{renderer.render(status[1])}</aside>
+<section class="section meeting-copy"><h2>A meeting window that feels like a Mac app</h2>{renderer.render(meeting_section)}</section>
 <section class="section features"><h2>Pick up where the meeting left off</h2>{renderer.render(recording_section)}</section>
 <section class="section agenda"><h2>Less between you and your next meeting</h2>{renderer.render(agenda_section)}</section>
-<section class="section meeting-copy"><h2>A meeting window that feels like a Mac app</h2>{renderer.render(meeting_section)}</section>
 <section class="section shortcut-area"><h2>A few keys worth knowing</h2><div class="markdown">{renderer.render(shortcuts)}</div></section>
 <section class="source-card"><h2>Try {html.escape(brand)}</h2>{renderer.render(try_section)}<div class="actions"><a class="button" href="{REPOSITORY}#try-{slug(brand)}">Installation and setup ↗</a><a class="button secondary" href="/support/">Get in touch</a></div></section>'''
     files["index.html"] = shell(brand, tagline[1], deck[1], content, "/", css_hash).encode()

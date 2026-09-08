@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,8 @@ class ReviewSiteTests(unittest.TestCase):
 
     def test_only_original_allowlisted_images_can_be_published(self):
         renderer = site.Markdown("README.md")
-        self.assertIn('src="/assets/recordings.jpg"', renderer.render("![Sample](Documentation/Images/recordings.jpg)"))
+        self.assertIn('src="/assets/meeting-gallery.png"', renderer.render("![Gallery](Documentation/Images/meeting-gallery.png)"))
+        self.assertIn('src="/assets/recordings.png"', renderer.render("![Sample](Documentation/Images/recordings.png)"))
         for target in ("https://tracker.invalid/pixel.png", "Resources/ZoomSDK.lock.json", "../../private.png"):
             with self.subTest(target=target), self.assertRaises(ValueError):
                 renderer.render(f"![Image]({target})")
@@ -53,12 +55,22 @@ class ReviewSiteTests(unittest.TestCase):
         files = site.build_files()
         expected = {"index.html", "guide/index.html", "privacy/index.html", "terms/index.html",
                     "support/index.html", "notices/index.html", "404.html", "assets/site.css",
-                    "assets/icon.png", "assets/recordings.jpg", "assets/agenda.jpg", "_headers",
+                    "assets/icon.png", "assets/meeting-gallery.png", "assets/recordings.png",
+                    "assets/agenda.png", "_headers",
                     "robots.txt", "sitemap.xml"}
         self.assertEqual(set(files), expected)
         site.validate(files)
         for source, target in site.ASSETS.items():
             self.assertEqual(files[target], (ROOT / source).read_bytes())
+            if source.startswith("Documentation/Images/"):
+                # Preserve original Retina window captures, including their alpha channel.
+                capture = files[target]
+                self.assertEqual(capture[:8], b"\x89PNG\r\n\x1a\n")
+                self.assertEqual(capture[12:16], b"IHDR")
+                width, height, depth, color_type = struct.unpack(">IIBB", capture[16:26])
+                self.assertGreaterEqual(width, 2400)
+                self.assertGreaterEqual(height, 1500)
+                self.assertEqual((depth, color_type), (8, 6))
         for path, data in files.items():
             if path.endswith(".html"):
                 self.assertNotIn(b"<script", data)

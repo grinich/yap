@@ -807,13 +807,25 @@ enum YapConfigurationStore {
     static func parseGoogle(_ data: Data) throws -> GoogleOAuthConfiguration {
         struct File: Decodable { struct Installed: Decodable { let client_id: String; let client_secret: String? }; let installed: Installed }
         let file = try JSONDecoder().decode(File.self, from: data)
-        guard file.installed.client_id.hasSuffix(".apps.googleusercontent.com") else { throw GoogleCalendarError.notConfigured }
-        return GoogleOAuthConfiguration(clientID: file.installed.client_id, clientSecret: file.installed.client_secret)
+        let configuration = GoogleOAuthConfiguration(clientID: file.installed.client_id, clientSecret: file.installed.client_secret)
+        guard configuration.isValid else { throw GoogleCalendarError.notConfigured }
+        return configuration
     }
     private static let key = CredentialKey(service: service, account: "google-desktop")
     static func loadGoogle() throws -> GoogleOAuthConfiguration? {
-        guard let data = try access({ try CredentialVault.shared.load(key) }) else { return nil }
-        return try parseGoogle(data)
+        try resolveGoogle(savedData: { try access { try CredentialVault.shared.load(key) } },
+                          bundledInfo: Bundle.main.infoDictionary ?? [:])
+    }
+    // Packaged builds use Yap's client directly. Source builds can import their own.
+    // Reading the bundled public client does not require Keychain access.
+    static func resolveGoogle(savedData: () throws -> Data?, bundledInfo: [String: Any]) throws -> GoogleOAuthConfiguration? {
+        guard let clientID = bundledInfo["YapGoogleClientID"] as? String else {
+            return try savedData().map(parseGoogle)
+        }
+        let configuration = GoogleOAuthConfiguration(clientID: clientID,
+            clientSecret: bundledInfo["YapGoogleClientSecret"] as? String)
+        guard configuration.isValid else { throw GoogleCalendarError.notConfigured }
+        return configuration
     }
     static func saveGoogle(_ data: Data) throws {
         _ = try parseGoogle(data)

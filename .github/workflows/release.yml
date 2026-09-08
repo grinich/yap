@@ -80,6 +80,8 @@ jobs:
         env:
           YAP_SIGNING_IDENTITY: 'Developer ID Application: Michael Grinich (VSVHNQP588)'
           YAP_NOTARY_PROFILE: yap-ci
+          YAP_GOOGLE_CLIENT_ID: ${{ vars.YAP_GOOGLE_CLIENT_ID }}
+          YAP_GOOGLE_CLIENT_SECRET: ${{ secrets.YAP_GOOGLE_CLIENT_SECRET }}
         run: /bin/bash Scripts/package-release.sh
       - name: Retain verified release artifacts
         # Artifacts in a public repository are downloadable by other signed-in

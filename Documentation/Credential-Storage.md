@@ -1,5 +1,20 @@
 # Credential access and update prompts
 
+## Current behavior
+
+Yap reads and writes only its consolidated Keychain item, `app.yap.credentials` / `personal-connections-v1`. Records are cached within the process and saved atomically. Disconnecting removes the active connection record; switching Zoom configuration removes its related records together and preserves Google credentials. A failed vault write is reported and cannot replace the cached or stored credentials.
+
+Packaged builds get the Google desktop client ID and secret from their signed bundle. These public desktop-client credentials identify Yap; user access and refresh tokens stay in Keychain. There is no credential import step in packaged builds. See [Google Calendar](GoogleCalendar.md).
+
+The app no longer imports or deletes credentials from older app names or separate pre-consolidation Keychain items. This removes legacy access prompts and cleanup errors. An installation that only has old credentials must sign in again. Existing records already in Yap's consolidated vault remain usable. Keychain protection, signing requirements, and normal macOS prompts remain in effect.
+
+Tests cover cached reads, absence of legacy reads/deletions, failed reads and writes, atomic disconnect, preservation of the other account, concurrent saves, and rejection of malformed active vault data.
+
+## Historical migration and signing evidence
+
+The following records describe the earlier implementation, which included credential migration and cleanup. They do not describe the current legacy-free connection flow.
+
+
 **Yap identity update, September 7, 2026:** the bundle ID is `com.grinich.yap`; see [Bundle Identity](Bundle-Identity.md) for the current migration. Recorded live checks below predate the Yap rename and retain their historical identity and permission boundaries.
 
 **September 6 installed identity:** `com.grinich.woosh`, signed with the existing Apple-issued Developer ID Team `VSVHNQP588`, is installed at `~/Applications/Whoosh.app`. Two successive changed Developer ID builds loaded the saved Google and Zoom accounts and started own hosted meetings without another Keychain or TCC prompt. The latest read-only vault metadata contains `teamid:VSVHNQP588`; no password data was requested. SDK initialization, authentication, and start returned code 0 in both observed processes (25976 and 29079). These are actual update/launch results on this Mac, not a guarantee of permanent authorization. [Current metadata](../../work/whoosh-credential-acl-after-signed-update.json), [live SDK log](../../work/live-developer-id-feature-verification.log), [latest install](../../work/companion-pip-install.log).

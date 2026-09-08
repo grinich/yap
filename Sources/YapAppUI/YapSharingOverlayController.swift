@@ -380,9 +380,16 @@ private struct SharingParticipantStrip: View {
 
     var body: some View {
         let people = YapSharingOverlayLayout.participants(from: model.meeting.visibleParticipants)
-        MeetingTileLayout(aspectRatios: people.map(\.tileAspectRatio), spacing: 8) {
-            ForEach(people) { participant in
-                ParticipantTile(participant: participant, meeting: model.meeting, fillsFrame: people.count == 1)
+        Group {
+            if people.count == 1, let participant = people.first {
+                ParticipantTile(participant: participant, meeting: model.meeting, fillsFrame: true)
+            } else {
+                MeetingTileLayout(aspectRatios: people.map(\.tileAspectRatio), spacing: 8) {
+                    ForEach(people) { participant in
+                        ParticipantTile(participant: participant, meeting: model.meeting)
+                    }
+                }
+                .padding(8)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

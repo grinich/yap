@@ -10,7 +10,7 @@ Yap reads selected Google calendars directly from the Mac. It does not create ev
 
 Open **Settings → Connections → Sign in with Google**, choose your account, grant read-only Calendar access, and select your calendars. Packaged builds include Yap's client ID and desktop client secret; users do not need a Google Cloud project or a JSON import. The browser uses PKCE and returns directly to the Mac's loopback listener.
 
-The Google project currently remains in **Testing** and permits the configured test users, including `mgrinich@gmail.com`. Bundling credentials does not bypass Google's test-user restrictions or constitute public verification. The previously notarized 0.1.3 candidate predates this packaging change.
+The Google project was moved to **In production** on September 8, 2026 to enable review. It is still **unverified**: Google’s warning and 100-user cap apply until the sensitive event scope is approved. Homepage, Privacy and Terms now use the GitHub Pages site, whose exact homepage URL is verified in Search Console. Google’s automated branding check nevertheless flagged ownership; the manual-review form requires a demo video before final submission. [Verification status and evidence](Google-Verification.md).
 
 ## Build configuration
 

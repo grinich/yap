@@ -5,7 +5,7 @@
 <h1 align="center">Yap</h1>
 
 <p align="center"><strong>For people who professionally yap for a living.</strong></p>
-<p align="center">Native macOS meetings, a simple agenda, and recordings you can actually find your way through.</p>
+<p align="center">An alternative Zoom client for Mac, with native meeting controls, a simple agenda, and recordings you can actually find your way through.</p>
 
 <p align="center">
   <a href="#try-yap">Get Yap</a> ·

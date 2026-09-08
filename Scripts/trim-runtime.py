@@ -30,12 +30,22 @@ def files(root):
                 yield path
 
 
-def trim(root):
+def trim(root, omit_intel_only=()):
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError('Expected a real copied runtime directory, not a symlink.')
+    omitted = set()
+    for relative in omit_intel_only:
+        relative = Path(relative)
+        if relative.is_absolute() or '..' in relative.parts:
+            raise ValueError('Intel-only exclusions must stay within the copied runtime.')
+        path = root / relative
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
+            raise ValueError(f'Expected a real Intel-only runtime image: {relative}')
+        omitted.add(path)
     before = sum(p.stat().st_size for p in files(root))
     binaries = []
+    validated_omissions = set()
     # Validate every architecture before changing the staged payload. No runtime
     # image is silently deleted if its arm64 implementation is missing.
     for path in files(root):
@@ -43,9 +53,18 @@ def trim(root):
             if stream.read(4) not in MACHO_MAGIC:
                 continue
         architectures = subprocess.check_output(['/usr/bin/lipo', '-archs', str(path)], text=True).split()
+        if path in omitted:
+            if architectures != ['x86_64']:
+                raise ValueError(f'Expected only x86_64 in explicitly omitted image: {path}')
+            validated_omissions.add(path)
+            continue
         if 'arm64' not in architectures:
             raise ValueError(f'Runtime image has no arm64 slice: {path}')
         binaries.append((path, architectures))
+    if validated_omissions != omitted:
+        raise ValueError('An Intel-only exclusion was not a verified Mach-O image.')
+    for path in omitted:
+        path.unlink()
     for directory, names, filenames in os.walk(root, followlinks=False):
         for name in list(names) + filenames:
             path = Path(directory) / name
@@ -77,4 +96,6 @@ def trim(root):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('copied_runtime', type=Path)
-    trim(parser.parse_args().copied_runtime)
+    parser.add_argument('--omit-intel-only', action='append', default=[])
+    args = parser.parse_args()
+    trim(args.copied_runtime, args.omit_intel_only)

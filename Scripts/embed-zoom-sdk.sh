@@ -59,7 +59,13 @@ if bundled_notice.read_bytes() != license_notice.read_bytes():
 # Remove unsupported CPU slices and compile-time metadata only in our copy,
 # before computing dependency paths and signing every nested runtime again.
 for runtime in (frameworks, plugins):
-    subprocess.run([sys.executable, str(Path(os.environ["YAP_ROOT"]) / "Scripts/trim-runtime.py"), str(runtime)], check=True)
+    command = [sys.executable, str(Path(os.environ["YAP_ROOT"]) / "Scripts/trim-runtime.py"), str(runtime)]
+    if runtime == frameworks:
+        # SDK 7.1.5's Intel libcmlFramework slice links this Intel-only MKL
+        # library. Its arm64 slice uses CoreML and has no dependency on it.
+        # The complete retained dependency graph is verified below.
+        command.extend(["--omit-intel-only", "aomhost.app/Contents/Frameworks/libcmlFramework.framework/Versions/A/Frameworks/libmkldnn.0.dylib"])
+    subprocess.run(command, check=True)
 
 magic = {bytes.fromhex(h) for h in (
     "feedface", "cefaedfe", "feedfacf", "cffaedfe",

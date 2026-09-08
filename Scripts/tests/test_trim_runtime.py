@@ -69,6 +69,22 @@ class TrimRuntimeTests(unittest.TestCase):
                 module.trim(root)
             self.assertEqual(binary.read_bytes(), original)
 
+    def test_only_explicit_intel_only_exclusion_is_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            intel = root/'intel-only'
+            intel.write_bytes((self.root/'x86_64').read_bytes())
+            arm = root/'arm'
+            arm.write_bytes((self.root/'arm64').read_bytes())
+            with self.assertRaisesRegex(ValueError, 'only x86_64'):
+                module.trim(root, ['intel-only', 'arm'])
+            self.assertTrue(arm.exists())
+            module.trim(root, ['intel-only'])
+            self.assertFalse(intel.exists())
+            self.assertTrue(arm.exists())
+            with self.assertRaises(ValueError):
+                module.trim(root, ['../outside'])
+
     def test_rejects_symlink_root(self):
         with tempfile.TemporaryDirectory() as directory:
             link = Path(directory)/'source'

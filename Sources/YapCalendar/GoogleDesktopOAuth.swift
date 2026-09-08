@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import Network
 import Security
+import YapOAuth
 
 enum GoogleDesktopOAuth {
     struct Authorization: Sendable {
@@ -190,20 +191,21 @@ private actor OAuthLoopbackListener {
             }
             do {
                 let code = try GoogleDesktopOAuth.callbackCode(target: String(requestParts[1]), expectedState: expectedState)
-                await respond(connection, status: "200 OK", message: "Sign-in received. You can return to Yap.")
+                await respond(connection, status: "200 OK", outcome: .received)
                 finish(.success(code))
             } catch GoogleCalendarError.authorizationDenied {
-                await respond(connection, status: "200 OK", message: "Calendar access was not granted. You can return to Yap.")
+                await respond(connection, status: "200 OK", outcome: .denied)
                 finish(.failure(GoogleCalendarError.authorizationDenied))
             }
         } catch {
-            await respond(connection, status: "400 Bad Request", message: "This sign-in response could not be verified.")
+            await respond(connection, status: "400 Bad Request", outcome: .invalid)
         }
     }
 
-    private func respond(_ connection: NWConnection, status: String, message: String) async {
-        let body = "<!doctype html><html><meta name=\"viewport\" content=\"width=device-width\"><title>Yap</title><body><p>\(message)</p></body></html>"
-        let reply = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n\(body)"
+    private func respond(_ connection: NWConnection, status: String, outcome: OAuthCompletionPage.Outcome) async {
+        let icon = Bundle.main.url(forResource: "YapIcon", withExtension: "png").flatMap { try? Data(contentsOf: $0) }
+        let page = OAuthCompletionPage(provider: .googleCalendar, outcome: outcome, iconPNG: icon)
+        let reply = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(page.body.utf8.count)\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: \(page.contentSecurityPolicy)\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n\(page.body)"
         await withCheckedContinuation { continuation in
             connection.send(content: Data(reply.utf8), completion: .contentProcessed { _ in
                 connection.cancel()

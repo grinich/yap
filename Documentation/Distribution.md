@@ -59,7 +59,7 @@ Approved external beta sharing normally lasts four weeks. During that window, it
 
 ## Prepare Google Calendar distribution
 
-Google Calendar is optional. The current app imports a user-supplied desktop-client JSON; it does not bundle a public Google client. The renamed project remains Testing. No change to production publishing or public Google onboarding has been selected. The following is preparation guidance, not a completed rollout.
+Google Calendar is optional. The next packaged build includes Yap’s desktop client from the Google project owned by `mgrinich@gmail.com`, so users start with **Sign in with Google** rather than importing JSON. The existing notarized 0.1.3 candidate predates this change. The project remains **Testing**: bundling the client does not enable access for unlisted users or establish Google approval. The following is preparation guidance for public availability, not a completed rollout.
 
 Use a Google **Desktop app** OAuth client, enable the Calendar API, and retain the browser/PKCE/loopback flow. The client identifier is public configuration; user tokens remain private. Current scopes are `https://www.googleapis.com/auth/calendar.events.readonly` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly`. Declare both in Data Access; do not expand access for distribution. [Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app), [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [implementation](GoogleCalendar.md)
 

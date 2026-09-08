@@ -121,10 +121,12 @@ public struct YapSettingsView: View {
                 Text("100+ participant layouts are a test target. Rendering sample tiles does not verify that Zoom can deliver 100 simultaneous live videos.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            Section("Developer configuration") {
-                Button("Replace Google desktop client…") { importGoogle() }.disabled(model.isConnecting)
-                Text("Imports the downloaded desktop OAuth client JSON. Credentials and connection tokens are stored in your Mac’s Keychain.")
-                    .font(.caption).foregroundStyle(.secondary)
+            if Bundle.main.object(forInfoDictionaryKey: "YapGoogleClientID") == nil {
+                Section("Developer configuration") {
+                    Button("Replace Google desktop client…") { importGoogle() }.disabled(model.isConnecting)
+                    Text("Imports the downloaded desktop OAuth client JSON for a source build. Connection tokens are stored in your Mac’s Keychain.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
         }.formStyle(.grouped)
     }

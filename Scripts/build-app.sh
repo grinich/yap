@@ -37,6 +37,7 @@ mkdir -p "$YAP_APP/Contents/MacOS" "$YAP_APP/Contents/Resources" "$YAP_APP/Conte
 cp "$YAP_BIN/Yap" "$YAP_APP/Contents/MacOS/Yap"
 cp "$YAP_ROOT/Resources/Info.plist" "$YAP_APP/Contents/Info.plist"
 python3 "$YAP_ROOT/Scripts/configure-updates.py" "$YAP_APP/Contents/Info.plist"
+python3 "$YAP_ROOT/Scripts/configure-google.py" "$YAP_APP/Contents/Info.plist"
 /bin/bash "$YAP_ROOT/Scripts/compile-app-icon.sh" "$YAP_APP/Contents/Resources" "$YAP_APP/Contents/Info.plist"
 if [ -f "$YAP_ROOT/Resources/YapIcon.png" ]; then
     cp "$YAP_ROOT/Resources/YapIcon.png" "$YAP_APP/Contents/Resources/YapIcon.png"

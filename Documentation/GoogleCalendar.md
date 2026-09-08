@@ -2,11 +2,23 @@
 
 **Yap identity update, September 7, 2026:** the bundle ID is `com.grinich.yap`; see [Bundle Identity](Bundle-Identity.md) for the current migration. Recorded live checks below predate the Yap rename and retain their historical identity and permission boundaries.
 
-Yap reads selected Google calendars directly from the Mac. It does not create events, send invitations, change RSVPs, or send calendar data to a Yap server. This integration uses the owner's Google desktop OAuth configuration.
+Yap reads selected Google calendars directly from the Mac. It does not create events, send invitations, change RSVPs, or send calendar data to a Yap server. Packaged builds use Yap's Google desktop OAuth client from the Google API project owned by `mgrinich@gmail.com`. Each person authorizes their own calendar; the developer's Google account is not shared.
 
 **Historical live verification before the Yap rename:** the personal project and desktop client were created, configuration was imported into Keychain, and real read-only consent completed. Yap displayed Connected, fetched the actual calendar list and upcoming events, and completed a manual refresh. Deselecting the calendar immediately removed its events; the selection was restored afterward. The live agenda now hides calendar items without Zoom links and shows only Zoom meeting candidates. Calendar-triggered entry into a working Zoom meeting remains unverified.
 
-## Personal setup
+## Connect in Yap
+
+Open **Settings → Connections → Sign in with Google**, choose your account, grant read-only Calendar access, and select your calendars. Packaged builds include Yap's client ID and desktop client secret; users do not need a Google Cloud project or a JSON import. The browser uses PKCE and returns directly to the Mac's loopback listener.
+
+The Google project currently remains in **Testing** and permits the configured test users, including `mgrinich@gmail.com`. Bundling credentials does not bypass Google's test-user restrictions or constitute public verification. The previously notarized 0.1.3 candidate predates this packaging change.
+
+## Build configuration
+
+The release environment supplies `YAP_GOOGLE_CLIENT_ID` and `YAP_GOOGLE_CLIENT_SECRET`. `Scripts/configure-google.py` validates and injects them into the staged app before signing; a release fails if they are missing. The secret is stored in GitHub's release-environment secrets, not committed to source or printed in build logs. Google desktop clients are public clients: this bundled value is not a confidential server credential. User access and refresh tokens remain in the Mac's Keychain.
+
+Packaged builds always select the bundled Yap client. The following manual setup is only for source builds that do not have a bundled Google client.
+
+## Source builds
 
 1. In Google Cloud, create or select a project and enable the Google Calendar API.
 2. Configure the OAuth consent screen. For a personal testing project, add your Google account as a test user.
@@ -16,7 +28,7 @@ Yap reads selected Google calendars directly from the Mac. It does not create ev
 
 The requested scopes are `calendar.events.readonly` and `calendar.calendarlist.readonly`. Google grants these scopes across calendars that the account can access; Yap enforces your calendar selection when fetching and displaying events. No Google Calendar write scope is requested. Installed app credentials are public client identifiers; the optional desktop client secret is accepted because some Google desktop configurations include it, but it is never treated as a server-held secret.
 
-Google may expire refresh tokens for an OAuth app in Testing after seven days, depending on the scopes and project configuration. If Google reports an expired or revoked grant, Yap asks you to reconnect. Moving the OAuth project to a broader release has separate Google verification requirements; this build is for personal use.
+Google may expire refresh tokens for an OAuth app in Testing after seven days, depending on the scopes and project configuration. If Google reports an expired or revoked grant, Yap asks you to reconnect. Moving the OAuth project to a broader release has separate Google verification requirements.
 
 ## Implementation and limits
 

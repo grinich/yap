@@ -70,7 +70,7 @@ struct ZoomConnectionTests {
     }
 
     @Test(arguments: [false, true])
-    func failedDisconnectRefreshesActualVaultStateWithoutHidingKeychainFailure(denyLegacyCleanup: Bool) async throws {
+    func disconnectUsesActiveVaultAndReportsOnlyActiveWriteFailures(denyLegacyCleanup: Bool) async throws {
         let configurationKey = CredentialKey(service: "app.yap.zoom-personal", account: "configuration")
         let tokensKey = CredentialKey(service: "app.yap.zoom-personal", account: "oauth-tokens")
         let tokens = ZoomOAuthTokens(clientID: configuration.oauthPublicClientID, accessToken: "fixture-access",
@@ -80,6 +80,8 @@ struct ZoomConnectionTests {
             tokensKey: try JSONEncoder().encode(tokens)
         ])
         let vault = CredentialVault(storage: storage)
+        try vault.save(JSONEncoder().encode(configuration), for: configurationKey)
+        try vault.save(JSONEncoder().encode(tokens), for: tokensKey)
         let client = ZoomAccountClient(store: KeychainZoomCredentialStore(vault: vault))
         let model = ZoomConnectionModel(client: client, openURL: { _ in })
         await model.loadStatus()
@@ -93,16 +95,16 @@ struct ZoomConnectionTests {
         #expect(model.hasSavedConnection == !denyLegacyCleanup)
         #expect(!model.isBusy)
         #expect(model.statusError == nil)
-        #expect(model.error == ZoomAccountError.keychain(errSecAuthFailed).localizedDescription)
-        // Check the durable result through a fresh vault. A failed legacy delete
-        // leaves its old item intact, but the committed tombstone must win.
+        #expect(model.error == (denyLegacyCleanup ? nil : ZoomAccountError.keychain(errSecAuthFailed).localizedDescription))
+        // Only the active vault determines the durable connection state.
+        // Old protected items are never accessed or removed.
         let nextLaunch = CredentialVault(storage: storage)
         #expect((try nextLaunch.load(tokensKey) == nil) == denyLegacyCleanup)
         #expect(storage.contains(tokensKey))
     }
 
     @Test(arguments: [false, true])
-    func failedManagedSwitchReconcilesAtomicVaultResultAndPreservesGoogle(denyLegacyCleanup: Bool) async throws {
+    func managedSwitchUsesAtomicVaultResultAndIgnoresProtectedOldItems(denyLegacyCleanup: Bool) async throws {
         let configurationKey = CredentialKey(service: "app.yap.zoom-personal", account: "configuration")
         let tokensKey = CredentialKey(service: "app.yap.zoom-personal", account: "oauth-tokens")
         let oldTokensKey = CredentialKey(service: "app.whoosh.zoom-personal", account: "oauth-tokens")
@@ -117,6 +119,8 @@ struct ZoomConnectionTests {
             oldConfigurationKey: configurationData, oldTokensKey: tokenData
         ])
         let vault = CredentialVault(storage: storage)
+        try vault.save(configurationData, for: configurationKey)
+        try vault.save(tokenData, for: tokensKey)
         try vault.save(Data("saved-google".utf8), for: googleKey)
         let managed = ZoomPublicConfiguration(oauthPublicClientID: "managed-public", sdkClientID: "managed-sdk",
             sdkSignerURL: URL(string: "https://signer.example/v1/meeting-sdk/signature")!)
@@ -140,7 +144,7 @@ struct ZoomConnectionTests {
         #expect(!model.isBusy)
         #expect(!model.isLoadingStatus)
         #expect(model.statusError == nil)
-        #expect(model.error == ZoomAccountError.keychain(errSecAuthFailed).localizedDescription)
+        #expect(model.error == (denyLegacyCleanup ? nil : ZoomAccountError.keychain(errSecAuthFailed).localizedDescription))
         #expect(model.accountRevision != previousRevision)
         #expect(invalidations == 1)
         let nextLaunch = CredentialVault(storage: storage)
@@ -148,9 +152,8 @@ struct ZoomConnectionTests {
         #expect((try nextLaunch.load(tokensKey) == nil) == denyLegacyCleanup)
         #expect(try nextLaunch.load(googleKey) == Data("saved-google".utf8))
         #expect(storage.contains(oldTokensKey)) // Its existing protection was honored.
-        #expect(storage.contains(oldConfigurationKey) == !denyLegacyCleanup)
-        #expect(storage.deletions == (denyLegacyCleanup
-            ? [tokensKey, oldTokensKey, configurationKey, oldConfigurationKey] : []))
+        #expect(storage.contains(oldConfigurationKey))
+        #expect(storage.deletions.isEmpty)
     }
 }
 

@@ -26,21 +26,9 @@ public protocol CredentialStorage: Sendable {
 public final class CredentialVault: @unchecked Sendable {
     public static let shared = CredentialVault(storage: SystemCredentialStorage())
     public static let storageKey = CredentialKey(service: "app.yap.credentials", account: "personal-connections-v1")
-    // Explicit aliases for the released predecessor's secure storage. Never
-    // search arbitrary Keychain services or weaken an item's access controls.
-    static let legacyStorageKey = CredentialKey(service: "app.whoosh.credentials", account: "personal-connections-v1")
-    private static let legacyServices = [
-        "app.yap.personal.configuration": "app.whoosh.personal.configuration",
-        "app.yap.google-calendar": "app.whoosh.google-calendar",
-        "app.yap.zoom-personal": "app.whoosh.zoom-personal"
-    ]
-
     private struct Snapshot: Codable {
         var version = 1
         var records: [String: Data] = [:]
-        // Tombstones prevent removed credentials from being resurrected by an
-        // older item left behind during migration or a failed legacy deletion.
-        var migrated: Set<String> = []
     }
 
     private let storage: any CredentialStorage
@@ -51,26 +39,13 @@ public final class CredentialVault: @unchecked Sendable {
     public init(storage: any CredentialStorage) { self.storage = storage }
 
     public func load(_ key: CredentialKey) throws -> Data? {
-        try lock.withLock {
-            var snapshot = try current()
-            if snapshot.migrated.contains(key.identifier) { return snapshot.records[key.identifier] }
-            // Read old items only during their first successful migration. They
-            // retain their existing protection and may need one final approval.
-            var legacy = try storage.load(key)
-            if legacy == nil, let previous = Self.legacyKey(for: key) { legacy = try storage.load(previous) }
-            snapshot.migrated.insert(key.identifier)
-            snapshot.records[key.identifier] = legacy
-            if legacy != nil { try commit(snapshot) }
-            else { cached = snapshot } // Missing setup does not create an item.
-            return legacy
-        }
+        try lock.withLock { try current().records[key.identifier] }
     }
 
     public func save(_ data: Data, for key: CredentialKey) throws {
         try lock.withLock {
             var snapshot = try current()
             snapshot.records[key.identifier] = data
-            snapshot.migrated.insert(key.identifier)
             try commit(snapshot)
         }
     }
@@ -79,65 +54,23 @@ public final class CredentialVault: @unchecked Sendable {
         try delete([key])
     }
 
-    /// Remove related active records in one durable write before cleaning up
-    /// their explicitly named legacy items. Cleanup failures remain visible.
+    /// Disconnect removes active records atomically. Earlier apps' separate
+    /// Keychain items are neither read nor deleted by Yap.
     public func delete(_ keys: [CredentialKey]) throws {
         guard !keys.isEmpty else { return }
         try lock.withLock {
             var snapshot = try current()
-            var cleanupKeys: [CredentialKey] = []
-            var seen: Set<CredentialKey> = []
-            for key in keys {
-                snapshot.records.removeValue(forKey: key.identifier)
-                snapshot.migrated.insert(key.identifier)
-                if seen.insert(key).inserted { cleanupKeys.append(key) }
-                if let previous = Self.legacyKey(for: key), seen.insert(previous).inserted {
-                    cleanupKeys.append(previous)
-                }
-            }
+            for key in keys { snapshot.records.removeValue(forKey: key.identifier) }
             try commit(snapshot)
-            // A denied old item must not prevent removal of the other scoped
-            // items. Durable tombstones prevent any failed cleanup reviving them.
-            var firstError: (any Error)?
-            for key in cleanupKeys {
-                do { try storage.delete(key) }
-                catch { if firstError == nil { firstError = error } }
-            }
-            if let firstError { throw firstError }
         }
     }
 
     private func current() throws -> Snapshot {
         if let cached { return cached }
-        if let data = try storage.load(Self.storageKey) {
-            let value = try decode(data)
-            cached = value
-            return value
-        }
-        guard let data = try storage.load(Self.legacyStorageKey) else {
-            let empty = Snapshot()
-            cached = empty
-            return empty
-        }
-        var value = try decode(data)
-        for (currentService, legacyService) in Self.legacyServices {
-            let prefix = legacyService + "\u{0}"
-            let identifiers = Set(value.records.keys).union(value.migrated).filter { $0.hasPrefix(prefix) }
-            for oldID in identifiers {
-                let newID = currentService + "\u{0}" + String(oldID.dropFirst(prefix.count))
-                if !value.migrated.contains(newID), value.records[newID] == nil {
-                    value.records[newID] = value.records[oldID]
-                    // Preserve removals as well as saved records. A stale legacy
-                    // token must not reappear after the app's identity changes.
-                    value.migrated.insert(newID)
-                }
-                value.records.removeValue(forKey: oldID)
-                value.migrated.remove(oldID)
-            }
-        }
-        // Do not cache a migration until its new Keychain write succeeds. The
-        // previous app's item remains untouched if access or saving is denied.
-        try commit(value)
+        let value: Snapshot
+        if let data = try storage.load(Self.storageKey) { value = try decode(data) }
+        else { value = Snapshot() }
+        cached = value
         return value
     }
 
@@ -145,10 +78,6 @@ public final class CredentialVault: @unchecked Sendable {
         guard data.count <= 1_048_576, let value = try? JSONDecoder().decode(Snapshot.self, from: data),
               value.version == 1 else { throw CredentialVaultError.invalidData }
         return value
-    }
-
-    private static func legacyKey(for key: CredentialKey) -> CredentialKey? {
-        legacyServices[key.service].map { CredentialKey(service: $0, account: key.account) }
     }
 
     private func commit(_ value: Snapshot) throws {

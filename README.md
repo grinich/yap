@@ -13,17 +13,23 @@
   <a href="https://github.com/grinich/yap/issues/new/choose">Report a bug</a>
 </p>
 
-![Yap recording player with searchable, synchronized transcript](Documentation/Images/recordings.jpg)
+![Yap meeting gallery with four fictional participants and native meeting controls](Documentation/Images/meeting-gallery.png)
 
 Yap brings your next meeting and your past conversations into one small Mac app. Join from your calendar, keep the conversation in focus, then come back to a recording with its chat and spoken transcript alongside it.
 
 Built with **SwiftUI, AppKit, and the Zoom Meeting SDK**. Requires **macOS 26 or newer and Apple silicon**.
 
-> **Preview — public downloads are not available yet.** Yap 0.1.1 is signed and notarized; installation testing and Zoom approval are still pending. You can explore the source and sample interface below. Yap is independent, not affiliated with or endorsed by Zoom. [Release status](Documentation/Distribution.md).
+> **Preview — no public download yet.** The signed and notarized Yap 0.1.2 candidate remains on hold. Managed sign-in testing and Zoom approval are pending. Explore the source and sample interface below. Yap is independent, not affiliated with or endorsed by Zoom. [Release status](Documentation/Distribution.md).
+
+## A meeting window that feels like a Mac app
+
+Keep people in a gallery or focus on one person. Open chat and the participant list from the side, share a window or display, and keep the meeting nearby with floating sharing controls. Camera, microphone, recording, and leaving the call stay within reach. Native glass, resizable windows, and keyboard shortcuts keep the interface familiar.
 
 ## Pick up where the meeting left off
 
 Your Zoom cloud recordings have a home of their own.
+
+![Yap recording player with searchable, synchronized transcript](Documentation/Images/recordings.png)
 
 - **Find a meeting by title or date.** Search naturally with dates such as `Aug 31`, `8/31`, or `last Monday`, and load earlier months when you need them.
 - **Stream or save.** Start watching in the app, download a copy to your Mac, or copy the recording’s share link.
@@ -36,15 +42,11 @@ Chat, transcripts, and video layouts appear when Zoom includes those files in th
 
 ## Less between you and your next meeting
 
-![Yap agenda showing sample upcoming meetings](Documentation/Images/agenda.jpg)
+![Yap agenda showing sample upcoming meetings](Documentation/Images/agenda.png)
 
 Connect Google Calendar, choose the calendars you care about, and see upcoming Zoom meetings at a glance. Join the next one from the app or menu bar, paste a meeting link, or start a meeting with your own Zoom account. An optional setting lets Yap handle Zoom’s native meeting links.
 
-## A meeting window that feels like a Mac app
-
-Keep people in a gallery or focus on one person. Open chat and the participant list from the side, share a window or display, and keep the meeting nearby with floating sharing controls. Camera, microphone, recording, and leaving the call stay within reach. Native glass, resizable windows, and keyboard shortcuts keep the interface familiar.
-
-*Screenshots show the native interface with sample meetings and an original sample recording. No private meeting content is included.*
+*Screenshots show the native interface with fictional participants, sample meetings, and an original sample recording. No private meeting content is included.*
 
 ## A few keys worth knowing
 
@@ -61,9 +63,9 @@ Playback shortcuts stay out of the way while you type in a search field.
 
 ## Try Yap
 
-**Yap 0.1.1 (build 2)** is signed and notarized for **Apple silicon and macOS 26 or newer**. The installer remains a GitHub draft while installation testing and Zoom distribution approval are pending. Until public downloads open, explore the source and SDK-free sample interface below. [Release status](Documentation/Distribution.md).
+**Yap 0.1.2 (build 3)** targets **Apple silicon and macOS 26 or newer**. Its signed and notarized packages passed independent verification, but this candidate remains on hold. Managed sign-in testing and Zoom distribution approval are pending. Until public downloads open, explore the source and SDK-free sample interface below. [Current candidate and remaining checks](Documentation/Distribution.md).
 
-When published, download **Yap.dmg**, open it, drag **Yap.app** to **Applications**, then launch Yap from Applications. **Yap-macOS.zip** is the alternative app archive. Both have matching `.sha256` files. See the [v0.1.1 artifacts and installation details](Documentation/Releases.md#first-release-v011) and [release notes](Documentation/ReleaseNotes/v0.1.1.md).
+When published, download **Yap.dmg**, open it, drag **Yap.app** to **Applications**, then launch Yap from Applications. **Yap-macOS.zip** is the alternative app archive. Both have matching `.sha256` files. See the [0.1.2 candidate status and planned artifacts](Documentation/Releases.md#first-release-v012) and [release notes](Documentation/ReleaseNotes/v0.1.2.md).
 
 Connect your Zoom account in Settings when access is available to your account. Google Calendar is optional. Users of an earlier app should quit it first and review the [account and preference migration](Documentation/Bundle-Identity.md); ordinary macOS permissions may need approval again.
 

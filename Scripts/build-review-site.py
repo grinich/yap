@@ -266,7 +266,7 @@ def build_files(root: Path = ROOT) -> dict[str, bytes]:
     meeting_section = section(readme, "A meeting window that feels like a Mac app")
     shortcuts = section(readme, "A few keys worth knowing")
     try_section = section(readme, "Try " + brand).split("\n\n", 1)[0]
-    content = f'''<section class="hero"><span class="eyebrow">A little more room for your day</span><h1>{renderer.inline(tagline[1])}</h1><p class="deck">{renderer.inline(deck[1])}</p><div class="actions"><a class="button" href="/guide/">Meet {html.escape(brand)}</a><a class="button secondary" href="{REPOSITORY}">Explore the source ↗</a></div><p class="requirements">For Apple silicon · macOS 26 or newer</p></section>
+    content = f'''<section class="hero"><h1>{renderer.inline(tagline[1])}</h1><p class="deck">{renderer.inline(deck[1])}</p><div class="actions"><a class="button" href="/guide/">Meet {html.escape(brand)}</a><a class="button secondary" href="{REPOSITORY}">Explore the source ↗</a></div><p class="requirements">For Apple silicon · macOS 26 or newer</p></section>
 <figure><div class="showcase"><img src="/assets/meeting-gallery.png" alt="{html.escape(brand, quote=True)} meeting gallery with four fictional participants and native meeting controls" width="2624" height="1784" fetchpriority="high"></div><figcaption>The native meeting interface, shown with fictional participants. Keep people in view and meeting controls close.</figcaption></figure>
 <aside class="status" aria-label="Release status">{renderer.render(status[1])}</aside>
 <section class="section meeting-copy"><h2>A meeting window that feels like a Mac app</h2>{renderer.render(meeting_section)}</section>

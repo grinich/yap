@@ -20,10 +20,12 @@ struct CalendarJoinRegressionTests {
         fixture.model.receiveMeetingLink(URL(string: "zoommtg://zoom.us/join?action=join&confno=98765432101")!)
         await fixture.calendar.resumeEvents()
         await pending.value
-        #expect(fixture.driver.requests.isEmpty)
+        for _ in 0..<100 where fixture.driver.requests.isEmpty { await Task.yield() }
+        #expect(fixture.driver.requests.count == 1)
+        #expect(fixture.driver.requests.first?.url?.absoluteString == "https://zoom.us/j/98765432101")
         #expect(fixture.model.selectedEvent == nil)
         #expect(fixture.model.joinLink == "https://zoom.us/j/98765432101")
-        #expect(fixture.model.showJoinSheet)
+        #expect(!fixture.model.showJoinSheet)
         #expect(fixture.model.error == nil)
     }
 

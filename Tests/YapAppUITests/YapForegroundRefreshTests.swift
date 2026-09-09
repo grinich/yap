@@ -103,8 +103,9 @@ struct YapForegroundRefreshTests {
 
         #expect(fixture.model.selectedEvent == nil)
         #expect(fixture.model.joinLink == link)
-        #expect(fixture.model.showJoinSheet)
-        #expect(!fixture.model.activeCall)
+        if incoming { for _ in 0..<100 where !fixture.model.activeCall { await Task.yield() } }
+        #expect(fixture.model.showJoinSheet == !incoming)
+        #expect(fixture.model.activeCall == incoming)
         #expect(fixture.model.events.isEmpty)
         #expect(await fixture.calendar.connectCalls == 0)
     }
@@ -128,8 +129,9 @@ struct YapForegroundRefreshTests {
 
         #expect(fixture.model.selectedEvent == nil)
         #expect(fixture.model.joinLink == link)
-        #expect(fixture.model.showJoinSheet)
-        #expect(!fixture.model.activeCall)
+        if incoming { for _ in 0..<100 where !fixture.model.activeCall { await Task.yield() } }
+        #expect(fixture.model.showJoinSheet == !incoming)
+        #expect(fixture.model.activeCall == incoming)
         #expect(!fixture.model.isCalendarConnected)
         #expect(fixture.model.events.isEmpty)
         #expect(fixture.model.error == nil)

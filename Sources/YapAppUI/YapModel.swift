@@ -649,7 +649,23 @@ public final class YapModel {
         unsupportedZoomLink = nil
         selectedEvent = nil
         joinLink = meetingURL.absoluteString
-        showJoinSheet = true
+        showJoinSheet = false
+        guard !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showJoinSheet = true
+            joinInputError = "Enter your name before joining the meeting."
+            return
+        }
+        let revision = meetingLinkRevision
+        let requestedMeeting = meeting
+        Task { [weak self] in
+            guard let self, self.meetingLinkRevision == revision,
+                  self.meeting === requestedMeeting, !self.activeCall else { return }
+            guard self.isPreview || !self.zoomConnection.isBusy else {
+                self.error = "Finish connecting your Zoom account before joining a meeting."
+                return
+            }
+            await self.meeting.join(url: meetingURL, displayName: self.displayName)
+        }
     }
 
     public func joinPastedLink() async {

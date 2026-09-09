@@ -5,20 +5,67 @@ import YapMeetings
 
 @Suite("Join sheet feedback") @MainActor
 struct JoinMeetingFeedbackTests {
-    @Test func incomingNativeLinkPreparesJoinWithoutStartingMedia() async {
+    @Test func incomingNativeLinkJoinsImmediatelyWithSavedNameAndMediaOff() async {
         let fixture = JoinFeedbackFixture()
         defer { fixture.cleanUp() }
         fixture.model.showJoinSheet = false
         fixture.model.receiveMeetingLink(URL(string: "zoommtg://us02web.zoom.us/join?action=join&confno=12345678901&pwd=a%2Bb%26c&uname=SomeoneElse&video=1")!)
-        #expect(fixture.model.showJoinSheet)
+        #expect(!fixture.model.showJoinSheet)
         #expect(fixture.model.joinLink == "https://us02web.zoom.us/j/12345678901?pwd=a%2Bb%26c")
         #expect(fixture.model.displayName == "Test Person")
-        #expect(fixture.driver.requests.isEmpty)
         #expect(fixture.model.unsupportedZoomLink == nil)
-        await fixture.model.joinPastedLink()
+        await fixture.waitForAutomaticJoin()
         #expect(fixture.driver.requests.count == 1)
+        #expect(fixture.driver.requests.first?.url?.absoluteString == "https://us02web.zoom.us/j/12345678901?pwd=a%2Bb%26c")
+        #expect(fixture.driver.requests.first?.displayName == "Test Person")
         #expect(fixture.driver.requests.first?.microphoneMuted == true)
         #expect(fixture.driver.requests.first?.cameraEnabled == false)
+    }
+
+    @Test(arguments: [
+        "https://us02web.zoom.us/j/12345678901?pwd=fixture",
+        "zoomus://us02web.zoom.us/join?action=join&confno=12345678901&pwd=fixture",
+        "yap://join?url=https%3A%2F%2Fus02web.zoom.us%2Fj%2F12345678901%3Fpwd%3Dfixture"
+    ])
+    func incomingInvitationFormatsAllJoinWithoutASecondClick(_ link: String) async {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.receiveMeetingLink(URL(string: link)!)
+        await fixture.waitForAutomaticJoin()
+        #expect(!fixture.model.showJoinSheet)
+        #expect(fixture.driver.requests.count == 1)
+        #expect(fixture.driver.requests.first?.url?.absoluteString == "https://us02web.zoom.us/j/12345678901?pwd=fixture")
+    }
+
+    @Test func latestIncomingInvitationWinsBeforeJoinStarts() async {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.receiveMeetingLink(URL(string: JoinFeedbackFixture.validInvitation)!)
+        fixture.model.receiveMeetingLink(URL(string: "https://zoom.us/j/98765432101")!)
+        await fixture.waitForAutomaticJoin()
+        #expect(fixture.driver.requests.count == 1)
+        #expect(fixture.driver.requests.first?.url?.absoluteString == "https://zoom.us/j/98765432101")
+        #expect(fixture.model.error == nil)
+    }
+
+    @Test func missingSavedNameAsksOnlyForTheRequiredInput() {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.displayName = " \n "
+        fixture.model.receiveMeetingLink(URL(string: JoinFeedbackFixture.validInvitation)!)
+        #expect(fixture.model.showJoinSheet)
+        #expect(fixture.model.joinInputError == "Enter your name before joining the meeting.")
+        #expect(fixture.driver.requests.isEmpty)
+    }
+
+    @Test func changingToPreviewCancelsTheQueuedLiveInvitation() async {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.receiveMeetingLink(URL(string: JoinFeedbackFixture.validInvitation)!)
+        fixture.model.enterPreview()
+        for _ in 0..<10 { await Task.yield() }
+        #expect(fixture.driver.requests.isEmpty)
+        #expect(!fixture.model.activeCall)
     }
 
     @Test func incomingLinkDoesNotReplaceAnActiveMeeting() async {
@@ -192,6 +239,10 @@ private final class JoinFeedbackFixture {
     }
 
     func cleanUp() { preferences.removePersistentDomain(forName: suite) }
+
+    func waitForAutomaticJoin() async {
+        for _ in 0..<100 where driver.requests.isEmpty { await Task.yield() }
+    }
 }
 
 @MainActor

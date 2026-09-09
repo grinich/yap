@@ -230,7 +230,7 @@ struct TodayView: View {
             Button { Task { await model.hostMeeting() } } label: {
                 Label {
                     HStack(spacing: 10) {
-                        Text("Start a meeting")
+                        Text("Start new meeting")
                         Text("⇧⌘N").font(.system(size: 11, weight: .medium)).opacity(0.7).accessibilityHidden(true)
                     }
                 } icon: { Image(systemName: "plus") }
@@ -238,8 +238,8 @@ struct TodayView: View {
             }
             .buttonStyle(.glassProminent)
             .yapIconHover(cornerRadius: 100)
-            .help("Start a meeting · ⇧⌘N")
-            .accessibilityLabel("Start a meeting")
+            .help("Start new meeting · ⇧⌘N")
+            .accessibilityLabel("Start new meeting")
             Button("Join with a link…", systemImage: "link") {
                 model.selectedEvent = nil
                 model.joinLink = ""

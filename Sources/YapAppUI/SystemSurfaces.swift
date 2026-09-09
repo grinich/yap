@@ -69,7 +69,7 @@ public struct YapCommands: Commands {
             }.keyboardShortcut("j", modifiers: .command).disabled(model.activeCall)
             Button("Join next meeting") { openWindow(id: "main"); Task { await model.handleSystemAction(.joinNextMeeting) } }
                 .keyboardShortcut(.return, modifiers: .command).disabled(model.nextMeeting == nil || model.activeCall)
-            Button("Start a meeting") { openWindow(id: "main"); Task { await model.hostMeeting() } }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(model.activeCall)
+            Button("Start new meeting") { openWindow(id: "main"); Task { await model.hostMeeting() } }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(model.activeCall)
         }
         CommandGroup(after: .toolbar) {
             Toggle("Keep on Top", isOn: Binding(get: { YapWindowLevel.shared.isEnabled },

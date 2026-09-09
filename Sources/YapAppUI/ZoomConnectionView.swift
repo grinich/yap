@@ -244,7 +244,7 @@ struct ZoomConnectionView: View {
                     Button("Disconnect Zoom", role: .destructive) { Task { await connection.disconnect() } }
                         .disabled(model.activeCall || connection.isBusy)
                 } else {
-                    Button("Sign in with Zoom") { Task { await connection.connect() } }
+                    Button("Sign in to Zoom") { Task { await connection.connect() } }
                         .disabled(connection.isBusy || connection.isLoadingStatus || model.activeCall)
                 }
                 Menu(connection.hasPublicConfiguration ? "Developer configuration…" : "Replace Zoom configuration…") {
@@ -272,6 +272,7 @@ struct ZoomConnectionView: View {
             ZoomConfigurationEntry(model: model, connection: connection)
         }
         .alert("Zoom connection", isPresented: Binding(get: { connection.error != nil && connection.statusError == nil && !showConfigurationEntry }, set: { if !$0 { connection.error = nil } })) {
+            ZoomSignInButton(error: connection.error ?? "", recovery: model.recordings.zoomSignInRecovery)
             Button("OK", role: .cancel) { connection.error = nil }
         } message: { Text(connection.error ?? "") }
     }

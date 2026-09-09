@@ -17,7 +17,8 @@ public struct YapRootView: View {
 
     public var body: some View {
         Group {
-            if model.activeCall { MeetingView(model: model) }
+            if model.activeCall && model.meeting.isRoomShare { RoomSharingView(model: model) }
+            else if model.activeCall { MeetingView(model: model) }
             else { TodayView(model: model) }
         }
         .frame(minWidth: model.recordings.isPresented && !model.activeCall ? 700 : 320, minHeight: 240)
@@ -65,6 +66,8 @@ public struct YapRootView: View {
             Button("Stay", role: .cancel) {}
         } message: { Text(model.meeting.isHost ? "Ending the meeting disconnects everyone. Leaving keeps it open when Zoom allows a host handoff." : "Your microphone, camera, and sharing will stop.") }
         .alert("Yap", isPresented: Binding(get: { model.error != nil || model.meeting.lastError != nil }, set: { if !$0 { model.error = nil; model.meeting.dismissError() } })) {
+            ZoomSignInButton(error: model.error ?? model.meeting.lastError ?? "",
+                             recovery: model.recordings.zoomSignInRecovery)
             Button("OK", role: .cancel) { model.error = nil; model.meeting.dismissError() }
         } message: { Text(model.error ?? model.meeting.lastError ?? "") }
         .alert("Open in Zoom Workplace?", isPresented: Binding(
@@ -98,8 +101,7 @@ public struct YapRootView: View {
 
     private var windowTitle: String {
         if model.activeCall {
-            let title = model.meeting.meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            return title.isEmpty ? "Meeting" : title
+            return model.meeting.displayTitle
         }
         if model.recordings.isPresented { return "Recordings" }
         return model.isPreview ? "Agenda Preview" : "Agenda"
@@ -228,17 +230,14 @@ struct TodayView: View {
         HStack(spacing: 8) {
             Button { Task { await model.hostMeeting() } } label: {
                 Label {
-                    HStack(spacing: 10) {
-                        Text("Start a meeting")
-                        Text("⇧⌘N").font(.system(size: 11, weight: .medium)).opacity(0.7).accessibilityHidden(true)
-                    }
+                    Text("Start new meeting")
                 } icon: { Image(systemName: "plus") }
                 .foregroundStyle(.white)
             }
             .buttonStyle(.glassProminent)
             .yapIconHover(cornerRadius: 100)
-            .help("Start a meeting · ⇧⌘N")
-            .accessibilityLabel("Start a meeting")
+            .help("Start new meeting · ⇧⌘N")
+            .accessibilityLabel("Start new meeting")
             Button("Join with a link…", systemImage: "link") {
                 model.selectedEvent = nil
                 model.joinLink = ""
@@ -250,6 +249,14 @@ struct TodayView: View {
             .foregroundStyle(.primary)
             .help("Join with a link · ⌘J")
             .accessibilityLabel("Join with a link")
+            Button("Share screen", systemImage: "rectangle.on.rectangle") {
+                Task { await model.shareScreenToRoom() }
+            }
+            .buttonStyle(.glass)
+            .yapIconHover(cornerRadius: 100)
+            .tint(nil as Color?).foregroundStyle(.primary)
+            .help("Share a window or display to a nearby Zoom Room")
+            .disabled(model.isPreview || model.zoomConnection.isBusy)
         }
     }
 

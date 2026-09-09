@@ -38,7 +38,12 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     ZoomSDKMeetingActionControllerDelegate, ZoomSDKMeetingChatControllerDelegate,
     ZoomSDKASControllerDelegate, ZoomSDKWaitingRoomDelegate, ZoomSDKVideoContainerDelegate,
     ZoomSDKReminderControllerDelegate, ZoomSDKMeetingIndicatorControllerDelegate,
-    ZoomSDKMeetingRecordDelegate>
+    ZoomSDKMeetingRecordDelegate, ZoomSDKDirectShareHelperDelegate>
+@property(nonatomic) BOOL roomShare;
+@property(nonatomic) BOOL directShareRunning;
+@property(nonatomic, strong) ZoomSDKDirectShareHelper *directShareHelper;
+@property(nonatomic, strong) ZoomSDKDirectShareHandler *directShareCodeHandler;
+@property(nonatomic, strong) ZoomSDKDirectShareSpecifyContentHandler *directShareContentHandler;
 @property(nonatomic, copy) NSString *sessionID;
 @property(nonatomic, strong) ZoomSDKMeetingService *meeting;
 @property(nonatomic, strong) ZoomSDKJoinMeetingElements *joinParameters;
@@ -162,6 +167,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (BOOL)canSafelyResetNative {
+    if (self.directShareRunning) return NO;
     if (!self.meeting) return !self.joinRequested;
     return self.terminalStatusObserved || WHZoomStatusIsTerminal([self.meeting getMeetingStatus]);
 }
@@ -191,6 +197,11 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     if (message && !self.terminationMessage) self.terminationMessage = message;
     self.ending = YES;
     [self cancelConnectionWatchdog];
+    if (self.directShareRunning && !self.leaveWatchdogArmed) {
+        if (self.directShareCodeHandler) [self.directShareCodeHandler cancel];
+        else if (self.directShareContentHandler) [self.directShareContentHandler cancel];
+        else [self.directShareHelper stopDirectShare];
+    }
     if ([self canSafelyResetNative]) { [self terminateWithMessage:self.terminationMessage]; return; }
     [self emit:@"status" object:@"leaving"];
     if (message) [self emit:@"controlError" object:[message stringByAppendingString:@" Yap is asking Zoom to disconnect before closing this meeting."]];
@@ -206,6 +217,13 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     [self checkLeaveCompletion:revision session:session];
 }
 
+- (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID {
+    if (self.sessionID) return ZoomSDKError_WrongUsage;
+    self.roomShare = YES;
+    return [self beginWithJWT:jwt zak:@"" meetingNumber:0 vanityID:nil passcode:nil registrantToken:nil
+                 displayName:@"" host:NO sessionID:sessionID];
+}
+
 - (NSInteger)beginWithJWT:(NSString *)jwt zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
                 vanityID:(NSString *)vanityID passcode:(NSString *)passcode
          registrantToken:(NSString *)registrantToken displayName:(NSString *)displayName
@@ -215,7 +233,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     self.sessionID = sessionID; self.ending = NO; self.joinRequested = NO; self.hosting = host;
     self.hasEnteredMeeting = NO; self.terminalStatusObserved = NO; self.terminationMessage = nil;
     ZoomSDKInitParams *params = [ZoomSDKInitParams new];
-    params.needCustomizedUI = YES; params.enableLog = NO; params.zoomDomain = @"zoom.us";
+    params.needCustomizedUI = !self.roomShare; params.enableLog = NO; params.zoomDomain = @"zoom.us";
     ZoomSDKError result = [[ZoomSDK sharedSDK] initSDKWithParams:params];
     [self logConnection:"init-return" code:result status:0 reason:0];
     if (result != ZoomSDKError_Success) { self.sessionID = nil; return result; }
@@ -292,6 +310,33 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     [self.meeting getVideoContainer].delegate = self;
     [self.meeting getMeetingIndicatorController].delegate = self;
     [self.meeting getRecordController].delegate = self;
+    if (self.roomShare) {
+        self.joinParameters = nil;
+        // Direct Share's documented default-UI flow must ask what to share.
+        // Never inherit Zoom's automatic whole-desktop sharing preference.
+        if (!sharing || [sharing setShareOptionwWhenShareInDirectShare:ZoomSDKSettingShareScreenShareOption_AllOption] != ZoomSDKError_Success) {
+            [self terminateWithMessage:@"Zoom could not prepare the screen-sharing picker. Nothing has been shared."];
+            return;
+        }
+        ZoomSDKPremeetingService *premeeting = [[ZoomSDK sharedSDK] getPremeetingService];
+        [premeeting enableForceAutoStopMyVideoWhenJoinMeeting:YES];
+        [premeeting disableAutoShowSelectJoinAudioDlgWhenJoinMeeting:YES];
+        self.directShareHelper = [premeeting getDirectShareHelper];
+        ZoomSDKError availability = self.directShareHelper ? [self.directShareHelper canDirectShare] : ZoomSDKError_ServiceFailed;
+        if (availability != ZoomSDKError_Success) {
+            [self terminateWithMessage:[NSString stringWithFormat:@"Zoom Room sharing is unavailable (SDK code %ld). Check the room’s direct-sharing setting and your microphone permission.", (long)availability]];
+            return;
+        }
+        self.directShareHelper.delegate = self;
+        self.joinRequested = YES;
+        self.directShareRunning = YES;
+        ZoomSDKError result = [self.directShareHelper startDirectShare];
+        if (result != ZoomSDKError_Success) {
+            self.directShareRunning = NO;
+            [self terminateWithMessage:[NSString stringWithFormat:@"Zoom couldn’t find a room for sharing (SDK code %ld).", (long)result]];
+        }
+        return;
+    }
     BOOL isHost = self.hostParameters != nil;
     ZoomSDKMeetingStatus initialState = [self.meeting getMeetingStatus];
     BOOL sdkLoggedIn = [[[ZoomSDK sharedSDK] getAuthService] getAccountInfo] != nil;
@@ -312,6 +357,62 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         [self onMeetingStatusChange:returnedState meetingError:ZoomSDKMeetingError_Success EndReason:EndMeetingReason_None];
     }
 }
+- (NSInteger)submitRoomSharingCode:(NSString *)code {
+    if (!self.roomShare || self.ending || !self.directShareCodeHandler) return ZoomSDKError_WrongUsage;
+    ZoomSDKDirectShareHandler *handler = self.directShareCodeHandler;
+    self.directShareCodeHandler = nil;
+    BOOL numeric = code.length > 0 && [code rangeOfCharacterFromSet:[[NSCharacterSet decimalDigitCharacterSet] invertedSet]].location == NSNotFound;
+    ZoomSDKError result = numeric ? [handler inputMeetingNumber:code] : [handler inputSharingKey:code];
+    if (result != ZoomSDKError_Success && !self.directShareCodeHandler) self.directShareCodeHandler = handler;
+    return result;
+}
+
+- (void)onDirectShareStatusReceived:(DirectShareStatus)status DirectShareReceived:(ZoomSDKDirectShareHandler *)handler {
+    [self onMain:^{
+        if (!self.sessionID || !self.roomShare) return;
+        if (status == DirectShareStatus_Ended) {
+            self.directShareRunning = NO;
+            self.directShareCodeHandler = nil;
+            self.directShareContentHandler = nil;
+            [self terminateWithMessage:self.terminationMessage];
+            return;
+        }
+        if (self.ending) return;
+        self.directShareCodeHandler = nil;
+        switch (status) {
+            case DirectShareStatus_NeedMeetingIDOrSharingKey:
+            case DirectShareStatus_NeedInputNewPairingCode:
+                self.directShareCodeHandler = handler;
+                [self emit:@"roomShare" object:@"needsCode"];
+                break;
+            case DirectShareStatus_WrongMeetingIDOrSharingKey:
+                self.directShareCodeHandler = handler;
+                [self emit:@"roomShare" object:@"invalidCode"];
+                break;
+            case DirectShareStatus_Connecting:
+                [self emit:@"roomShare" object:@"searching"];
+                break;
+            case DirectShareStatus_InProgress:
+                self.directShareContentHandler = nil;
+                [self emit:@"roomShare" object:@"sharing"];
+                break;
+            case DirectShareStatus_NetworkError:
+                [self requestLeaveWithMessage:@"Zoom couldn’t connect to the room. Check that your Mac and the Zoom Room are on the same network, then try again." endMeeting:NO];
+                break;
+            default: break;
+        }
+    }];
+}
+
+- (void)onDirectShareSpecifyContent:(ZoomSDKDirectShareSpecifyContentHandler *)handler {
+    [self onMain:^{
+        if (!self.sessionID || !self.roomShare || self.ending) return;
+        self.directShareCodeHandler = nil;
+        self.directShareContentHandler = handler;
+        [self emit:@"roomShare" object:@"choosingContent"];
+    }];
+}
+
 - (void)onZoomAuthIdentityExpired {
     [self emit:@"controlError" object:@"Zoom’s app authentication expired. Reconnect before your next meeting."];
 }
@@ -342,6 +443,12 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (void)resetNative {
+    self.directShareHelper.delegate = nil;
+    self.directShareHelper = nil;
+    self.directShareCodeHandler = nil;
+    self.directShareContentHandler = nil;
+    self.directShareRunning = NO;
+    self.roomShare = NO;
     [self.requestedAvatars removeAllObjects]; [self.avatarRevisions removeAllObjects];
     self.profilePicturesHidden = nil;
     self.cloudRecordingStartRequest = nil; self.cloudRecordingRequesterID = 0;
@@ -382,6 +489,8 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self onMeetingStatusChange:state meetingError:error EndReason:reason]; }); return;
     }
     if (!self.sessionID) return;
+    // The premeeting service can report Idle while it listens for a room.
+    if (self.roomShare && self.directShareRunning && state == ZoomSDKMeetingStatus_Idle && !self.ending) return;
     self.terminalStatusObserved = WHZoomStatusIsTerminal(state);
     [self logConnection:"meeting-status" code:error status:state reason:reason];
     [self updateConnectionWatchdogForStatus:state];
@@ -420,7 +529,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
                 if (invitation.length) [self emit:@"invitation" object:invitation];
                 // Connect playback while keeping the input muted through Zoom's join-VoIP setting.
                 ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
-                if ([[action getMyself] getAudioType] == ZoomSDKAudioType_None) {
+                if (!self.roomShare && [[action getMyself] getAudioType] == ZoomSDKAudioType_None) {
                     [action actionMeetingWithCmd:ActionMeetingCmd_JoinVoip userID:0 onScreen:ScreenType_First];
                 }
             }
@@ -935,9 +1044,19 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     }];
 }
 
-- (BOOL)isWindowShareable:(uint32_t)windowID { return [[self.meeting getASController] isShareAppValid:windowID]; }
-- (BOOL)isDesktopSharingEnabled { return [[self.meeting getASController] isDesktopSharingEnabled]; }
+- (BOOL)isWindowShareable:(uint32_t)windowID {
+    if (self.roomShare) return [[self.directShareContentHandler getSupportedDirectShareType] containsObject:@(ZoomSDKShareContentType_AS)];
+    return [[self.meeting getASController] isShareAppValid:windowID];
+}
+- (BOOL)isDesktopSharingEnabled {
+    if (self.roomShare) return [[self.directShareContentHandler getSupportedDirectShareType] containsObject:@(ZoomSDKShareContentType_DS)];
+    return [[self.meeting getASController] isDesktopSharingEnabled];
+}
 - (NSInteger)startSharingWindow:(uint32_t)windowID {
+    if (self.roomShare) {
+        if (!self.directShareContentHandler || self.ending) return ZoomSDKError_WrongUsage;
+        return [self.directShareContentHandler tryShareApplication:windowID shareSound:NO optimizeVideoClip:NO];
+    }
     ZoomSDKASController *share = [self.meeting getASController];
     if (!share || ![share isShareAppValid:windowID]) return ZoomSDKError_WrongUsage;
     ZoomSDKError result = [share startAppShare:windowID];
@@ -946,6 +1065,10 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     return result;
 }
 - (NSInteger)startSharingDisplay:(uint32_t)displayID {
+    if (self.roomShare) {
+        if (!self.directShareContentHandler || self.ending) return ZoomSDKError_WrongUsage;
+        return [self.directShareContentHandler tryShareDesktop:displayID shareSound:NO optimizeVideoClip:NO];
+    }
     ZoomSDKASController *share = [self.meeting getASController];
     if (!share || ![share isDesktopSharingEnabled]) return ZoomSDKError_WrongUsage;
     ZoomSDKError result = [share startMonitorShare:displayID];

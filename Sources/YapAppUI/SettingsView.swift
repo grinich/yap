@@ -77,6 +77,9 @@ public struct YapSettingsView: View {
                 TextField("Display name", text: $model.displayName)
                 Label("Join with microphone muted and camera off", systemImage: "mic.slash")
                 Text("Turn them on when you’re ready, using the call controls.").font(.caption).foregroundStyle(.secondary)
+                Toggle("Ask before leaving a meeting", isOn: $model.askBeforeLeavingMeeting)
+                Text("When off, Leave exits the call immediately without ending it for everyone.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             ZoomLinkSettingsView()
             Section("Reminders") {

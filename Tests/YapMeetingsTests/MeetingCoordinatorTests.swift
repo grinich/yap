@@ -6,6 +6,36 @@ import Testing
 struct MeetingCoordinatorTests {
     private let meetingURL = URL(string: "https://example.zoom.us/j/12345678901?pwd=fixture")!
 
+    @Test func untitledCallsUseTheOtherPersonsCurrentNameOnlyWhenOneToOne() async throws {
+        let driver = DemoMeetingDriver(participantCount: 2)
+        let coordinator = MeetingCoordinator(driver: driver)
+        await coordinator.join(url: meetingURL, displayName: "Me")
+        #expect(coordinator.meetingTitle.isEmpty)
+        #expect(coordinator.displayTitle == "Avery Chen")
+        let session = try #require(coordinator.sessionID)
+        var participants = coordinator.participants
+        let other = try #require(participants.firstIndex { !$0.isSelf })
+        participants[other].name = "  Alex Morgan  "
+        driver.onEvent?(session, .participants(participants))
+        #expect(coordinator.displayTitle == "Alex Morgan")
+        coordinator.setDemoParticipantCount(3)
+        #expect(coordinator.displayTitle == "Your meeting")
+        coordinator.setDemoParticipantCount(2)
+        #expect(coordinator.displayTitle == "Avery Chen")
+        await coordinator.leave()
+        #expect(coordinator.displayTitle == "Your meeting")
+        await coordinator.host(displayName: "Me")
+        #expect(coordinator.meetingTitle.isEmpty)
+        #expect(coordinator.displayTitle == "Avery Chen")
+    }
+
+    @Test(arguments: ["Design review", "Zoom meeting", "Personal meeting"])
+    func explicitTitlesAreKeptEvenForOneToOneCalls(_ title: String) async {
+        let coordinator = MeetingCoordinator(driver: DemoMeetingDriver(participantCount: 2))
+        await coordinator.join(url: meetingURL, displayName: "Me", title: title)
+        #expect(coordinator.displayTitle == title)
+    }
+
     @Test func liveServiceDoesNotPretendToConnect() async {
         let coordinator = MeetingCoordinator()
         await coordinator.join(url: meetingURL, displayName: "Test")

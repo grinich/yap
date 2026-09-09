@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import YapAppUI
 
-@Suite("Recorded chat web links") @MainActor
+@Suite("Chat web links") @MainActor
 struct ChatMessageLinksTests {
     @Test func multipleLinksExcludeSurroundingPunctuation() {
         let text = "Read (https://example.com/guide), then visit https://example.org/notes."

@@ -61,7 +61,7 @@ enum YapReminderPermissionError: Error { case notificationsNotAllowed }
 @MainActor @Observable
 public final class YapModel {
     public var meeting: MeetingCoordinator
-    public let sharingPresentation = YapSharingPresentation()
+    public let meetingPresentation = YapMeetingPresentation()
     public let zoomConnection: ZoomConnectionModel
     public let recordings: RecordingLibraryModel
     public private(set) var events: [CalendarEvent] = []
@@ -76,6 +76,7 @@ public final class YapModel {
     public var displayName: String { didSet { preferences.set(displayName, forKey: "displayName"); joinInputError = nil } }
     public var remindersEnabled: Bool { didSet { preferences.set(remindersEnabled, forKey: "remindersEnabled") } }
     public var reminderMinutes: Int { didSet { preferences.set(reminderMinutes, forKey: "reminderMinutes") } }
+    public var askBeforeLeavingMeeting: Bool { didSet { preferences.set(askBeforeLeavingMeeting, forKey: "askBeforeLeavingMeeting") } }
     public private(set) var showReminderPermission = false
     public private(set) var reminderAuthorizationStatus: ReminderAuthorizationStatus = .notDetermined
     public private(set) var isChangingReminders = false
@@ -134,6 +135,7 @@ public final class YapModel {
         self.preferences = preferences
         self.displayName = preferences.string(forKey: "displayName") ?? NSFullUserName().components(separatedBy: " ").first ?? "Me"
         self.remindersEnabled = preferences.bool(forKey: "remindersEnabled")
+        self.askBeforeLeavingMeeting = preferences.bool(forKey: "askBeforeLeavingMeeting")
         self.reminderMinutes = max(1, preferences.integer(forKey: "reminderMinutes") == 0 ? 2 : preferences.integer(forKey: "reminderMinutes"))
         let zoomConnection = zoomConnection ?? ZoomConnectionModel()
         self.zoomConnection = zoomConnection
@@ -150,6 +152,7 @@ public final class YapModel {
         self.loadGoogleConfiguration = loadGoogleConfiguration ?? YapConfigurationStore.loadGoogle
         self.makeConfiguredCalendarClient = makeConfiguredCalendarClient ?? { Self.makeCalendarClient(configuration: $0) }
         self.selectedCalendarIDs = Set(preferences.stringArray(forKey: "selectedCalendarIDs") ?? [])
+        recordings.zoomSignInRecovery = ZoomSignInRecovery(model: self)
         if preview {
             enterPreview()
             if ProcessInfo.processInfo.arguments.contains("--recordings-preview") { recordings.isPresented = true }
@@ -647,7 +650,23 @@ public final class YapModel {
         unsupportedZoomLink = nil
         selectedEvent = nil
         joinLink = meetingURL.absoluteString
-        showJoinSheet = true
+        showJoinSheet = false
+        guard !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showJoinSheet = true
+            joinInputError = "Enter your name before joining the meeting."
+            return
+        }
+        let revision = meetingLinkRevision
+        let requestedMeeting = meeting
+        Task { [weak self] in
+            guard let self, self.meetingLinkRevision == revision,
+                  self.meeting === requestedMeeting, !self.activeCall else { return }
+            guard self.isPreview || !self.zoomConnection.isBusy else {
+                self.error = "Finish connecting your Zoom account before joining a meeting."
+                return
+            }
+            await self.meeting.join(url: meetingURL, displayName: self.displayName)
+        }
     }
 
     public func joinPastedLink() async {
@@ -663,15 +682,41 @@ public final class YapModel {
             joinInputError = "Enter your name before joining the meeting."; return
         }
         showJoinSheet = false
-        await meeting.join(url: url, displayName: displayName, title: selectedEvent?.title ?? "Zoom meeting")
+        await meeting.join(url: url, displayName: displayName, title: selectedEvent?.title ?? "")
     }
 
     public func hostMeeting() async {
         guard isPreview || !zoomConnection.isBusy else { error = "Finish connecting your Zoom account before starting a meeting."; return }
-        await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "Personal meeting")
+        await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "")
+    }
+
+    public func shareScreenToRoom() async {
+        guard !Task.isCancelled, !activeCall else { return }
+        guard !isPreview else { error = "Exit preview to share to a Zoom Room."; return }
+        guard !zoomConnection.isBusy else { error = "Finish signing in to Zoom before sharing to a room."; return }
+        meetingLinkRevision = UUID()
+        selectedEvent = nil
+        showJoinSheet = false
+        areMeetingControlsVisible = true
+        await meeting.shareToRoom(displayName: displayName)
+    }
+
+    public func requestLeaveMeeting() {
+        guard activeCall, meeting.status != .leaving else { return }
+        if askBeforeLeavingMeeting {
+            showLeaveConfirmation = true
+            return
+        }
+        let requestedMeeting = meeting
+        let sessionID = meeting.sessionID
+        Task { [weak self] in
+            guard let self, self.meeting === requestedMeeting, self.meeting.sessionID == sessionID else { return }
+            await self.leaveMeeting()
+        }
     }
 
     public func leaveMeeting(endForEveryone: Bool = false) async {
+        showLeaveConfirmation = false
         await meeting.leave(endForEveryone: endForEveryone)
         if !meeting.status.isActive { sidebar = nil; focusedParticipantID = nil }
     }

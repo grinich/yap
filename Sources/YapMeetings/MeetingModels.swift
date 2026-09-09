@@ -216,6 +216,10 @@ public struct MeetingCapabilities: Sendable, Equatable {
 }
 
 /// Request values stay in memory. Meeting links and passcodes must not enter logs.
+public enum RoomShareStage: String, Sendable {
+    case searching, needsCode, invalidCode, choosingContent, sharing
+}
+
 public struct MeetingRequest: Sendable, Equatable {
     public let url: URL?
     public let displayName: String
@@ -223,19 +227,22 @@ public struct MeetingRequest: Sendable, Equatable {
     public let isHost: Bool
     public let microphoneMuted: Bool
     public let cameraEnabled: Bool
+    public let isRoomShare: Bool
 
     public init(url: URL?, displayName: String, title: String, isHost: Bool,
-                microphoneMuted: Bool = true, cameraEnabled: Bool = false) {
+                microphoneMuted: Bool = true, cameraEnabled: Bool = false, isRoomShare: Bool = false) {
         self.url = url
         self.displayName = displayName
         self.title = title
         self.isHost = isHost
         self.microphoneMuted = microphoneMuted
         self.cameraEnabled = cameraEnabled
+        self.isRoomShare = isRoomShare
     }
 }
 
 public enum MeetingDriverEvent: Sendable {
+    case roomShare(RoomShareStage)
     case status(MeetingStatus)
     case participants([MeetingParticipant])
     case message(MeetingChatMessage)

@@ -5,6 +5,12 @@ import Observation
 @MainActor @Observable
 public final class MeetingCoordinator {
     public private(set) var status: MeetingStatus = .idle
+    public private(set) var roomShareStage: RoomShareStage?
+    public var isRoomShare: Bool { roomShareStage != nil }
+    public var canChooseSharingContent: Bool {
+        if isRoomShare { return status.isActive && status != .leaving && roomShareStage == .choosingContent }
+        return status == .inMeeting
+    }
     public private(set) var participants: [MeetingParticipant] = []
     public private(set) var chatMessages: [MeetingChatMessage] = []
     public private(set) var chatLegalNotice: MeetingChatLegalNotice?
@@ -52,6 +58,18 @@ public final class MeetingCoordinator {
         driver.onEvent = { [weak self] sessionID, event in self?.receive(event, for: sessionID) }
     }
 
+    /// Preserve supplied titles; untitled one-to-one calls are identified by the other person.
+    public var displayTitle: String {
+        let title = meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        if participants.count == 2, participants.contains(where: \.isSelf),
+           let other = participants.first(where: { !$0.isSelf }) {
+            let name = other.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+        }
+        return "Your meeting"
+    }
+
     public var isConnected: Bool { status == .inMeeting }
     public var selectedReceivedShare: ReceivedMeetingShare? {
         receivedShares.first { $0.id == selectedReceivedShareID }
@@ -79,16 +97,15 @@ public final class MeetingCoordinator {
     public var visibleParticipants: [MeetingParticipant] {
         if let pair = oneToOneParticipants { return [pair.remote, pair.local] }
         if let primary = presentationParticipant {
-            // Keep subscriptions aligned with the large tile and its thumbnail
-            // strip, including a speaker outside the former gallery page.
-            return [primary] + participants.filter { $0.id != primary.id }.prefix(6)
+            // Only the speaker and local corner self-view are rendered.
+            return [primary] + participants.filter { $0.isSelf && $0.id != primary.id }
         }
         let start = min(pageIndex * pageSize, participants.count)
         let end = min(start + pageSize, participants.count)
         return Array(galleryParticipants[start..<end])
     }
 
-    public func join(url: URL, displayName: String, title: String = "Zoom meeting") async {
+    public func join(url: URL, displayName: String, title: String = "") async {
         guard Self.isZoomMeetingURL(url) else {
             lastError = MeetingError.invalidLink.localizedDescription
             return
@@ -96,8 +113,31 @@ public final class MeetingCoordinator {
         await connect(MeetingRequest(url: url, displayName: displayName, title: title, isHost: false))
     }
 
-    public func host(displayName: String, title: String = "Instant meeting") async {
+    public func host(displayName: String, title: String = "") async {
         await connect(MeetingRequest(url: nil, displayName: displayName, title: title, isHost: true))
+    }
+
+    public func shareToRoom(displayName: String) async {
+        guard !isDemo else { lastError = "Exit preview to share to a Zoom Room."; return }
+        await connect(MeetingRequest(url: nil, displayName: displayName, title: "Share screen", isHost: false, isRoomShare: true))
+    }
+
+    public func submitRoomSharingCode(_ code: String) async {
+        guard let id = sessionID, status.isActive, status != .leaving,
+              roomShareStage == .needsCode || roomShareStage == .invalidCode else { return }
+        let normalized = code.filter { !$0.isWhitespace }.uppercased()
+        guard !normalized.isEmpty, normalized.count <= 32,
+              normalized.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) }) else {
+            lastError = "Enter the sharing key or meeting ID shown on the room display."
+            return
+        }
+        roomShareStage = .searching
+        do { try await driver.submitRoomSharingCode(normalized, sessionID: id) }
+        catch {
+            guard sessionID == id, status != .leaving else { return }
+            roomShareStage = .needsCode
+            lastError = error.localizedDescription
+        }
     }
 
     private func connect(_ request: MeetingRequest) async {
@@ -109,11 +149,13 @@ public final class MeetingCoordinator {
         let newID = UUID()
         sessionID = newID
         meetingTitle = request.title
+        roomShareStage = request.isRoomShare ? .searching : nil
         // A request to host is not proof that Zoom granted the host role.
         isHost = false
         status = .connecting
         let normalizedRequest = MeetingRequest(url: request.url, displayName: trimmedName, title: request.title,
-                                               isHost: request.isHost, microphoneMuted: true, cameraEnabled: false)
+                                               isHost: request.isHost, microphoneMuted: true, cameraEnabled: false,
+                                               isRoomShare: request.isRoomShare)
         do {
             try await withTaskCancellationHandler {
                 try Task.checkCancellation()
@@ -170,10 +212,12 @@ public final class MeetingCoordinator {
     }
 
     public func setMicrophoneMuted(_ muted: Bool) async {
+        guard !isRoomShare || muted else { return }
         await applyControl { driver, id in try await driver.setMicrophoneMuted(muted, sessionID: id) }
     }
 
     public func setCameraEnabled(_ enabled: Bool) async {
+        guard !isRoomShare || !enabled else { return }
         await applyControl { driver, id in try await driver.setCameraEnabled(enabled, sessionID: id) }
     }
 
@@ -198,17 +242,17 @@ public final class MeetingCoordinator {
     /// asynchronous SDK errors in lastError for the application's normal alert.
     public func startShareFromChooser(_ target: ShareTarget) async throws {
         try Task.checkCancellation()
-        guard let id = sessionID, status == .inMeeting else { throw MeetingError.noMeeting }
+        guard let id = sessionID, canChooseSharingContent else { throw MeetingError.noMeeting }
         guard !isApplyingControl else { throw MeetingError.operationInProgress }
         isApplyingControl = true
         defer { if sessionID == id { isApplyingControl = false } }
         do { try await driver.startShare(target, sessionID: id) }
         catch {
-            guard !Task.isCancelled, sessionID == id, status == .inMeeting else { throw CancellationError() }
+            guard !Task.isCancelled, sessionID == id, canChooseSharingContent else { throw CancellationError() }
             throw error
         }
         try Task.checkCancellation()
-        guard sessionID == id, status == .inMeeting else { throw CancellationError() }
+        guard sessionID == id, canChooseSharingContent else { throw CancellationError() }
     }
 
     public func stopShare() async {
@@ -300,16 +344,16 @@ public final class MeetingCoordinator {
     /// clearing the meeting-wide error. Selection never starts capture.
     public func availableShareTargetsForChooser() async throws -> [ShareTarget] {
         try Task.checkCancellation()
-        guard let id = sessionID, status == .inMeeting else { throw MeetingError.noMeeting }
+        guard let id = sessionID, canChooseSharingContent else { throw MeetingError.noMeeting }
         guard capabilities.canEnumerateShareTargets else { return [] }
         let targets: [ShareTarget]
         do { targets = try await driver.availableShareTargets(sessionID: id) }
         catch {
-            guard !Task.isCancelled, sessionID == id, status == .inMeeting else { throw CancellationError() }
+            guard !Task.isCancelled, sessionID == id, canChooseSharingContent else { throw CancellationError() }
             throw error
         }
         try Task.checkCancellation()
-        guard sessionID == id, status == .inMeeting else { throw CancellationError() }
+        guard sessionID == id, canChooseSharingContent else { throw CancellationError() }
         var seen: Set<String> = []
         return targets.filter {
             (isDemo || $0.kind != .demo) && seen.insert("\($0.kind.rawValue):\($0.id)").inserted
@@ -452,6 +496,8 @@ public final class MeetingCoordinator {
             }
         }
         switch event {
+        case .roomShare(let stage):
+            if isRoomShare { roomShareStage = stage }
         case .status(let next):
             if next == .idle { resetSession() }
             else if next == .failed {
@@ -528,6 +574,7 @@ public final class MeetingCoordinator {
     }
 
     private func resetSession() {
+        roomShareStage = nil
         sessionID = nil
         status = .idle
         participants = []

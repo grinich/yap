@@ -76,6 +76,73 @@ struct ZoomConnectionTests {
         #expect((model.error == nil) == succeeds)
     }
 
+    @Test(arguments: [true, false])
+    func recoverySignsInDirectlyAndSurfacesFailuresOutsideSettings(succeeds: Bool) async throws {
+        let store = ZoomUIFixtureStore(configuration: configuration)
+        let client = ZoomAccountClient(store: store, transport: ZoomHTTPTransport { request in
+            let body = request.url?.path == "/v2/users/me/zak" ? #"{"token":"fixture-zak"}"#
+                : #"{"access_token":"fixture-access","refresh_token":"fixture-refresh","token_type":"bearer","expires_in":3600,"scope":"user:read:zak"}"#
+            let data = Data(body.utf8)
+            return (data, HTTPURLResponse(url: request.url!, statusCode: succeeds ? 200 : 400,
+                                         httpVersion: nil, headerFields: nil)!)
+        })
+        var browserOpens = 0
+        let connection = ZoomConnectionModel(client: client, openURL: { url in
+            browserOpens += 1
+            Task {
+                let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                guard let redirect = query.first(where: { $0.name == "redirect_uri" })?.value,
+                      let state = query.first(where: { $0.name == "state" })?.value,
+                      var callback = URLComponents(string: redirect) else { return }
+                callback.queryItems = [.init(name: "code", value: "fixture-code"), .init(name: "state", value: state)]
+                if let url = callback.url { _ = try? await URLSession.shared.data(from: url) }
+            }
+        }, onSignInCompleted: {})
+        let suite = "yap-recovery-\(UUID().uuidString)"
+        let preferences = try #require(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let app = YapModel(preview: false, preferences: preferences,
+                           meeting: MeetingCoordinator(driver: DemoMeetingDriver()), zoomConnection: connection,
+                           reminders: YapReminderActions(requestAuthorization: { false }, synchronize: { _, _ in }, disable: {}))
+        let recovery = try #require(app.recordings.zoomSignInRecovery)
+        app.recordings.isPresented = true
+        app.error = ZoomAccountError.notConnected.localizedDescription
+        let revision = connection.accountRevision
+        #expect(recovery.isEnabled)
+        await recovery.signIn()
+        #expect(browserOpens == 1)
+        #expect(connection.accountRevision != revision)
+        #expect(connection.hasSavedConnection == succeeds)
+        #expect(app.error == (succeeds ? nil : ZoomAccountError.notConnected.localizedDescription))
+        #expect(app.recordings.isPresented)
+        #expect(!app.showSettings)
+        #expect(!recovery.isConnecting)
+
+        await app.meeting.join(url: URL(string: "https://zoom.us/j/12345678901")!, displayName: "Fixture")
+        let callRevision = connection.accountRevision
+        #expect(!recovery.isEnabled)
+        await recovery.signIn()
+        #expect(browserOpens == 1)
+        #expect(connection.accountRevision == callRevision)
+        #expect(app.activeCall)
+        await app.leaveMeeting()
+    }
+
+    @Test func signInRecoveryOnlyMatchesAuthenticationFailures() {
+        for error: ZoomAccountError in [.notConnected, .signingDenied, .authorizationDenied,
+                                       .authorizationTimedOut, .missingScope, .missingHostingScope,
+                                       .missingRecordingScope, .rejected(401)] {
+            #expect(ZoomSignInError.matches(error.localizedDescription))
+        }
+        for error: ZoomAccountError in [.network, .rateLimited, .recordingUnavailable,
+                                       .notConfigured, .invalidPublicConfiguration, .rejected(500),
+                                       .meetingCreationUnconfirmed] {
+            #expect(!ZoomSignInError.matches(error.localizedDescription))
+        }
+        #expect(!ZoomSignInError.matches(nil))
+        #expect(!ZoomSignInError.matches("Google sign-in expired"))
+    }
+
     @Test func failedImportPreservesConnectionAndSuccessfulImportClearsOldError() async throws {
         let store = ZoomUIFixtureStore(configuration: configuration, connected: true)
         let model = ZoomConnectionModel(client: ZoomAccountClient(store: store), openURL: { _ in })

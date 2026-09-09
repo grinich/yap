@@ -16,6 +16,29 @@ struct MeetingCornerTests {
         }
     }
 
+    @Test func topCornersMoveClearOfToolbarWithoutResizingOrShiftingSideways() {
+        for size in [CGSize(width: 320, height: 300), CGSize(width: 900, height: 620)] {
+            for ratio in [16.0 / 9, 9.0 / 16, 1.0] {
+                for corner in MeetingSelfViewLayout.Corner.allCases {
+                    let hidden = MeetingSelfViewLayout.frame(in: size, aspectRatio: ratio,
+                        compactHeight: size.height < 420, corner: corner, showsControls: false)
+                    let visible = MeetingSelfViewLayout.frame(in: size, aspectRatio: ratio,
+                        compactHeight: size.height < 420, corner: corner, showsControls: true)
+                    #expect(hidden.size == visible.size)
+                    #expect(hidden.minX == visible.minX)
+                    #expect(CGRect(origin: .zero, size: size).contains(hidden))
+                    if corner == .topLeft || corner == .topRight {
+                        #expect(hidden.minY == min(16, size.width * 0.04))
+                        #expect(visible.minY >= 54)
+                        #expect(visible.minY > hidden.minY)
+                    } else {
+                        #expect(hidden == visible)
+                    }
+                }
+            }
+        }
+    }
+
     @Test func keepOnTopUpdatesExistingAndNewWindowsAndCanBeTurnedOff() {
         let state = YapWindowLevel()
         let first = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)

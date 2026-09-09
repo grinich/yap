@@ -336,7 +336,8 @@ struct MeetingView: View {
         participantTile(speaker, focused: model.focusedParticipantID == speaker.id, immersive: true)
             .overlay {
                 if let local {
-                    MeetingCornerSelfView(participant: local, meeting: meeting, compactHeight: compactHeight)
+                    MeetingCornerSelfView(participant: local, meeting: meeting, compactHeight: compactHeight,
+                                          showsControls: showsControls)
                         .padding(.trailing, model.sidebar != nil ? 22 : 0)
                 }
             }
@@ -637,7 +638,10 @@ struct MeetingView: View {
     }
 }
 
-private struct MeetingChromeVisibility: ViewModifier {
+struct MeetingChromeVisibility: ViewModifier {
+    static func animation(isVisible: Bool) -> Animation {
+        .easeInOut(duration: isVisible ? 0.14 : 0.28)
+    }
     var isVisible: Bool
     var reduceMotion: Bool
     func body(content: Content) -> some View {
@@ -645,7 +649,7 @@ private struct MeetingChromeVisibility: ViewModifier {
             .opacity(isVisible ? 1 : 0)
             .allowsHitTesting(isVisible)
             .accessibilityHidden(!isVisible)
-            .animation(reduceMotion ? nil : .easeInOut(duration: isVisible ? 0.14 : 0.28), value: isVisible)
+            .animation(reduceMotion ? nil : Self.animation(isVisible: isVisible), value: isVisible)
     }
 }
 

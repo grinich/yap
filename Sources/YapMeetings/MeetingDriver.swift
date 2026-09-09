@@ -18,6 +18,7 @@ public protocol MeetingDriver: AnyObject {
     func sendChat(text: String, sessionID: UUID) async throws
     func startShare(_ target: ShareTarget, sessionID: UUID) async throws
     func stopShare(sessionID: UUID) async throws
+    func submitRoomSharingCode(_ code: String, sessionID: UUID) async throws
     func startCloudRecording(sessionID: UUID) async throws
     func pauseCloudRecording(sessionID: UUID) async throws
     func resumeCloudRecording(sessionID: UUID) async throws
@@ -35,6 +36,9 @@ public protocol MeetingDriver: AnyObject {
 }
 
 public extension MeetingDriver {
+    func submitRoomSharingCode(_ code: String, sessionID: UUID) async throws {
+        throw MeetingError.unavailable("Zoom Room sharing isn’t available in this build.")
+    }
     func startCloudRecording(sessionID: UUID) async throws { throw cloudRecordingUnavailable }
     func pauseCloudRecording(sessionID: UUID) async throws { throw cloudRecordingUnavailable }
     func resumeCloudRecording(sessionID: UUID) async throws { throw cloudRecordingUnavailable }

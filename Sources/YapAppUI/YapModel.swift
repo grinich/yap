@@ -690,6 +690,17 @@ public final class YapModel {
         await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "")
     }
 
+    public func shareScreenToRoom() async {
+        guard !Task.isCancelled, !activeCall else { return }
+        guard !isPreview else { error = "Exit preview to share to a Zoom Room."; return }
+        guard !zoomConnection.isBusy else { error = "Finish signing in to Zoom before sharing to a room."; return }
+        meetingLinkRevision = UUID()
+        selectedEvent = nil
+        showJoinSheet = false
+        areMeetingControlsVisible = true
+        await meeting.shareToRoom(displayName: displayName)
+    }
+
     public func requestLeaveMeeting() {
         guard activeCall, meeting.status != .leaving else { return }
         if askBeforeLeavingMeeting {

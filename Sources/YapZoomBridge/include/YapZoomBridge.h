@@ -6,6 +6,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// Events are copied to JSON data and delivered on the main thread. Never log their contents.
 @interface WHZoomSDKBridge : NSObject
 @property(nonatomic, copy, nullable) void (^eventHandler)(NSString *sessionID, NSString *event, NSData *payload);
+- (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID NS_SWIFT_NAME(beginRoomShare(jwt:sessionID:));
+- (NSInteger)submitRoomSharingCode:(NSString *)code;
 - (NSInteger)beginWithJWT:(NSString *)jwt zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
                 vanityID:(nullable NSString *)vanityID passcode:(nullable NSString *)passcode
          registrantToken:(nullable NSString *)registrantToken displayName:(NSString *)displayName

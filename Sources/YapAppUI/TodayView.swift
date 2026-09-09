@@ -17,7 +17,8 @@ public struct YapRootView: View {
 
     public var body: some View {
         Group {
-            if model.activeCall { MeetingView(model: model) }
+            if model.activeCall && model.meeting.isRoomShare { RoomSharingView(model: model) }
+            else if model.activeCall { MeetingView(model: model) }
             else { TodayView(model: model) }
         }
         .frame(minWidth: model.recordings.isPresented && !model.activeCall ? 700 : 320, minHeight: 240)
@@ -248,6 +249,14 @@ struct TodayView: View {
             .foregroundStyle(.primary)
             .help("Join with a link · ⌘J")
             .accessibilityLabel("Join with a link")
+            Button("Share screen", systemImage: "rectangle.on.rectangle") {
+                Task { await model.shareScreenToRoom() }
+            }
+            .buttonStyle(.glass)
+            .yapIconHover(cornerRadius: 100)
+            .tint(nil as Color?).foregroundStyle(.primary)
+            .help("Share a window or display to a nearby Zoom Room")
+            .disabled(model.isPreview || model.zoomConnection.isBusy)
         }
     }
 

@@ -30,7 +30,7 @@ struct MeetingShareChooser: View {
                     .labelStyle(.iconOnly).buttonStyle(.borderless)
                     .yapIconHover()
                     .help("Refresh windows and displays")
-                    .disabled(isLoading || isSubmitting || !meeting.isConnected)
+                    .disabled(isLoading || isSubmitting || !meeting.canChooseSharingContent)
                 }
             }
             sourceGrid.frame(height: 316)
@@ -52,7 +52,7 @@ struct MeetingShareChooser: View {
                 Button(meeting.isDemo ? "Preview share" : meeting.sharing.isSharing ? "Switch share" : "Share", action: share)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(selectedTarget == nil || permissionRequired || isLoading || isSubmitting || meeting.isApplyingControl || !meeting.isConnected)
+                    .disabled(selectedTarget == nil || permissionRequired || isLoading || isSubmitting || meeting.isApplyingControl || !meeting.canChooseSharingContent)
             }
         }
         .padding(20).frame(width: 620)
@@ -102,7 +102,7 @@ struct MeetingShareChooser: View {
     }
 
     private func loadSources() async {
-        guard let sessionID = meeting.sessionID, meeting.isConnected else { dismiss(); return }
+        guard let sessionID = meeting.sessionID, meeting.canChooseSharingContent else { dismiss(); return }
         isLoading = true
         localError = nil
         permissionRequired = false
@@ -120,7 +120,7 @@ struct MeetingShareChooser: View {
             do { targets = try await meeting.availableShareTargetsForChooser() }
             catch is CancellationError { return }
             catch {
-                guard !Task.isCancelled, sessionID == meeting.sessionID, meeting.isConnected else { return }
+                guard !Task.isCancelled, sessionID == meeting.sessionID, meeting.canChooseSharingContent else { return }
                 localError = error.localizedDescription
                 permissionRequired = (error as? MeetingError) == .screenCapturePermissionRequired
                 snapshot = nil
@@ -139,7 +139,7 @@ struct MeetingShareChooser: View {
     }
 
     private func share() {
-        guard !isSubmitting, !isLoading, meeting.isConnected, !meeting.isApplyingControl,
+        guard !isSubmitting, !isLoading, meeting.canChooseSharingContent, !meeting.isApplyingControl,
               let target = selectedTarget, let sessionID = meeting.sessionID else { return }
         isSubmitting = true
         localError = nil
@@ -148,11 +148,11 @@ struct MeetingShareChooser: View {
             defer { if sessionID == meeting.sessionID { isSubmitting = false } }
             do {
                 try await meeting.startShareFromChooser(target)
-                guard sessionID == meeting.sessionID, meeting.isConnected else { return }
+                guard sessionID == meeting.sessionID, meeting.canChooseSharingContent else { return }
                 dismiss()
             } catch is CancellationError {
             } catch {
-                guard sessionID == meeting.sessionID, meeting.isConnected else { return }
+                guard sessionID == meeting.sessionID, meeting.canChooseSharingContent else { return }
                 localError = error.localizedDescription
                 permissionRequired = (error as? MeetingError) == .screenCapturePermissionRequired
             }

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import AVFoundation
 
 @MainActor
 public func makeZoomMeetingDriver(accountClient: ZoomAccountClient) -> any MeetingDriver {
@@ -35,10 +36,15 @@ public final class ZoomMeetingDriver: MeetingDriver {
         guard self.sessionID == nil,
               Self.activeOwner == nil || Self.activeOwner === self else { throw MeetingError.alreadyInMeeting }
         let link = try request.url.map(ZoomMeetingLink.init)
-        guard request.isHost || link != nil else { throw MeetingError.invalidLink }
+        guard request.isHost || request.isRoomShare || link != nil else { throw MeetingError.invalidLink }
         self.sessionID = sessionID
         Self.activeOwner = self
         do {
+            if request.isRoomShare {
+                guard await AVCaptureDevice.requestAccess(for: .audio) else {
+                    throw MeetingError.unavailable("Allow Yap microphone access in System Settings to detect a nearby Zoom Room. Your microphone won’t be broadcast to the room.")
+                }
+            }
             let credentials: ZoomMeetingCredentials
             let meetingNumber: Int64
             if request.isHost && link == nil {
@@ -61,7 +67,9 @@ public final class ZoomMeetingDriver: MeetingDriver {
                 MainActor.assumeIsolated { self?.receive(identifier: identifier, event: event, data: data) }
             }
             bridge = native
-            let result = native.begin(jwt: credentials.sdkJWT, zak: credentials.zak,
+            let result = request.isRoomShare
+                ? native.beginRoomShare(jwt: credentials.sdkJWT, sessionID: sessionID.uuidString)
+                : native.begin(jwt: credentials.sdkJWT, zak: credentials.zak,
                 meetingNumber: meetingNumber, vanityID: link?.vanityID,
                 passcode: link?.embeddedPasscode, registrantToken: link?.registrantToken,
                 displayName: request.displayName, host: request.isHost, sessionID: sessionID.uuidString)
@@ -135,6 +143,10 @@ public final class ZoomMeetingDriver: MeetingDriver {
     public func stopShare(sessionID: UUID) async throws {
         try check(try native(for: sessionID).stopSharing(), action: "stop screen sharing")
     }
+
+    public func submitRoomSharingCode(_ code: String, sessionID: UUID) async throws {
+        try check(try native(for: sessionID).submitRoomSharingCode(code), action: "connect to the Zoom Room")
+    }
     public func startCloudRecording(sessionID: UUID) async throws {
         try check(try native(for: sessionID).setCloudRecordingEnabled(true), action: "start cloud recording")
     }
@@ -181,6 +193,8 @@ public final class ZoomMeetingDriver: MeetingDriver {
         case "failure":
             clearNativeState()
             onEvent?(id, .failure(value as? String ?? "Zoom could not connect."))
+        case "roomShare":
+            if let raw = value as? String, let stage = RoomShareStage(rawValue: raw) { onEvent?(id, .roomShare(stage)) }
         case "controlError": onEvent?(id, .controlError(value as? String ?? "Zoom could not complete that action."))
         case "cloudRecordingError":
             onEvent?(id, .cloudRecordingControlError(value as? String ?? "Zoom could not change cloud recording."))

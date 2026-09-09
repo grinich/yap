@@ -76,6 +76,7 @@ public final class YapModel {
     public var displayName: String { didSet { preferences.set(displayName, forKey: "displayName"); joinInputError = nil } }
     public var remindersEnabled: Bool { didSet { preferences.set(remindersEnabled, forKey: "remindersEnabled") } }
     public var reminderMinutes: Int { didSet { preferences.set(reminderMinutes, forKey: "reminderMinutes") } }
+    public var askBeforeLeavingMeeting: Bool { didSet { preferences.set(askBeforeLeavingMeeting, forKey: "askBeforeLeavingMeeting") } }
     public private(set) var showReminderPermission = false
     public private(set) var reminderAuthorizationStatus: ReminderAuthorizationStatus = .notDetermined
     public private(set) var isChangingReminders = false
@@ -134,6 +135,7 @@ public final class YapModel {
         self.preferences = preferences
         self.displayName = preferences.string(forKey: "displayName") ?? NSFullUserName().components(separatedBy: " ").first ?? "Me"
         self.remindersEnabled = preferences.bool(forKey: "remindersEnabled")
+        self.askBeforeLeavingMeeting = preferences.bool(forKey: "askBeforeLeavingMeeting")
         self.reminderMinutes = max(1, preferences.integer(forKey: "reminderMinutes") == 0 ? 2 : preferences.integer(forKey: "reminderMinutes"))
         let zoomConnection = zoomConnection ?? ZoomConnectionModel()
         self.zoomConnection = zoomConnection
@@ -671,7 +673,22 @@ public final class YapModel {
         await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "")
     }
 
+    public func requestLeaveMeeting() {
+        guard activeCall, meeting.status != .leaving else { return }
+        if askBeforeLeavingMeeting {
+            showLeaveConfirmation = true
+            return
+        }
+        let requestedMeeting = meeting
+        let sessionID = meeting.sessionID
+        Task { [weak self] in
+            guard let self, self.meeting === requestedMeeting, self.meeting.sessionID == sessionID else { return }
+            await self.leaveMeeting()
+        }
+    }
+
     public func leaveMeeting(endForEveryone: Bool = false) async {
+        showLeaveConfirmation = false
         await meeting.leave(endForEveryone: endForEveryone)
         if !meeting.status.isActive { sidebar = nil; focusedParticipantID = nil }
     }

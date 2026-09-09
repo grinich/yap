@@ -440,7 +440,7 @@ struct MeetingView: View {
                 MeetingCloudRecordingCallControl(meeting: meeting, iconOnly: iconOnly)
                 Divider().frame(height: 24).padding(.horizontal, 2)
                 callButton("Leave meeting", symbol: "phone.down.fill", caption: "Leave", iconOnly: iconOnly, destructive: true) {
-                    model.showLeaveConfirmation = true
+                    model.requestLeaveMeeting()
                 }
                 .disabled(meeting.status == .leaving)
         }
@@ -494,7 +494,7 @@ struct MeetingView: View {
 
     private var connectionStage: some View {
         MeetingConnectionView(title: meeting.displayTitle, status: meeting.status) {
-            if meeting.status == .reconnecting { model.showLeaveConfirmation = true }
+            if meeting.status == .reconnecting { model.requestLeaveMeeting() }
             else { Task { await model.leaveMeeting() } }
         }
     }

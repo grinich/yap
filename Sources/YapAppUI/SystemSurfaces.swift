@@ -99,7 +99,12 @@ public struct YapCommands: Commands {
             Divider()
             MeetingCloudRecordingMenuItems(meeting: model.meeting)
             Divider()
-            Button("Leave meeting…") { model.showLeaveConfirmation = true }.keyboardShortcut("w", modifiers: [.command, .shift]).disabled(!model.activeCall)
+            Button(model.askBeforeLeavingMeeting ? "Leave meeting…" : "Leave meeting") { model.requestLeaveMeeting() }
+                .keyboardShortcut("w", modifiers: [.command, .shift]).disabled(!model.activeCall)
+            if model.meeting.isHost {
+                Button("End for everyone…") { model.showLeaveConfirmation = true }
+                    .disabled(!model.activeCall || model.meeting.status == .leaving)
+            }
         }
     }
 }
@@ -273,12 +278,14 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, model.activeCall else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = "Leave the meeting and quit Yap?"
-        alert.informativeText = "Your microphone, camera, and screen sharing will stop."
-        alert.addButton(withTitle: "Leave and quit")
-        alert.addButton(withTitle: "Stay in meeting")
-        guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        if model.askBeforeLeavingMeeting {
+            let alert = NSAlert()
+            alert.messageText = "Leave the meeting and quit Yap?"
+            alert.informativeText = "Your microphone, camera, and screen sharing will stop."
+            alert.addButton(withTitle: "Leave and quit")
+            alert.addButton(withTitle: "Stay in meeting")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        }
         Task {
             await model.leaveMeeting()
             let ended = await model.meeting.waitForMeetingEnd()
@@ -409,7 +416,7 @@ struct WindowBehavior: NSViewRepresentable {
         }
         func windowShouldClose(_ sender: NSWindow) -> Bool {
             if model.activeCall {
-                model.showLeaveConfirmation = true
+                model.requestLeaveMeeting()
                 return false
             }
             model.recordings.suspendPlayback()

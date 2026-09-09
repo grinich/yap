@@ -45,6 +45,7 @@ struct YapWindowCloseTests {
     @Test func activeMeetingRequestsConfirmationWithoutClosingOrLeaving() async throws {
         let fixture = WindowCloseFixture()
         defer { fixture.cleanUp() }
+        fixture.model.askBeforeLeavingMeeting = true
         await fixture.model.meeting.join(url: URL(string: "https://zoom.us/j/12345678901")!, displayName: "Fixture")
         let sessionID = fixture.model.meeting.sessionID
         #expect(fixture.model.activeCall)
@@ -60,10 +61,11 @@ struct YapWindowCloseTests {
         #expect(fixture.originalDelegate.willCloseCount == 0)
     }
 
-    @Test(arguments: [true, false])
-    func commandWUsesTheSameLocalButtonAction(_ activeMeeting: Bool) async throws {
+    @Test(arguments: [true, false], [true, false])
+    func commandWUsesTheSameLocalButtonAction(_ activeMeeting: Bool, _ asksBeforeLeaving: Bool) async throws {
         let fixture = WindowCloseFixture()
         defer { fixture.cleanUp() }
+        fixture.model.askBeforeLeavingMeeting = asksBeforeLeaving
         if activeMeeting {
             await fixture.model.meeting.join(url: URL(string: "https://zoom.us/j/12345678901")!, displayName: "Fixture")
         }
@@ -81,7 +83,11 @@ struct YapWindowCloseTests {
 
         let handledCommandW = button.performKeyEquivalent(with: commandW)
         #expect(handledCommandW)
-        #expect(fixture.model.showLeaveConfirmation == activeMeeting)
+        #expect(fixture.model.showLeaveConfirmation == (activeMeeting && asksBeforeLeaving))
+        if activeMeeting && !asksBeforeLeaving {
+            for _ in 0..<100 where fixture.model.activeCall { await Task.yield() }
+            #expect(!fixture.model.activeCall)
+        }
         #expect(fixture.window.hideCount == (activeMeeting ? 0 : 1))
         #expect(fixture.originalDelegate.shouldCloseCount == 0)
         #expect(fixture.originalDelegate.willCloseCount == 0)

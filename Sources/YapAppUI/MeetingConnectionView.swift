@@ -84,7 +84,7 @@ struct MeetingConnectionView: View {
 
     private var cancelTitle: String {
         switch status {
-        case .reconnecting: "Leave meeting…"
+        case .reconnecting: "Leave meeting"
         case .waitingRoom: "Leave waiting room"
         default: "Cancel"
         }

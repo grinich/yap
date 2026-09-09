@@ -79,9 +79,8 @@ public final class MeetingCoordinator {
     public var visibleParticipants: [MeetingParticipant] {
         if let pair = oneToOneParticipants { return [pair.remote, pair.local] }
         if let primary = presentationParticipant {
-            // Keep subscriptions aligned with the large tile and its thumbnail
-            // strip, including a speaker outside the former gallery page.
-            return [primary] + participants.filter { $0.id != primary.id }.prefix(6)
+            // Only the speaker and local corner self-view are rendered.
+            return [primary] + participants.filter { $0.isSelf && $0.id != primary.id }
         }
         let start = min(pageIndex * pageSize, participants.count)
         let end = min(start + pageSize, participants.count)

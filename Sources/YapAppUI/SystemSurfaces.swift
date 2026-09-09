@@ -72,6 +72,9 @@ public struct YapCommands: Commands {
             Button("Start a meeting") { openWindow(id: "main"); Task { await model.hostMeeting() } }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(model.activeCall)
         }
         CommandGroup(after: .toolbar) {
+            Toggle("Keep on Top", isOn: Binding(get: { YapWindowLevel.shared.isEnabled },
+                                                set: { YapWindowLevel.shared.isEnabled = $0 }))
+            Divider()
             Button(model.recordings.isPresented ? "Hide Recordings" : "Show Recordings") {
                 openWindow(id: "main")
                 model.recordings.toggle()
@@ -108,7 +111,6 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     private var routingTask: Task<Void, Never>?
     private var isObservingActions = false
     private var menuBarController: YapMenuBarController?
-    private var sharingOverlayController: YapSharingOverlayController?
     private let incomingURLs = YapIncomingURLRouter()
     private var recordingsWindowReveal = YapRecordingsWindowReveal()
     private lazy var windowPresenter = YapMainWindowPresenter(actions: .init(
@@ -122,7 +124,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
         },
         applicationIsActive: { NSApplication.shared.isActive },
         restoreWindow: { [weak self] in
-            guard let window = self?.model?.sharingPresentation.mainWindow else { return nil }
+            guard let window = self?.model?.meetingPresentation.mainWindow else { return nil }
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.orderFrontRegardless()
             window.makeKeyAndOrderFront(nil)
@@ -142,11 +144,6 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     public func configure(model: YapModel, openMainWindow: @escaping () -> Void) {
         self.model = model
         self.openMainWindow = openMainWindow
-        if sharingOverlayController == nil {
-            sharingOverlayController = YapSharingOverlayController(model: model) { [weak self] in
-                self?.presentMainWindow()
-            }
-        }
         if menuBarController == nil {
             menuBarController = YapMenuBarController(model: model,
                 toggleMainWindow: { [weak self] in self?.toggleMainWindow() },
@@ -190,7 +187,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func toggleMainWindow() {
-        guard let window = model?.sharingPresentation.mainWindow,
+        guard let window = model?.meetingPresentation.mainWindow,
               NSApplication.shared.isActive, !NSApplication.shared.isHidden,
               window.isVisible, !window.isMiniaturized, window.isOnActiveSpace,
               window.isKeyWindow || window.attachedSheet?.isKeyWindow == true else {
@@ -215,12 +212,12 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func mainWindowDidMiniaturize(_ notification: Notification) {
-        guard notification.object as? NSWindow === model?.sharingPresentation.mainWindow else { return }
+        guard notification.object as? NSWindow === model?.meetingPresentation.mainWindow else { return }
         recordingsWindowReveal.windowWillHide()
     }
 
     @objc private func mainWindowBecameAvailable(_ notification: Notification) {
-        guard notification.object as? NSWindow === model?.sharingPresentation.mainWindow else { return }
+        guard notification.object as? NSWindow === model?.meetingPresentation.mainWindow else { return }
         if let recordings = model?.recordings, recordings.isPresented {
             recordings.prepareForPresentation()
         }
@@ -234,7 +231,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillHide(_ notification: Notification) {
-        guard model?.sharingPresentation.mainWindow != nil else { return }
+        guard model?.meetingPresentation.mainWindow != nil else { return }
         recordingsWindowReveal.windowWillHide()
     }
 
@@ -243,7 +240,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshRecordingsAfterWindowReveal() {
-        guard let model, let window = model.sharingPresentation.mainWindow,
+        guard let model, let window = model.meetingPresentation.mainWindow,
               recordingsWindowReveal.shouldRefresh(isVisible: window.isVisible,
                   isMiniaturized: window.isMiniaturized, isApplicationHidden: NSApplication.shared.isHidden,
                   recordingsPresented: model.recordings.isPresented, isPreview: model.isPreview,
@@ -252,7 +249,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor [weak model] in
             guard let model, model.recordings.isPresented, !model.isPreview, !model.activeCall,
                   !model.zoomConnection.isBusy, model.zoomConnection.accountRevision == accountRevision,
-                  let window = model.sharingPresentation.mainWindow, window.isVisible,
+                  let window = model.meetingPresentation.mainWindow, window.isVisible,
                   !window.isMiniaturized, !NSApplication.shared.isHidden else { return }
             await model.recordings.refreshForPresentation()
         }
@@ -272,7 +269,6 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
         model?.recordings.closePlayerWindows()
         model?.recordings.chat.clear()
         windowPresenter.cancel()
-        sharingOverlayController?.stop()
         menuBarController?.stop()
     }
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -318,6 +314,7 @@ struct WindowBehavior: NSViewRepresentable {
     }
 
     private func configureAppearance(of window: NSWindow) {
+        YapWindowLevel.shared.register(window)
         window.title = title
         window.titleVisibility = .hidden
         // Joining removes the agenda toolbar. Preserve a full-size content view
@@ -379,14 +376,14 @@ struct WindowBehavior: NSViewRepresentable {
             guard window.delegate !== self else { return }
             detach()
             self.window = window
-            model.sharingPresentation.mainWindow = window
+            model.meetingPresentation.mainWindow = window
             originalDelegate = window.delegate
             window.delegate = self
             NotificationCenter.default.post(name: yapMainWindowAttached, object: model)
         }
         func detach() {
             closeButton.removeFromSuperview()
-            if model.sharingPresentation.mainWindow === window { model.sharingPresentation.mainWindow = nil }
+            if model.meetingPresentation.mainWindow === window { model.meetingPresentation.mainWindow = nil }
             if window?.delegate === self { window?.delegate = originalDelegate }
             window = nil
             originalDelegate = nil

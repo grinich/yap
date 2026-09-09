@@ -20,7 +20,7 @@ struct YapWindowCloseTests {
 
         #expect(!fixture.window.isVisible)
         #expect(fixture.window.hideCount == 1)
-        #expect(fixture.model.sharingPresentation.mainWindow === fixture.window)
+        #expect(fixture.model.meetingPresentation.mainWindow === fixture.window)
         #expect(fixture.originalDelegate.shouldCloseCount == 0)
         #expect(fixture.originalDelegate.willCloseCount == 0)
         #expect(!fixture.model.showLeaveConfirmation)

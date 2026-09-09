@@ -4,7 +4,7 @@ import YapMeetings
 /// One chat composer and draft across the meeting inspector and sharing panel.
 struct MeetingChatView: View {
     var meeting: MeetingCoordinator
-    @Bindable var presentation: YapSharingPresentation
+    @Bindable var presentation: YapMeetingPresentation
     var isPreview: Bool
     var isCompact = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -132,7 +132,7 @@ struct MeetingChatView: View {
             .padding(.horizontal, 12).padding(.vertical, isCompact ? 8 : 12)
         }
         .onChange(of: meeting.sessionID, initial: true) { _, sessionID in
-            presentation.synchronize(sessionID: sessionID, isSharing: meeting.sharing.isSharing)
+            presentation.synchronize(sessionID: sessionID)
         }
         .onAppear { isChatComposerFocused = true }
     }

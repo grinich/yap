@@ -103,15 +103,13 @@ final class YapMenuBarActionHandler {
 
     var sharingChatIsVisible: Bool? {
         guard model.meeting.sharing.isSharing else { return nil }
-        return model.sharingPresentation.isPresenting ? model.sharingPresentation.chatVisible : model.sidebar == .chat
+        return model.sidebar == .chat
     }
 
     func setSharingChatVisible(_ visible: Bool, expectedSessionID: UUID? = nil) {
         guard model.meeting.sharing.isSharing else { return }
         if let expectedSessionID, expectedSessionID != model.meeting.sessionID { return }
-        if model.sharingPresentation.isPresenting {
-            model.sharingPresentation.chatVisible = visible
-        } else if visible {
+        if visible {
             model.sidebar = .chat
         } else if model.sidebar == .chat {
             model.sidebar = nil

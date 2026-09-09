@@ -33,6 +33,7 @@ final class RecordingPlayerWindowController: NSWindowController, NSWindowDelegat
         window.center()
         super.init(window: window)
         window.delegate = self
+        YapWindowLevel.shared.register(window)
         closeButton.target = self
         closeButton.action = #selector(closePlayer)
         closeButton.keyEquivalent = "w"

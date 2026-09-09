@@ -61,7 +61,7 @@ enum YapReminderPermissionError: Error { case notificationsNotAllowed }
 @MainActor @Observable
 public final class YapModel {
     public var meeting: MeetingCoordinator
-    public let sharingPresentation = YapSharingPresentation()
+    public let meetingPresentation = YapMeetingPresentation()
     public let zoomConnection: ZoomConnectionModel
     public let recordings: RecordingLibraryModel
     public private(set) var events: [CalendarEvent] = []

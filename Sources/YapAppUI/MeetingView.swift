@@ -132,7 +132,7 @@ struct MeetingView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in isTrackingMenu = true }
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in isTrackingMenu = false }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
-            if notification.object as? NSWindow === model.sharingPresentation.mainWindow { keyboardControlsActive = false }
+            if notification.object as? NSWindow === model.meetingPresentation.mainWindow { keyboardControlsActive = false }
         }
         .onChange(of: meeting.sessionID) { _, _ in
             showShareChooser = false
@@ -318,60 +318,28 @@ struct MeetingView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let pair = meeting.oneToOneParticipants {
-            participantTile(pair.remote, focused: model.focusedParticipantID == pair.remote.id, immersive: true)
-                .overlay(alignment: .topTrailing) {
-                    GeometryReader { geometry in
-                        let frame = MeetingSelfViewLayout.frame(in: geometry.size,
-                            aspectRatio: pair.local.tileAspectRatio, compactHeight: compactHeight)
-                        ParticipantTile(participant: pair.local, meeting: meeting,
-                            allowsNativeVideo: !model.sharingPresentation.isPresenting, showsInfo: false)
-                            .overlay { YapVideoWindowDragSurface().accessibilityHidden(true) }
-                            .frame(width: frame.width, height: frame.height)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(.white.opacity(0.22), lineWidth: 0.75))
-                            .overlay(alignment: .bottomTrailing) {
-                                if pair.local.isCameraEnabled && pair.local.isMuted {
-                                    Image(systemName: "mic.slash.fill")
-                                        .font(.system(size: 9, weight: .medium)).foregroundStyle(.white)
-                                        .padding(5).background(.black.opacity(0.55), in: Circle())
-                                        .padding(6).accessibilityHidden(true)
-                                }
-                            }
-                            .shadow(color: .black.opacity(0.28), radius: 12, y: 4)
-                            .position(x: frame.midX, y: frame.midY)
-                            .accessibilityLabel("Your self-view, \(pair.local.isCameraEnabled ? "camera on" : "camera off"), \(pair.local.isMuted ? "microphone muted" : "microphone on")")
-                    }
-                    .padding(.trailing, model.sidebar != nil ? 22 : 0)
-                }
+            speakerCanvas(pair.remote, local: pair.local, compactHeight: compactHeight)
+        } else if let focusedParticipant {
+            speakerCanvas(focusedParticipant,
+                          local: meeting.participants.first { $0.isSelf && $0.id != focusedParticipant.id },
+                          compactHeight: compactHeight)
         } else if meeting.visibleParticipants.count == 1, let participant = meeting.visibleParticipants.first {
             participantTile(participant, immersive: true)
-        } else if let focusedParticipant {
-            GeometryReader { geometry in
-                let stripHeight = min(90, max(40, geometry.size.height * 0.22))
-                ZStack(alignment: .bottom) {
-                    participantTile(focusedParticipant, focused: model.focusedParticipantID == focusedParticipant.id, immersive: true)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if !compactHeight && meeting.visibleParticipants.count > 1 {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 8) {
-                                ForEach(meeting.visibleParticipants.filter { $0.id != focusedParticipant.id }) { participant in
-                                    participantTile(participant)
-                                        .frame(width: stripHeight * participant.tileAspectRatio, height: stripHeight)
-                                }
-                            }
-                        }
-                        .scrollIndicators(.hidden)
-                        .frame(height: stripHeight)
-                        .padding(.horizontal, 16).padding(.bottom, meeting.pageCount > 1 ? 138 : 96)
-                    }
-                }
-            }
         } else {
             MeetingGalleryView(meeting: meeting) { participant in participantTileContent(participant) }
             .id(meeting.sessionID)
             .padding(6)
         }
+    }
+
+    private func speakerCanvas(_ speaker: MeetingParticipant, local: MeetingParticipant?, compactHeight: Bool) -> some View {
+        participantTile(speaker, focused: model.focusedParticipantID == speaker.id, immersive: true)
+            .overlay {
+                if let local {
+                    MeetingCornerSelfView(participant: local, meeting: meeting, compactHeight: compactHeight)
+                        .padding(.trailing, model.sidebar != nil ? 22 : 0)
+                }
+            }
     }
 
     private func participantTile(_ participant: MeetingParticipant, focused: Bool = false, immersive: Bool = false) -> some View {
@@ -384,7 +352,7 @@ struct MeetingView: View {
 
     private func participantTileContent(_ participant: MeetingParticipant, focused: Bool = false, immersive: Bool = false) -> some View {
         ParticipantTile(participant: participant, meeting: meeting, isFocused: focused,
-                        allowsNativeVideo: !model.sharingPresentation.isPresenting,
+                        allowsNativeVideo: true,
                         fillsFrame: immersive, showsInfo: !immersive || showsControls)
             .contentShape(RoundedRectangle(cornerRadius: 12))
             .onTapGesture(count: 2) { pin(participant) }
@@ -564,7 +532,7 @@ struct MeetingView: View {
                     .frame(height: 24)
             }
             if sidebar == .chat {
-                MeetingChatView(meeting: meeting, presentation: model.sharingPresentation,
+                MeetingChatView(meeting: meeting, presentation: model.meetingPresentation,
                                 isPreview: model.isPreview, isCompact: compact)
             } else { peopleInspector }
         }

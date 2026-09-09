@@ -23,7 +23,7 @@ Built with **SwiftUI, AppKit, and the Zoom Meeting SDK**. Requires **macOS 26 or
 
 ## A meeting window that feels like a Mac app
 
-Keep people in a gallery or focus on one person. Open chat and the participant list from the side, share a window or display, and keep the meeting nearby with floating sharing controls. Camera, microphone, recording, and leaving the call stay within reach. Native glass, resizable windows, and keyboard shortcuts keep the interface familiar.
+Keep people in a gallery or focus on the active speaker, with your own camera in a draggable corner self-view. Open chat and the participant list from the side, share a window or display, and keep the meeting visible with **Keep on Top**. Camera, microphone, recording, and leaving the call stay within reach. Native glass, resizable windows, and keyboard shortcuts keep the interface familiar.
 
 ## Pick up where the meeting left off
 

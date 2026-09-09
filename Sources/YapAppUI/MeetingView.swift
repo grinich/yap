@@ -771,9 +771,15 @@ struct ParticipantTile: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: fillsFrame ? 0 : compact ? 7 : 12))
-            // Full-bleed video stays square beneath the native window mask,
-            // but its inset speaking outline must follow the rounded edge.
-            .overlay(RoundedRectangle(cornerRadius: compact ? 7 : 12, style: .continuous).strokeBorder(participant.isSpeaking ? .mint.opacity(0.65) : fillsFrame ? .clear : .white.opacity(0.04), lineWidth: participant.isSpeaking ? 1.5 : 1))
+            .overlay {
+                // The main speaker already has the stage; only smaller tiles
+                // need an outline to identify who is speaking.
+                if !fillsFrame {
+                    RoundedRectangle(cornerRadius: compact ? 7 : 12, style: .continuous)
+                        .strokeBorder(participant.isSpeaking ? .mint.opacity(0.65) : .white.opacity(0.04),
+                                      lineWidth: participant.isSpeaking ? 1.5 : 1)
+                }
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(participant.name)\(participant.isSelf ? ", you" : "")\(participant.isHost ? ", host" : ""), \(participant.isMuted ? "microphone muted" : "microphone on"), \(participant.isCameraEnabled ? "camera on" : "camera off")")

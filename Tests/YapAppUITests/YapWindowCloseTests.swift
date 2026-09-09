@@ -28,9 +28,12 @@ struct YapWindowCloseTests {
         #expect(fixture.window.hideCount == 2)
     }
 
-    @Test func pinControlSitsBesideCloseAndFollowsChromeVisibility() throws {
+    @Test func pinControlOnlyAppearsDuringAnActiveCallAndFollowsChromeVisibility() async throws {
         let fixture = WindowCloseFixture()
         defer { fixture.cleanUp() }
+        #expect(fixture.window.contentView?.superview?.subviews.contains { $0 is YapWindowPinButton } == false)
+        await fixture.model.meeting.join(url: URL(string: "https://zoom.us/j/12345678901")!, displayName: "Fixture")
+        fixture.coordinator.configureCloseButton(in: fixture.window, isVisible: true)
         let close = try #require(fixture.closeButton)
         let pin = try #require(fixture.window.contentView?.superview?.subviews.compactMap { $0 as? YapWindowPinButton }.first)
         #expect(pin.frame == close.frame.offsetBy(dx: 24, dy: 0))
@@ -40,6 +43,11 @@ struct YapWindowCloseTests {
         fixture.coordinator.configureCloseButton(in: fixture.window, isVisible: true)
         #expect(pin.isEnabled)
         #expect(fixture.window.hideCount == 0)
+        await fixture.model.leaveMeeting()
+        fixture.coordinator.configureCloseButton(in: fixture.window, isVisible: true)
+        #expect(pin.superview == nil)
+        #expect(!pin.isEnabled)
+        #expect(close.superview != nil)
     }
 
     @Test func activeMeetingRequestsConfirmationWithoutClosingOrLeaving() async throws {

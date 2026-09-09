@@ -359,7 +359,9 @@ struct WindowBehavior: NSViewRepresentable {
                 closeButton.removeFromSuperview()
                 frameView.addSubview(closeButton, positioned: .above, relativeTo: nil)
             }
-            if pinButton.superview !== frameView {
+            if !model.activeCall {
+                pinButton.removeFromSuperview()
+            } else if pinButton.superview !== frameView {
                 pinButton.removeFromSuperview()
                 frameView.addSubview(pinButton, positioned: .above, relativeTo: nil)
             }
@@ -372,9 +374,9 @@ struct WindowBehavior: NSViewRepresentable {
             pinButton.frame = closeButton.frame.offsetBy(dx: 24, dy: 0)
             pinButton.autoresizingMask = closeButton.autoresizingMask
             let opacity: CGFloat = isVisible ? 1 : 0
-            pinButton.isEnabled = isVisible
+            pinButton.isEnabled = model.activeCall && isVisible
             for button in [closeButton, pinButton] as [NSButton] {
-                button.setAccessibilityHidden(!isVisible)
+                button.setAccessibilityHidden(!isVisible || (button === pinButton && !model.activeCall))
                 if button.alphaValue != opacity {
                     NSAnimationContext.runAnimationGroup { context in
                         context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.25

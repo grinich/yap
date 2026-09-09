@@ -200,7 +200,7 @@ struct TodayView: View {
             }
         }
         .frame(minHeight: 36)
-        .padding(.leading, 76)
+        .padding(.leading, 52)
         .padding(.trailing, 12)
         .padding(.vertical, 12)
         .overlay(YapWindowDragSurface())

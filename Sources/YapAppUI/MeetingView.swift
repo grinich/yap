@@ -571,8 +571,7 @@ struct MeetingView: View {
         // The shared header keeps its buttons fixed at the window's trailing
         // edge. The panel's glass reaches behind that row, just like the video.
         .padding(.top, compact ? 54 : 62)
-        .yapGlassSurface(cornerRadius: 22)
-        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .yapTrailingPanelSurface()
     }
 
     private var peopleInspector: some View {

@@ -321,8 +321,7 @@ struct RecordingPlayerView: View {
             // Like live meeting chat, the glass extends behind the shared
             // header, whose trailing toggle is the sole open/close control.
             .padding(.top, 72)
-            .yapGlassSurface(cornerRadius: 22)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .yapTrailingPanelSurface()
             .frame(width: width)
             .transition(.move(edge: .trailing).combined(with: .opacity))
     }

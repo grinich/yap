@@ -334,6 +334,7 @@ struct WindowBehavior: NSViewRepresentable {
         let model: YapModel
         private weak var window: NSWindow?
         private let closeButton = YapWindowCloseButton(frame: .zero)
+        private let pinButton = YapWindowPinButton(frame: .zero)
         // NSObject's selector lookup is nonisolated; the weak reference is only
         // replaced during main-actor window attachment and never owns its target.
         nonisolated(unsafe) private weak var originalDelegate: (any NSWindowDelegate)?
@@ -351,17 +352,27 @@ struct WindowBehavior: NSViewRepresentable {
                 closeButton.removeFromSuperview()
                 frameView.addSubview(closeButton, positioned: .above, relativeTo: nil)
             }
+            if pinButton.superview !== frameView {
+                pinButton.removeFromSuperview()
+                frameView.addSubview(pinButton, positioned: .above, relativeTo: nil)
+            }
             // Anchor to the full window frame. AppKit moves its hidden standard
             // buttons when an empty toolbar collapses, so their frames are not
             // stable positioning guides for this independent close control.
             closeButton.frame = NSRect(x: 12, y: frameView.isFlipped ? 12 : frameView.bounds.height - 36,
                                        width: 24, height: 24)
             closeButton.autoresizingMask = [.maxXMargin, frameView.isFlipped ? .maxYMargin : .minYMargin]
+            pinButton.frame = closeButton.frame.offsetBy(dx: 24, dy: 0)
+            pinButton.autoresizingMask = closeButton.autoresizingMask
             let opacity: CGFloat = isVisible ? 1 : 0
-            if closeButton.alphaValue != opacity {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.25
-                    closeButton.animator().alphaValue = opacity
+            pinButton.isEnabled = isVisible
+            for button in [closeButton, pinButton] as [NSButton] {
+                button.setAccessibilityHidden(!isVisible)
+                if button.alphaValue != opacity {
+                    NSAnimationContext.runAnimationGroup { context in
+                        context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.25
+                        button.animator().alphaValue = opacity
+                    }
                 }
             }
             for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
@@ -383,6 +394,7 @@ struct WindowBehavior: NSViewRepresentable {
         }
         func detach() {
             closeButton.removeFromSuperview()
+            pinButton.removeFromSuperview()
             if model.meetingPresentation.mainWindow === window { model.meetingPresentation.mainWindow = nil }
             if window?.delegate === self { window?.delegate = originalDelegate }
             window = nil

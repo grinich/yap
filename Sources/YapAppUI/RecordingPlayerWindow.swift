@@ -10,6 +10,7 @@ final class RecordingPlayerWindowController: NSWindowController, NSWindowDelegat
     let playback: RecordingLibraryModel
     var onClose: (() -> Void)?
     private let closeButton = YapWindowCloseButton(frame: .zero)
+    private let pinButton = YapWindowPinButton(frame: .zero)
 
     init(playback: RecordingLibraryModel, meeting: ZoomRecordingMeeting) {
         self.playback = playback
@@ -50,9 +51,15 @@ final class RecordingPlayerWindowController: NSWindowController, NSWindowDelegat
             closeButton.removeFromSuperview()
             frameView.addSubview(closeButton, positioned: .above, relativeTo: nil)
         }
+        if pinButton.superview !== frameView {
+            pinButton.removeFromSuperview()
+            frameView.addSubview(pinButton, positioned: .above, relativeTo: nil)
+        }
         closeButton.frame = NSRect(x: 12, y: frameView.isFlipped ? 12 : frameView.bounds.height - 36,
                                    width: 24, height: 24)
         closeButton.autoresizingMask = [.maxXMargin, frameView.isFlipped ? .maxYMargin : .minYMargin]
+        pinButton.frame = closeButton.frame.offsetBy(dx: 24, dy: 0)
+        pinButton.autoresizingMask = closeButton.autoresizingMask
         for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(kind)?.isHidden = true
         }
@@ -90,7 +97,7 @@ private struct StandaloneRecordingPlayerView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        RecordingPlayerView(model: playback, headerLeadingInset: 54)
+        RecordingPlayerView(model: playback, headerLeadingInset: 78)
             .frame(minWidth: 520, minHeight: 360)
             .background {
                 if reduceTransparency { Color(nsColor: .windowBackgroundColor) }

@@ -111,7 +111,7 @@ struct MeetingView: View {
                             Text(sidebar == .chat ? "Chat" : "People")
                                 .font(.headline).foregroundStyle(.white)
                                 .accessibilityAddTraits(.isHeader)
-                                .padding(.leading, compactWidth ? 54 : available.size.width - inspectorWidth + 16)
+                                .padding(.leading, compactWidth ? 78 : available.size.width - inspectorWidth + 16)
                                 .padding(.top, 22)
                                 .allowsHitTesting(false)
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
@@ -263,7 +263,7 @@ struct MeetingView: View {
                     .disabled(!meeting.isConnected)
             }
         }
-        .padding(.leading, 54).padding(.trailing, 16).padding(.top, 14).padding(.bottom, 16)
+        .padding(.leading, 78).padding(.trailing, 16).padding(.top, 14).padding(.bottom, 16)
     }
 
     private func inspectorToggle(_ label: String, symbol: String, sidebar: MeetingSidebar) -> some View {

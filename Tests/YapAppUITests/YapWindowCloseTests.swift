@@ -28,6 +28,20 @@ struct YapWindowCloseTests {
         #expect(fixture.window.hideCount == 2)
     }
 
+    @Test func pinControlSitsBesideCloseAndFollowsChromeVisibility() throws {
+        let fixture = WindowCloseFixture()
+        defer { fixture.cleanUp() }
+        let close = try #require(fixture.closeButton)
+        let pin = try #require(fixture.window.contentView?.superview?.subviews.compactMap { $0 as? YapWindowPinButton }.first)
+        #expect(pin.frame == close.frame.offsetBy(dx: 24, dy: 0))
+        #expect(pin.frame.size == CGSize(width: 24, height: 24))
+        fixture.coordinator.configureCloseButton(in: fixture.window, isVisible: false)
+        #expect(!pin.isEnabled)
+        fixture.coordinator.configureCloseButton(in: fixture.window, isVisible: true)
+        #expect(pin.isEnabled)
+        #expect(fixture.window.hideCount == 0)
+    }
+
     @Test func activeMeetingRequestsConfirmationWithoutClosingOrLeaving() async throws {
         let fixture = WindowCloseFixture()
         defer { fixture.cleanUp() }

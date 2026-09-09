@@ -1,8 +1,8 @@
 # Meeting windows and self-view
 
-The background picture-in-picture and floating sharing-chat windows have been removed. Switching away from Yap no longer opens companion windows. Use **View → Keep on Top** to keep the main meeting window and recording players above ordinary windows. Turn it off to return them to normal window ordering; it starts off each time Yap launches.
+The background picture-in-picture and floating sharing-chat windows have been removed. Switching away from Yap no longer opens companion windows. Use the **Keep on Top** pin beside the close button, or **View → Keep on Top**, to keep the main meeting window and recording players above ordinary windows. Turn it off to return them to normal window ordering; it starts off each time Yap launches.
 
-Active-speaker view displays only the speaker and your local self-view. Self-view starts at the top right, can be dragged to any corner, and snaps on release while leaving the toolbar and call controls clear. VoiceOver actions also move it between corners.
+Active-speaker view displays only the speaker and your local self-view. Self-view starts at the top right, slides below the toolbar when controls appear, can be dragged to any corner, and snaps on release while leaving the toolbar and call controls clear. VoiceOver actions also move it between corners.
 
 ## Historical companion-window implementation
 

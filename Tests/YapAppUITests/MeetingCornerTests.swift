@@ -39,6 +39,28 @@ struct MeetingCornerTests {
         }
     }
 
+    @Test func pinButtonTogglesTheWindowLevelAndTracksMenuChanges() async throws {
+        let level = YapWindowLevel()
+        let window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)
+        level.register(window)
+        let button = YapWindowPinButton(frame: NSRect(x: 0, y: 0, width: 24, height: 24), windowLevel: level)
+        #expect(button.toolTip == "Keep on Top")
+        #expect(button.state == .off)
+        #expect(button.acceptsFirstMouse(for: nil))
+        #expect(!button.mouseDownCanMoveWindow)
+        button.performClick(nil)
+        #expect(window.level == .floating && button.state == .on)
+        button.performClick(nil)
+        #expect(window.level == .normal && button.state == .off)
+        // The View menu changes this same setting without clicking the button.
+        level.isEnabled = true
+        for _ in 0..<20 where button.state != .on { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(button.state == .on)
+        level.isEnabled = false
+        for _ in 0..<20 where button.state != .off { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(button.state == .off)
+    }
+
     @Test func keepOnTopUpdatesExistingAndNewWindowsAndCanBeTurnedOff() {
         let state = YapWindowLevel()
         let first = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)

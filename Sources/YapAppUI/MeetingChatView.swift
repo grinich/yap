@@ -180,8 +180,9 @@ struct MeetingChatView: View {
                         .font(.system(size: 10)).foregroundStyle(.tertiary)
                         .fixedSize()
                 }
-                Text(message.text)
+                Text(ChatMessageLinks.attributedText(message.text))
                     .font(.system(size: 13)).foregroundStyle(.primary)
+                    .tint(YapTheme.accent)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 11).padding(.vertical, 9)

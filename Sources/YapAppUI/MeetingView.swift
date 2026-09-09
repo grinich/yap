@@ -107,8 +107,8 @@ struct MeetingView: View {
                         .environment(\.colorScheme, .dark)
                     }
                     .overlay(alignment: .topLeading) {
-                        if model.sidebar == .people {
-                            Text("People")
+                        if let sidebar = model.sidebar {
+                            Text(sidebar == .chat ? "Chat" : "People")
                                 .font(.headline).foregroundStyle(.white)
                                 .accessibilityAddTraits(.isHeader)
                                 .padding(.leading, compactWidth ? 54 : available.size.width - inspectorWidth + 16)
@@ -181,12 +181,6 @@ struct MeetingView: View {
             .frame(minWidth: 120, alignment: .leading)
             }
             Spacer(minLength: 12)
-            if model.sidebar == .chat, !showsConnectionStage {
-                Text("Chat")
-                    .font(.headline).lineLimit(1)
-                    .accessibilityAddTraits(.isHeader)
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
-            }
             if let invitation = invitationToCopy {
                 Button {
                     copyInvitation(invitation)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Publish only the existing allowlisted review pages under Yap's GitHub Pages path."""
+"""Publish only the existing allowlisted review pages on Yap's GitHub Pages custom domain."""
 import argparse
 import importlib.util
 from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-SITE_URL = 'https://grinich.github.io/yap'
+SITE_URL = 'https://yap.enterprises'
 spec = importlib.util.spec_from_file_location('review_site', ROOT / 'Scripts/build-review-site.py')
 site = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(site)

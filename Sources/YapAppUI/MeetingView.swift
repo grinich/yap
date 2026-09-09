@@ -170,7 +170,7 @@ struct MeetingView: View {
         HStack(spacing: 10) {
             if showsTitle {
             VStack(alignment: .leading, spacing: 4) {
-                Text(meeting.meetingTitle.isEmpty ? "Your meeting" : meeting.meetingTitle)
+                Text(meeting.displayTitle)
                     .font(.headline)
                     .lineLimit(1)
                 if !showsConnectionStage {
@@ -493,7 +493,7 @@ struct MeetingView: View {
     }
 
     private var connectionStage: some View {
-        MeetingConnectionView(title: meeting.meetingTitle, status: meeting.status) {
+        MeetingConnectionView(title: meeting.displayTitle, status: meeting.status) {
             if meeting.status == .reconnecting { model.showLeaveConfirmation = true }
             else { Task { await model.leaveMeeting() } }
         }

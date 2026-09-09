@@ -98,8 +98,7 @@ public struct YapRootView: View {
 
     private var windowTitle: String {
         if model.activeCall {
-            let title = model.meeting.meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            return title.isEmpty ? "Meeting" : title
+            return model.meeting.displayTitle
         }
         if model.recordings.isPresented { return "Recordings" }
         return model.isPreview ? "Agenda Preview" : "Agenda"

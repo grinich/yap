@@ -663,12 +663,12 @@ public final class YapModel {
             joinInputError = "Enter your name before joining the meeting."; return
         }
         showJoinSheet = false
-        await meeting.join(url: url, displayName: displayName, title: selectedEvent?.title ?? "Zoom meeting")
+        await meeting.join(url: url, displayName: displayName, title: selectedEvent?.title ?? "")
     }
 
     public func hostMeeting() async {
         guard isPreview || !zoomConnection.isBusy else { error = "Finish connecting your Zoom account before starting a meeting."; return }
-        await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "Personal meeting")
+        await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "")
     }
 
     public func leaveMeeting(endForEveryone: Bool = false) async {

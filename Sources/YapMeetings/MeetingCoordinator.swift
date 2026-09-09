@@ -52,6 +52,18 @@ public final class MeetingCoordinator {
         driver.onEvent = { [weak self] sessionID, event in self?.receive(event, for: sessionID) }
     }
 
+    /// Preserve supplied titles; untitled one-to-one calls are identified by the other person.
+    public var displayTitle: String {
+        let title = meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        if participants.count == 2, participants.contains(where: \.isSelf),
+           let other = participants.first(where: { !$0.isSelf }) {
+            let name = other.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+        }
+        return "Your meeting"
+    }
+
     public var isConnected: Bool { status == .inMeeting }
     public var selectedReceivedShare: ReceivedMeetingShare? {
         receivedShares.first { $0.id == selectedReceivedShareID }
@@ -87,7 +99,7 @@ public final class MeetingCoordinator {
         return Array(galleryParticipants[start..<end])
     }
 
-    public func join(url: URL, displayName: String, title: String = "Zoom meeting") async {
+    public func join(url: URL, displayName: String, title: String = "") async {
         guard Self.isZoomMeetingURL(url) else {
             lastError = MeetingError.invalidLink.localizedDescription
             return
@@ -95,7 +107,7 @@ public final class MeetingCoordinator {
         await connect(MeetingRequest(url: url, displayName: displayName, title: title, isHost: false))
     }
 
-    public func host(displayName: String, title: String = "Instant meeting") async {
+    public func host(displayName: String, title: String = "") async {
         await connect(MeetingRequest(url: nil, displayName: displayName, title: title, isHost: true))
     }
 

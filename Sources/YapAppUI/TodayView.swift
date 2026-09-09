@@ -229,10 +229,7 @@ struct TodayView: View {
         HStack(spacing: 8) {
             Button { Task { await model.hostMeeting() } } label: {
                 Label {
-                    HStack(spacing: 10) {
-                        Text("Start new meeting")
-                        Text("⇧⌘N").font(.system(size: 11, weight: .medium)).opacity(0.7).accessibilityHidden(true)
-                    }
+                    Text("Start new meeting")
                 } icon: { Image(systemName: "plus") }
                 .foregroundStyle(.white)
             }

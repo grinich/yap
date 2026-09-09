@@ -65,6 +65,8 @@ public struct YapRootView: View {
             Button("Stay", role: .cancel) {}
         } message: { Text(model.meeting.isHost ? "Ending the meeting disconnects everyone. Leaving keeps it open when Zoom allows a host handoff." : "Your microphone, camera, and sharing will stop.") }
         .alert("Yap", isPresented: Binding(get: { model.error != nil || model.meeting.lastError != nil }, set: { if !$0 { model.error = nil; model.meeting.dismissError() } })) {
+            ZoomSignInButton(error: model.error ?? model.meeting.lastError ?? "",
+                             recovery: model.recordings.zoomSignInRecovery)
             Button("OK", role: .cancel) { model.error = nil; model.meeting.dismissError() }
         } message: { Text(model.error ?? model.meeting.lastError ?? "") }
         .alert("Open in Zoom Workplace?", isPresented: Binding(

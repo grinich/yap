@@ -101,6 +101,7 @@ public final class RecordingLibraryModel {
     let transcript: RecordingTranscriptModel
 
     @ObservationIgnored private let client: ZoomAccountClient
+    @ObservationIgnored var zoomSignInRecovery: ZoomSignInRecovery?
     @ObservationIgnored private let fetchPage: @Sendable (Date, Date, String) async throws -> ZoomRecordingPage
     @ObservationIgnored private let makePlaybackSource: @MainActor (ZoomRecordingFile) -> RecordingPlaybackSource
     @ObservationIgnored private let downloadVideo: @Sendable (ZoomRecordingFile, URL) async throws -> Void
@@ -457,6 +458,7 @@ public final class RecordingLibraryModel {
         let transferredSpeed = position.flatMap { $0.rate > 0 ? $0.rate : nil } ?? playbackSpeed
         playback.applyPlaybackSpeed(transferredSpeed)
         playback.isPreview = isPreview
+        playback.zoomSignInRecovery = zoomSignInRecovery
         playback.selectedMeeting = meeting
         playback.chat.adoptState(from: chat)
         playback.detailTab = detailTab

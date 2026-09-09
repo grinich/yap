@@ -152,6 +152,7 @@ public final class YapModel {
         self.loadGoogleConfiguration = loadGoogleConfiguration ?? YapConfigurationStore.loadGoogle
         self.makeConfiguredCalendarClient = makeConfiguredCalendarClient ?? { Self.makeCalendarClient(configuration: $0) }
         self.selectedCalendarIDs = Set(preferences.stringArray(forKey: "selectedCalendarIDs") ?? [])
+        recordings.zoomSignInRecovery = ZoomSignInRecovery(model: self)
         if preview {
             enterPreview()
             if ProcessInfo.processInfo.arguments.contains("--recordings-preview") { recordings.isPresented = true }

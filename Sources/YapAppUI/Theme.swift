@@ -70,22 +70,22 @@ struct CardSurface: ViewModifier {
 
 /// A single native glass layer for floating groups of controls. Content surfaces
 /// use ordinary materials instead; never nest this around glass-styled buttons.
-struct YapGlassSurface: ViewModifier {
-    var cornerRadius: CGFloat
+struct YapGlassSurface<Surface: InsettableShape>: ViewModifier {
+    var shape: Surface
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
         Group {
             if reduceTransparency {
-                content.background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: cornerRadius))
+                content.background(Color(nsColor: .windowBackgroundColor), in: shape)
             } else {
-                content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
+                content.glassEffect(.regular, in: shape)
             }
         }
         .overlay {
             if contrast == .increased {
-                RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(.primary.opacity(0.5), lineWidth: 1)
+                shape.strokeBorder(.primary.opacity(0.5), lineWidth: 1)
                     .allowsHitTesting(false)
             }
         }
@@ -95,6 +95,13 @@ struct YapGlassSurface: ViewModifier {
 extension View {
     func cardSurface() -> some View { modifier(CardSurface()) }
     func yapGlassSurface(cornerRadius: CGFloat = 20) -> some View {
-        modifier(YapGlassSurface(cornerRadius: cornerRadius))
+        modifier(YapGlassSurface(shape: RoundedRectangle(cornerRadius: cornerRadius)))
+    }
+
+    /// Only the inset edge rounds independently. The native window clips the
+    /// trailing edge, avoiding a second curve inside its top and bottom corners.
+    func yapTrailingPanelSurface() -> some View {
+        let shape = UnevenRoundedRectangle(topLeadingRadius: 22, bottomLeadingRadius: 22)
+        return modifier(YapGlassSurface(shape: shape)).clipShape(shape)
     }
 }

@@ -155,6 +155,7 @@ struct RecordingSidebar: View {
 
 struct RecordingPlayerView: View {
     @Bindable var model: RecordingLibraryModel
+    var headerLeadingInset: CGFloat = 24
     private let headerHeight: CGFloat = 100
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var copiedLink: UUID?
@@ -214,12 +215,12 @@ struct RecordingPlayerView: View {
         let playbackWidth: CGFloat = !model.isPreview && model.selectedFile != nil
             ? (meeting.playableVideoFiles.count > 1 ? 132 : 68) : 0
         let trailingWidth = reservingChat ? chatWidth + 24 : 64
-        return max(0, width - 24 - trailingWidth - playbackWidth - 16)
+        return max(0, width - headerLeadingInset - trailingWidth - playbackWidth - 16)
     }
 
     private func playerHeader(_ meeting: ZoomRecordingMeeting, width: CGFloat, chatWidth: CGFloat,
                               titleWidth: CGFloat, compact: Bool, height: CGFloat) -> some View {
-        let metadataWidth = compact ? max(0, width - (model.chat.isPresented ? chatWidth : 0) - 48) : titleWidth
+        let metadataWidth = compact ? max(0, width - (model.chat.isPresented ? chatWidth : 0) - headerLeadingInset - 24) : titleWidth
         return ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 12) {
@@ -234,7 +235,7 @@ struct RecordingPlayerView: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(width: metadataWidth, alignment: .leading)
-            .offset(x: 24, y: compact ? 72 : 24)
+            .offset(x: headerLeadingInset, y: compact ? 72 : 24)
 
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
@@ -321,8 +322,7 @@ struct RecordingPlayerView: View {
             // Like live meeting chat, the glass extends behind the shared
             // header, whose trailing toggle is the sole open/close control.
             .padding(.top, 72)
-            .yapGlassSurface(cornerRadius: 22)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .yapTrailingPanelSurface()
             .frame(width: width)
             .transition(.move(edge: .trailing).combined(with: .opacity))
     }

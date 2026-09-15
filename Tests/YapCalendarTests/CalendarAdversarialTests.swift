@@ -220,7 +220,7 @@ private func sendSyntheticCallback(for authorizationURL: URL) async {
           var callback = URLComponents(string: redirect) else { return }
     callback.queryItems = [URLQueryItem(name: "state", value: state), URLQueryItem(name: "code", value: "fake-code-for-new-account")]
     guard let url = callback.url else { return }
-    _ = try? await URLSession.shared.data(from: url)
+    _ = try? await sendLocalOAuthCallback(to: url)
 }
 
 private actor AdversarialTokenStore: GoogleTokenStore {

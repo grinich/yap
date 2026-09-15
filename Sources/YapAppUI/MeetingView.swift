@@ -760,7 +760,7 @@ struct MeetingView: View {
             .font(.system(size: 12))
             .padding(.horizontal, 9).padding(.vertical, 7)
             .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-            .background(YapSearchFocusBoundary {
+            .background(YapFieldFocusBoundary {
                 if isParticipantSearchFocused { isParticipantSearchFocused = false }
             })
             .padding(.horizontal, 12).padding(.bottom, 8)

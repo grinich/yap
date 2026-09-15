@@ -8,6 +8,7 @@ public struct YapSettingsView: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage("settings.selectedPane") private var selectedTab = 0
     @State private var showZoomConfigurationEntry = false
+    @FocusState private var isDisplayNameFocused: Bool
     public init(model: YapModel) { self.model = model }
 
     public var body: some View {
@@ -79,16 +80,26 @@ public struct YapSettingsView: View {
         Form {
             Section("In meetings") {
                 HStack(spacing: 20) {
-                    SettingsLabel(title: "Display name", detail: "How you appear to other people in meetings.")
+                    SettingsLabel(title: "Display name", detail: "How you appear in meetings. Saved automatically.")
                     Spacer(minLength: 0)
-                    TextField("Your name", text: $model.displayName)
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.large)
-                        .multilineTextAlignment(.leading)
-                        .frame(width: 190)
-                        .accessibilityLabel("Display name")
-                        .accessibilityIdentifier("settingsDisplayName")
+                    HStack(spacing: 8) {
+                        TextField("Your name", text: $model.displayName)
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.large)
+                            .multilineTextAlignment(.leading)
+                            .frame(width: 190)
+                            .focused($isDisplayNameFocused)
+                            .onSubmit(finishEditingDisplayName)
+                            .onExitCommand(perform: finishEditingDisplayName)
+                            .background(YapFieldFocusBoundary(onOutsideClick: finishEditingDisplayName))
+                            .accessibilityLabel("Display name")
+                            .accessibilityHint("Changes are saved automatically. Press Return or choose Done to finish editing.")
+                            .accessibilityIdentifier("settingsDisplayName")
+                        Button("Done", action: finishEditingDisplayName)
+                            .disabled(!isDisplayNameFocused)
+                            .accessibilityLabel("Done editing display name")
+                    }
                 }
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "video.slash")
@@ -145,6 +156,11 @@ public struct YapSettingsView: View {
             }
             LaunchAtLoginSettingsView()
         }.formStyle(.grouped)
+            .onDisappear(perform: finishEditingDisplayName)
+    }
+
+    private func finishEditingDisplayName() {
+        isDisplayNameFocused = false
     }
 
     private var development: some View {

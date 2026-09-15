@@ -207,7 +207,7 @@ public final class ZoomConnectionModel {
 struct ZoomConnectionView: View {
     @Bindable var model: YapModel
     @Bindable var connection: ZoomConnectionModel
-    @State private var showConfigurationEntry = false
+    var openDevelopment: () -> Void
 
     private var authenticationError: String? {
         [model.recordings.error, model.recordings.playbackError, model.recordings.downloadError,
@@ -260,20 +260,9 @@ struct ZoomConnectionView: View {
                     Button("Sign in to Zoom", action: signIn)
                         .disabled(connection.isBusy || connection.isLoadingStatus || model.activeCall)
                 }
-                Menu(connection.hasPublicConfiguration ? "Developer configuration…" : "Replace Zoom configuration…") {
-                    Button("Enter Zoom configuration…", action: enterConfiguration)
-                    Button("Import Zoom configuration…", action: importConfiguration)
-                    if connection.hasPublicConfiguration, connection.configurationMode == .personal {
-                        Divider()
-                        Button("Use Yap sign-in") { Task { await connection.usePublicConfiguration() } }
-                    }
-                }
-                .disabled(model.activeCall || connection.isBusy || connection.isLoadingStatus)
             } else if connection.hasLoadedStatus, connection.statusError == nil {
-                Text("Your personal Zoom connection needs its initial developer setup.").font(.callout)
-                Button("Enter Zoom configuration…", action: enterConfiguration).disabled(model.activeCall || connection.isBusy || connection.isLoadingStatus)
-                Button("Import Zoom configuration…") { importConfiguration() }.disabled(model.activeCall || connection.isBusy || connection.isLoadingStatus)
-                Link("Open Zoom developer setup", destination: URL(string: "https://marketplace.zoom.us/")!)
+                Text("This build needs a Zoom configuration before you can sign in.").font(.callout)
+                Button("Open Development settings", action: openDevelopment)
             }
             if !model.meeting.capabilities.supportsNativeVideo {
                 Label("Meeting SDK installation pending", systemImage: "shippingbox")
@@ -282,13 +271,6 @@ struct ZoomConnectionView: View {
         } header: { Text("Your meetings") }
         // API failures can invalidate saved tokens after Settings first loaded.
         .task(id: authenticationError) { await connection.loadStatus() }
-        .sheet(isPresented: $showConfigurationEntry, onDismiss: { connection.error = nil }) {
-            ZoomConfigurationEntry(model: model, connection: connection)
-        }
-        .alert("Zoom connection", isPresented: Binding(get: { connection.error != nil && connection.statusError == nil && !showConfigurationEntry }, set: { if !$0 { connection.error = nil } })) {
-            ZoomSignInButton(error: connection.error ?? "", recovery: model.recordings.zoomSignInRecovery)
-            Button("OK", role: .cancel) { connection.error = nil }
-        } message: { Text(connection.error ?? "") }
     }
 
     private func signIn() {
@@ -296,6 +278,47 @@ struct ZoomConnectionView: View {
             if let recovery = model.recordings.zoomSignInRecovery { await recovery.signIn() }
             else { await connection.connect() }
         }
+    }
+}
+
+struct ZoomDeveloperConfigurationView: View {
+    @Bindable var model: YapModel
+    @Bindable var connection: ZoomConnectionModel
+    @Binding var showConfigurationEntry: Bool
+
+    var body: some View {
+        Section("Zoom configuration") {
+            Text("Use a personal Zoom developer app for testing.")
+                .font(.callout).foregroundStyle(.secondary)
+            if connection.isLoadingStatus || (!connection.hasLoadedStatus && connection.statusError == nil) {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking Zoom configuration…").font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            if let statusError = connection.statusError {
+                HStack(alignment: .top) {
+                    Text(statusError).font(.callout).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button("Retry") { Task { await connection.loadStatus() } }
+                        .disabled(connection.isLoadingStatus || connection.isBusy)
+                        .accessibilityLabel("Retry checking Zoom configuration")
+                }
+            }
+            Menu(connection.hasPublicConfiguration ? "Developer configuration…" : connection.isConfigured ? "Replace Zoom configuration…" : "Set up Zoom…") {
+                Button("Enter Zoom configuration…", action: enterConfiguration)
+                Button("Import Zoom configuration…", action: importConfiguration)
+                if connection.hasPublicConfiguration, connection.configurationMode == .personal {
+                    Divider()
+                    Button("Use Yap sign-in") { Task { await connection.usePublicConfiguration() } }
+                }
+            }
+            .disabled(!connection.hasLoadedStatus || connection.statusError != nil || model.activeCall || connection.isBusy || connection.isLoadingStatus)
+            if connection.hasLoadedStatus, connection.statusError == nil, !connection.isConfigured {
+                Link("Open Zoom developer setup", destination: URL(string: "https://marketplace.zoom.us/")!)
+            }
+        }
+        .task { await connection.loadStatus() }
     }
 
     private func enterConfiguration() {
@@ -317,7 +340,7 @@ struct ZoomConnectionView: View {
     }
 }
 
-private struct ZoomConfigurationEntry: View {
+struct ZoomConfigurationEntry: View {
     @Bindable var model: YapModel
     @Bindable var connection: ZoomConnectionModel
     @Environment(\.dismiss) private var dismiss

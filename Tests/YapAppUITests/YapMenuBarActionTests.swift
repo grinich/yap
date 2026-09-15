@@ -268,6 +268,80 @@ struct YapMenuBarActionTests {
         #expect(fixture.driver.requests.isEmpty)
     }
 
+    @Test func activePillUsesTheCurrentMeetingTitleInsteadOfAnotherEligibleEvent() async {
+        let upcoming = MenuBarFixture.event(number: "98765432101", id: "upcoming", title: "Another calendar meeting")
+        let fixture = MenuBarFixture(events: [upcoming])
+        defer { fixture.cleanUp() }
+        await fixture.model.start()
+        #expect(fixture.actions.primaryActionTitle == "Join \(upcoming.title)")
+        #expect(fixture.actions.primaryActionSymbolName == nil)
+        let title = "Current meeting with a deliberately long title that remains complete for accessibility"
+
+        await fixture.model.meeting.join(url: URL(string: "https://zoom.us/j/12345678901")!,
+                                         displayName: "Fixture", title: title)
+
+        #expect(fixture.actions.primaryAction == .returnToMeeting)
+        #expect(fixture.actions.primaryActionTitle == title)
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
+        #expect(fixture.actions.displayedMeetingID == nil)
+        #expect(fixture.driver.requests.count == 1)
+        #expect(await fixture.calendar.eventRequests == 1)
+
+        await fixture.model.meeting.leave()
+        #expect(fixture.actions.primaryAction == .joinMeeting)
+        #expect(fixture.actions.primaryActionTitle == "Join \(upcoming.title)")
+        #expect(fixture.actions.primaryActionSymbolName == nil)
+    }
+
+    @Test func calendarTitleEnrichmentUpdatesTheActivePillDuringTheSameSessionAndReconnect() async throws {
+        let fixture = MenuBarFixture()
+        defer { fixture.cleanUp() }
+        await fixture.connect()
+        let sessionID = try #require(fixture.model.meeting.sessionID)
+        #expect(fixture.actions.primaryActionTitle == "Your meeting")
+        let interval = DateInterval(start: fixture.now, duration: 1800)
+
+        fixture.model.meeting.updateCalendarContext(title: "Calendar design review", scheduledInterval: interval,
+                                                    sessionID: sessionID)
+        #expect(fixture.actions.primaryActionTitle == "Calendar design review")
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
+        fixture.driver.setStatus(.reconnecting)
+        fixture.model.meeting.updateCalendarContext(title: "Updated design review", scheduledInterval: interval,
+                                                    sessionID: sessionID)
+
+        #expect(fixture.actions.primaryAction == .returnToMeeting)
+        #expect(fixture.actions.primaryActionTitle == "Updated design review")
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
+        #expect(fixture.model.meeting.sessionID == sessionID)
+        fixture.driver.setStatus(.inMeeting)
+        #expect(fixture.actions.primaryActionTitle == "Updated design review")
+        #expect(fixture.model.meeting.sessionID == sessionID)
+        #expect(fixture.driver.requests.count == 1)
+    }
+
+    @Test func untitledActivePillUsesTheMeetingDisplayFallbackAndClearsItsIconAfterLeaving() async throws {
+        let fixture = MenuBarFixture()
+        defer { fixture.cleanUp() }
+        #expect(fixture.actions.primaryActionSymbolName == nil)
+        await fixture.model.meeting.join(url: URL(string: "https://zoom.us/j/12345678901")!,
+                                         displayName: "Fixture", title: " \n ")
+        let sessionID = try #require(fixture.model.meeting.sessionID)
+        #expect(fixture.actions.primaryActionTitle == "Your meeting")
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
+
+        fixture.driver.onEvent?(sessionID, .participants([
+            MeetingParticipant(id: "self", name: "Fixture", isSelf: true),
+            MeetingParticipant(id: "other", name: "Jordan")
+        ]))
+        #expect(fixture.actions.primaryActionTitle == "Jordan")
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
+
+        await fixture.model.meeting.leave()
+        #expect(fixture.actions.primaryAction == .openYap)
+        #expect(fixture.actions.primaryActionTitle == "Yap")
+        #expect(fixture.actions.primaryActionSymbolName == nil)
+    }
+
     @Test(arguments: [MeetingStatus.connecting, .waitingForHost, .waitingRoom, .inMeeting, .reconnecting, .leaving])
     func everyActiveCallStateOnlyReopensTheExistingWindow(_ status: MeetingStatus) async {
         let fixture = MenuBarFixture(events: [MenuBarFixture.event(number: "12345678901")])
@@ -276,6 +350,8 @@ struct YapMenuBarActionTests {
         await fixture.model.meeting.join(url: URL(string: "https://zoom.us/j/11111111111")!, displayName: "Fixture")
         fixture.driver.setStatus(status)
         let existingSession = fixture.model.meeting.sessionID
+        #expect(fixture.actions.primaryActionTitle == fixture.model.meeting.displayTitle)
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
         await fixture.actions.performPrimaryAction()
         fixture.actions.joinWithLink()
         #expect(fixture.openCount == 2)
@@ -321,20 +397,32 @@ struct YapMenuBarActionTests {
         let fixture = MenuBarFixture()
         defer { fixture.cleanUp() }
         #expect(fixture.actions.primaryAction == .openYap)
-        await fixture.connect()
+        let title = "Sharing design review"
+        await fixture.model.meeting.join(url: URL(string: "https://zoom.us/j/12345678901")!,
+                                         displayName: "Fixture", title: title)
         #expect(fixture.actions.primaryAction == .returnToMeeting)
+        #expect(fixture.actions.primaryActionTitle == title)
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
         await fixture.model.meeting.startShare(MenuBarFixture.sharedWindow)
         #expect(fixture.actions.primaryAction == .returnToMeeting)
+        #expect(fixture.actions.primaryActionTitle == title)
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
         fixture.driver.setSharing(.sharing(MenuBarFixture.sharedWindow))
         #expect(fixture.actions.primaryAction == .stopSharing)
+        #expect(fixture.actions.primaryActionTitle == "Stop sharing")
+        #expect(fixture.actions.primaryActionSymbolName == nil)
         #expect(fixture.actions.canPerformPrimaryAction)
         await fixture.actions.performPrimaryAction()
         #expect(fixture.driver.stopRequests == 1)
         #expect(fixture.openCount == 0)
         #expect(fixture.actions.primaryAction == .stopSharing)
+        #expect(fixture.actions.primaryActionTitle == "Stop sharing")
+        #expect(fixture.actions.primaryActionSymbolName == nil)
         #expect(fixture.model.meeting.sharing.isSharing)
         fixture.driver.setSharing(.idle)
         #expect(fixture.actions.primaryAction == .returnToMeeting)
+        #expect(fixture.actions.primaryActionTitle == title)
+        #expect(fixture.actions.primaryActionSymbolName == "video.fill")
         #expect(fixture.model.activeCall)
         await fixture.actions.performPrimaryAction()
         #expect(fixture.openCount == 1)

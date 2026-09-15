@@ -7,6 +7,8 @@ public struct YapSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) private var openWindow
     @AppStorage("settings.selectedPane") private var selectedTab = 0
+    @State private var showZoomConfigurationEntry = false
+    @FocusState private var isDisplayNameFocused: Bool
     public init(model: YapModel) { self.model = model }
 
     public var body: some View {
@@ -26,6 +28,16 @@ public struct YapSettingsView: View {
         .sheet(isPresented: Binding(get: { model.showReminderPermission }, set: { if !$0 { model.cancelReminderSetup() } })) {
             ReminderPermissionView(model: model)
         }
+        .sheet(isPresented: $showZoomConfigurationEntry, onDismiss: { model.zoomConnection.error = nil }) {
+            ZoomConfigurationEntry(model: model, connection: model.zoomConnection)
+        }
+        .alert("Zoom connection", isPresented: Binding(
+            get: { model.zoomConnection.error != nil && model.zoomConnection.statusError == nil && !showZoomConfigurationEntry },
+            set: { if !$0 { model.zoomConnection.error = nil } }
+        )) {
+            ZoomSignInButton(error: model.zoomConnection.error ?? "", recovery: model.recordings.zoomSignInRecovery)
+            Button("OK", role: .cancel) { model.zoomConnection.error = nil }
+        } message: { Text(model.zoomConnection.error ?? "") }
     }
 
     private var connections: some View {
@@ -60,7 +72,7 @@ public struct YapSettingsView: View {
                         .accessibilityIdentifier("calendarConnectionError")
                 }
             } header: { Text("Your calendar") }
-            ZoomConnectionView(model: model, connection: model.zoomConnection)
+            ZoomConnectionView(model: model, connection: model.zoomConnection, openDevelopment: { selectedTab = 2 })
         }.formStyle(.grouped)
     }
 
@@ -68,24 +80,34 @@ public struct YapSettingsView: View {
         Form {
             Section("In meetings") {
                 HStack(spacing: 20) {
-                    SettingsLabel(title: "Display name", detail: "How you appear to other people in meetings.")
+                    SettingsLabel(title: "Display name", detail: "How you appear in meetings. Saved automatically.")
                     Spacer(minLength: 0)
-                    TextField("Your name", text: $model.displayName)
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.large)
-                        .multilineTextAlignment(.leading)
-                        .frame(width: 190)
-                        .accessibilityLabel("Display name")
-                        .accessibilityIdentifier("settingsDisplayName")
+                    HStack(spacing: 8) {
+                        TextField("Your name", text: $model.displayName)
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.large)
+                            .multilineTextAlignment(.leading)
+                            .frame(width: 190)
+                            .focused($isDisplayNameFocused)
+                            .onSubmit(finishEditingDisplayName)
+                            .onExitCommand(perform: finishEditingDisplayName)
+                            .background(YapFieldFocusBoundary(onOutsideClick: finishEditingDisplayName))
+                            .accessibilityLabel("Display name")
+                            .accessibilityHint("Changes are saved automatically. Press Return or choose Done to finish editing.")
+                            .accessibilityIdentifier("settingsDisplayName")
+                        Button("Done", action: finishEditingDisplayName)
+                            .disabled(!isDisplayNameFocused)
+                            .accessibilityLabel("Done editing display name")
+                    }
                 }
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "video.slash")
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 6)
-                    SettingsLabel(title: "Join quietly", detail: "Your microphone and camera start off. Turn them on when you’re ready.")
-                    Spacer(minLength: 0)
+                Toggle(isOn: $model.joinQuietly) {
+                    SettingsLabel(title: "Join quietly", detail: "Start with your microphone and camera off. Applies when you join or start a meeting.")
                 }
+                .toggleStyle(.switch)
+                .accessibilityLabel("Join quietly")
+                .accessibilityHint("Start with your microphone and camera off. Applies when you join or start a meeting.")
+                .accessibilityIdentifier("settingsJoinQuietly")
                 Toggle(isOn: $model.askBeforeLeavingMeeting) {
                     SettingsLabel(title: "Confirm before leaving", detail: "Ask whether to leave or end the meeting. When off, Leave exits only your call.")
                 }
@@ -134,10 +156,17 @@ public struct YapSettingsView: View {
             }
             LaunchAtLoginSettingsView()
         }.formStyle(.grouped)
+            .onDisappear(perform: finishEditingDisplayName)
+    }
+
+    private func finishEditingDisplayName() {
+        isDisplayNameFocused = false
     }
 
     private var development: some View {
         Form {
+            ZoomDeveloperConfigurationView(model: model, connection: model.zoomConnection,
+                                           showConfigurationEntry: $showZoomConfigurationEntry)
             Section(appVersionTitle) {
                 Text("Interface preview uses sample people and messages on this Mac.")
                     .font(.callout).foregroundStyle(.secondary)

@@ -92,7 +92,7 @@ For every case, record **Not run**, **Passed**, **Failed**, or **Blocked**, the 
 1. In A's Yap, choose **Start new meeting** once. Observe startup and copy the new invitation privately.
 2. B opens the invitation in Zoom Workplace; A admits B if a waiting room is enabled. C joins as an additional participant.
 3. Compare the meeting shown in both clients. Confirm A has host authority; A's meeting creation used A's account rather than B's. Use Zoom's normal account/meeting UI to corroborate ownership where available.
-4. Verify actual entry conditions: microphone muted, camera off, and no cloud recording started automatically. Confirm the requested waiting-room/recording defaults against the account's enforced behavior, recording any policy override.
+4. With **Join quietly** on (the default), verify actual entry conditions: microphone muted, camera off, and no cloud recording started automatically. Confirm the requested waiting-room/recording defaults against the account's enforced behavior, recording any policy override.
 5. Do not close this meeting yet; use it for M01–M07 and R01. Test a second hosting attempt only after leaving the first meeting.
 
 **Expected:** one explicit host action creates one meeting for A and joins it as A. Denied hosting, startup failure or ambiguous creation must show an error rather than claim a working call. This exercises `meeting:write:meeting` plus `user:read:zak`; a static host badge alone is not proof of correct account attribution.
@@ -108,9 +108,11 @@ For every case, record **Not run**, **Passed**, **Failed**, or **Blocked**, the 
 
 ### M01 — two-way audio/video and native device controls
 
-1. In A's meeting with B admitted, confirm both endpoints start with Yap's microphone/camera off. A then explicitly enables its microphone and camera; B verifies actual audible synthetic speech and changing video. Reverse the direction.
+1. With **Join quietly** on (the default), confirm Yap's microphone/camera start off in A's meeting with B admitted. A then explicitly enables its microphone and camera; B verifies actual audible synthetic speech and changing video. Reverse the direction.
 2. Use the native **Microphone**, **Speaker** and **Camera** menus to choose available devices. Test the microphone and speaker, then stop each test. Adjust speaker volume; toggle automatic microphone volume before testing manual adjustment. Use **Refresh devices** after connecting another device, if available.
 3. Mute/unmute and turn each camera off/on. B confirms the media stops and resumes as indicated. Deny a permission on a clean test profile or test a missing device, then restore normal access through macOS and retry.
+4. In **Settings → General**, turn **Join quietly** off. Confirm this does not change the current call's media. Leave, then join an authorized test meeting and separately start one; verify microphone and camera start on when permitted, including the selected camera background. Check that denied permissions and host restrictions keep media off with accurate controls. After manually muting/stopping video, reconnect the same session and confirm it stays off.
+5. Verify the switch persists both ways after relaunch. With it off, **Share screen** to a test Zoom Room must still enter with meeting audio disconnected and video off. Restore **Join quietly** on afterward.
 
 **Expected:** visible controls agree with delivered media and selected devices; errors remain visible and no unavailable device is reported as active. Device changes and audio tests do not silently unmute a participant. Record measured quality if useful; a camera toggle or HD preference is not proof of a specific resolution.
 

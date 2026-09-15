@@ -55,10 +55,22 @@ public final class ZoomMeetingDriver: MeetingDriver, CameraEffectsDriver, Meetin
         self.sessionID = sessionID
         Self.activeOwner = self
         do {
+            var microphoneMuted = request.microphoneMuted
+            var cameraEnabled = request.cameraEnabled
             if request.isRoomShare {
                 guard await AVCaptureDevice.requestAccess(for: .audio) else {
                     throw MeetingError.unavailable("Allow Yap microphone access in System Settings to detect a nearby Zoom Room. Your microphone won’t be broadcast to the room.")
                 }
+            }
+            if !request.isRoomShare, !request.microphoneMuted {
+                microphoneMuted = !(await AVCaptureDevice.requestAccess(for: .audio))
+                try Task.checkCancellation()
+                guard self.sessionID == sessionID else { throw CancellationError() }
+            }
+            if !request.isRoomShare, request.cameraEnabled {
+                cameraEnabled = await AVCaptureDevice.requestAccess(for: .video)
+                try Task.checkCancellation()
+                guard self.sessionID == sessionID else { throw CancellationError() }
             }
             let credentials: ZoomMeetingCredentials
             let meetingNumber: Int64
@@ -83,7 +95,8 @@ public final class ZoomMeetingDriver: MeetingDriver, CameraEffectsDriver, Meetin
                 : native.begin(jwt: credentials.sdkJWT, zak: credentials.zak,
                 meetingNumber: meetingNumber, vanityID: link?.vanityID,
                 passcode: link?.embeddedPasscode, registrantToken: link?.registrantToken,
-                displayName: request.displayName, host: request.isHost, sessionID: sessionID.uuidString)
+                displayName: request.displayName, host: request.isHost, microphoneMuted: microphoneMuted,
+                cameraEnabled: cameraEnabled, sessionID: sessionID.uuidString)
             try check(result, action: "start the meeting connection")
         } catch {
             if self.sessionID == sessionID {

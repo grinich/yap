@@ -1,4 +1,5 @@
 import AppKit
+import CoreFoundation
 import Foundation
 import Observation
 import YapCalendar
@@ -75,6 +76,7 @@ public final class YapModel {
     public private(set) var lastRefreshed: Date?
     public private(set) var isPreview = false
     public var displayName: String { didSet { preferences.set(displayName, forKey: "displayName"); joinInputError = nil } }
+    public var joinQuietly: Bool { didSet { preferences.set(joinQuietly, forKey: "joinQuietly") } }
     public var remindersEnabled: Bool { didSet { preferences.set(remindersEnabled, forKey: "remindersEnabled") } }
     public var chatNotificationSound: ChatNotificationSound {
         didSet { preferences.set(chatNotificationSound.rawValue, forKey: "chatNotificationSound") }
@@ -167,6 +169,13 @@ public final class YapModel {
         self.preferences = preferences
         self.chatNotificationSound = ChatNotificationSound(rawValue: preferences.string(forKey: "chatNotificationSound") ?? "Pop") ?? .pop
         self.displayName = preferences.string(forKey: "displayName") ?? NSFullUserName().components(separatedBy: " ").first ?? "Me"
+        // Only an explicitly saved switch value can opt into starting media.
+        if let saved = preferences.object(forKey: "joinQuietly") as? NSNumber,
+           CFGetTypeID(saved) == CFBooleanGetTypeID() {
+            self.joinQuietly = saved.boolValue
+        } else {
+            self.joinQuietly = true
+        }
         self.remindersEnabled = preferences.bool(forKey: "remindersEnabled")
         self.askBeforeLeavingMeeting = preferences.bool(forKey: "askBeforeLeavingMeeting")
         self.reminderMinutes = max(1, preferences.integer(forKey: "reminderMinutes") == 0 ? 2 : preferences.integer(forKey: "reminderMinutes"))
@@ -680,7 +689,8 @@ public final class YapModel {
         let interval = event.flatMap { $0.endDate > $0.startDate ? DateInterval(start: $0.startDate, end: $0.endDate) : nil }
         // Calendar metadata must never delay joining Zoom. Use what is already
         // available, then enrich this exact session after the refresh completes.
-        await requestedMeeting.join(url: url, displayName: displayName, title: event?.title ?? "", scheduledInterval: interval)
+        await requestedMeeting.join(url: url, displayName: displayName, title: event?.title ?? "", scheduledInterval: interval,
+                                    joinQuietly: joinQuietly)
         guard explicitEvent == nil, let sessionID = requestedMeeting.sessionID,
               meeting === requestedMeeting, meetingLinkRevision == revision,
               requestedMeeting.status.isActive else { return }
@@ -776,7 +786,7 @@ public final class YapModel {
     public func hostMeeting() async {
         guard isPreview || !zoomConnection.isBusy else { error = "Finish connecting your Zoom account before starting a meeting."; return }
         meetingLinkRevision = UUID()
-        await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "")
+        await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "", joinQuietly: joinQuietly)
     }
 
     public func shareScreenToRoom() async {

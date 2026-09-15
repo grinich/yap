@@ -387,12 +387,14 @@ public final class MeetingCoordinator {
         return Array(galleryParticipants[start..<end])
     }
 
-    public func join(url: URL, displayName: String, title: String = "", scheduledInterval: DateInterval? = nil) async {
+    public func join(url: URL, displayName: String, title: String = "", scheduledInterval: DateInterval? = nil,
+                     joinQuietly: Bool = true) async {
         guard Self.isZoomMeetingURL(url) else {
             lastError = MeetingError.invalidLink.localizedDescription
             return
         }
-        await connect(MeetingRequest(url: url, displayName: displayName, title: title, isHost: false, scheduledInterval: scheduledInterval))
+        await connect(MeetingRequest(url: url, displayName: displayName, title: title, isHost: false,
+                                     microphoneMuted: joinQuietly, cameraEnabled: !joinQuietly, scheduledInterval: scheduledInterval))
     }
 
     public func updateCalendarContext(title: String, scheduledInterval: DateInterval?, sessionID: UUID) {
@@ -401,8 +403,9 @@ public final class MeetingCoordinator {
         self.scheduledInterval = scheduledInterval
     }
 
-    public func host(displayName: String, title: String = "") async {
-        await connect(MeetingRequest(url: nil, displayName: displayName, title: title, isHost: true))
+    public func host(displayName: String, title: String = "", joinQuietly: Bool = true) async {
+        await connect(MeetingRequest(url: nil, displayName: displayName, title: title, isHost: true,
+                                     microphoneMuted: joinQuietly, cameraEnabled: !joinQuietly))
     }
 
     public func shareToRoom(displayName: String) async {
@@ -443,7 +446,8 @@ public final class MeetingCoordinator {
         isHost = false
         status = .connecting
         let normalizedRequest = MeetingRequest(url: request.url, displayName: trimmedName, title: request.title,
-                                               isHost: request.isHost, microphoneMuted: true, cameraEnabled: false,
+                                               isHost: request.isHost, microphoneMuted: request.isRoomShare || request.microphoneMuted,
+                                               cameraEnabled: !request.isRoomShare && request.cameraEnabled,
                                                isRoomShare: request.isRoomShare, scheduledInterval: request.scheduledInterval)
         do {
             try await withTaskCancellationHandler {

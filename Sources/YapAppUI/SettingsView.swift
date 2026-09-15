@@ -101,13 +101,13 @@ public struct YapSettingsView: View {
                             .accessibilityLabel("Done editing display name")
                     }
                 }
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "video.slash")
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 6)
-                    SettingsLabel(title: "Join quietly", detail: "Your microphone and camera start off. Turn them on when you’re ready.")
-                    Spacer(minLength: 0)
+                Toggle(isOn: $model.joinQuietly) {
+                    SettingsLabel(title: "Join quietly", detail: "Start with your microphone and camera off. Applies when you join or start a meeting.")
                 }
+                .toggleStyle(.switch)
+                .accessibilityLabel("Join quietly")
+                .accessibilityHint("Start with your microphone and camera off. Applies when you join or start a meeting.")
+                .accessibilityIdentifier("settingsJoinQuietly")
                 Toggle(isOn: $model.askBeforeLeavingMeeting) {
                     SettingsLabel(title: "Confirm before leaving", detail: "Ask whether to leave or end the meeting. When off, Leave exits only your call.")
                 }

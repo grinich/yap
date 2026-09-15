@@ -368,7 +368,8 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: 7) {
             Text("Joining as \(model.displayName)")
                 .font(.system(size: 12, weight: .medium)).lineLimit(2)
-            Label("Camera off · microphone muted", systemImage: "mic.slash")
+            Label(model.joinQuietly ? "Camera off · microphone muted" : "Camera and microphone on if allowed",
+                  systemImage: model.joinQuietly ? "mic.slash" : "mic")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -490,7 +491,10 @@ struct JoinMeetingSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(model.selectedEvent?.title ?? "Join a meeting").font(.title2).fontWeight(.semibold)
-            Text("Paste your Zoom invitation link. You’ll join with your camera off and microphone muted.").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(model.joinQuietly
+                ? "Paste your Zoom invitation link. Your microphone and camera will start off."
+                : "Paste your Zoom invitation link. Your microphone and camera will start on if allowed.")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let event = model.selectedEvent, AgendaRules.meetingURLs(for: event).count > 1 {
                 Text("This invitation has multiple Zoom links. Choose the intended meeting.").font(.callout)
                 ForEach(AgendaRules.meetingURLs(for: event), id: \.absoluteString) { url in

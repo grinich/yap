@@ -44,8 +44,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSInteger)beginWithJWT:(NSString *)jwt zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
                 vanityID:(nullable NSString *)vanityID passcode:(nullable NSString *)passcode
          registrantToken:(nullable NSString *)registrantToken displayName:(NSString *)displayName
-                    host:(BOOL)host sessionID:(NSString *)sessionID
-    NS_SWIFT_NAME(begin(jwt:zak:meetingNumber:vanityID:passcode:registrantToken:displayName:host:sessionID:));
+                    host:(BOOL)host microphoneMuted:(BOOL)microphoneMuted cameraEnabled:(BOOL)cameraEnabled sessionID:(NSString *)sessionID
+    NS_SWIFT_NAME(begin(jwt:zak:meetingNumber:vanityID:passcode:registrantToken:displayName:host:microphoneMuted:cameraEnabled:sessionID:));
 - (void)leaveEndingMeeting:(BOOL)end NS_SWIFT_NAME(leave(endForEveryone:));
 - (NSInteger)setMicrophoneMuted:(BOOL)muted;
 - (NSInteger)setCameraEnabled:(BOOL)enabled;

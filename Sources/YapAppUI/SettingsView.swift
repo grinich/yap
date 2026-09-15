@@ -7,6 +7,7 @@ public struct YapSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) private var openWindow
     @AppStorage("settings.selectedPane") private var selectedTab = 0
+    @State private var showZoomConfigurationEntry = false
     public init(model: YapModel) { self.model = model }
 
     public var body: some View {
@@ -26,6 +27,16 @@ public struct YapSettingsView: View {
         .sheet(isPresented: Binding(get: { model.showReminderPermission }, set: { if !$0 { model.cancelReminderSetup() } })) {
             ReminderPermissionView(model: model)
         }
+        .sheet(isPresented: $showZoomConfigurationEntry, onDismiss: { model.zoomConnection.error = nil }) {
+            ZoomConfigurationEntry(model: model, connection: model.zoomConnection)
+        }
+        .alert("Zoom connection", isPresented: Binding(
+            get: { model.zoomConnection.error != nil && model.zoomConnection.statusError == nil && !showZoomConfigurationEntry },
+            set: { if !$0 { model.zoomConnection.error = nil } }
+        )) {
+            ZoomSignInButton(error: model.zoomConnection.error ?? "", recovery: model.recordings.zoomSignInRecovery)
+            Button("OK", role: .cancel) { model.zoomConnection.error = nil }
+        } message: { Text(model.zoomConnection.error ?? "") }
     }
 
     private var connections: some View {
@@ -60,7 +71,7 @@ public struct YapSettingsView: View {
                         .accessibilityIdentifier("calendarConnectionError")
                 }
             } header: { Text("Your calendar") }
-            ZoomConnectionView(model: model, connection: model.zoomConnection)
+            ZoomConnectionView(model: model, connection: model.zoomConnection, openDevelopment: { selectedTab = 2 })
         }.formStyle(.grouped)
     }
 
@@ -138,6 +149,8 @@ public struct YapSettingsView: View {
 
     private var development: some View {
         Form {
+            ZoomDeveloperConfigurationView(model: model, connection: model.zoomConnection,
+                                           showConfigurationEntry: $showZoomConfigurationEntry)
             Section(appVersionTitle) {
                 Text("Interface preview uses sample people and messages on this Mac.")
                     .font(.callout).foregroundStyle(.secondary)

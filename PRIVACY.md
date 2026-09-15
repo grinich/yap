@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated September 7, 2026. Yap is an independent macOS application developed and operated by **Michael Grinich**, an individual. Contact [mgrinich@gmail.com](mailto:mgrinich@gmail.com) for privacy or security matters.
+Last updated September 15, 2026. Yap is an independent macOS application developed and operated by **Michael Grinich**, an individual. Contact [mgrinich@gmail.com](mailto:mgrinich@gmail.com) for privacy or security matters.
 
 This policy describes personal developer mode and the managed connection option prepared for the free preview. Managed mode is available only in builds configured with the project's authorization service. Publishing the source or this policy does not mean Zoom has approved external use.
 
@@ -22,6 +22,8 @@ The Mac connects to Zoom for meeting creation, recording lists and downloads. Zo
 Recording playback and saved chat/transcript retrieval use the account's authorized Zoom download URLs. Where Zoom redirects a download to a non-Zoom CDN, the app removes the Zoom OAuth authorization header. Content you explicitly send, share, record, save or export remains subject to your permissions and other participants' rights.
 
 **Google Calendar is optional.** The app requests read-only calendar-list and event access and reads directly from Google. It displays upcoming Zoom meetings from calendars you select; it does not create events, send invitations or change RSVPs. Google tokens and calendar data are not sent to the project-operated authorization service. Use and transfer of Google API data follow the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including its Limited Use requirements. The app does not sell account or meeting data, use it for advertising, or send it to train AI models. Spoken transcripts displayed by the app are existing Zoom recording artifacts.
+
+After Google returns to the app's temporary local callback, builds with the branded completion page send the browser to `https://yap.enterprises/` with only a fixed sign-in outcome in the page path. Authorization codes, state values, PKCE verifiers, tokens, account identifiers and calendar content are not forwarded to that page. The website host receives normal browser request information such as the IP address, browser information and requested outcome path. The completion pages use no analytics, cookies or external tracking resources; the app suppresses the callback URL as a referrer. The page's Open Yap button activates the app; it does not itself authorize or connect an account. Older builds display the completion page locally.
 
 ## Storage, retention and your choices
 

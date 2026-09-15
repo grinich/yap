@@ -31,6 +31,18 @@ public struct ZoomPublicConfiguration: Sendable, Equatable {
         return components.url!
     }
 
+    public var oauthSessionURL: URL {
+        var components = URLComponents(url: sdkSignerURL, resolvingAgainstBaseURL: false)!
+        components.path = "/v1/oauth/session"
+        return components.url!
+    }
+
+    public var oauthRedirectURL: URL {
+        var components = URLComponents(url: sdkSignerURL, resolvingAgainstBaseURL: false)!
+        components.path = "/oauth/zoom/callback"
+        return components.url!
+    }
+
     public static func load(info: [String: Any]) throws -> Self? {
         let keys = ["YapZoomOAuthClientID", "YapZoomSDKClientID", "YapZoomSDKSignerURL"]
         guard keys.contains(where: { info[$0] != nil }) else { return nil }

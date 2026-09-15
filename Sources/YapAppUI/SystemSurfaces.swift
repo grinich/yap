@@ -195,6 +195,24 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
             isObservingActions = true
         }
         incomingURLs.configure { [weak self, weak model] url in
+            if YapDeepLink.isConnectZoomURL(url) {
+                self?.presentMainWindow()
+                guard let model, !model.isPreview else { return }
+                if model.activeCall {
+                    model.error = "Leave the current meeting before changing your Zoom connection."
+                    return
+                }
+                guard !model.zoomConnection.isBusy else { return }
+                UserDefaults.standard.set(0, forKey: "settings.selectedPane")
+                model.showSettings = true
+                // The landing page enters the same sign-in flow as Settings.
+                // A saved connection needs no new authorization until it expires.
+                let request = ZoomConnectLinkRequest(connection: model.zoomConnection)
+                Task {
+                    await request.perform(on: model)
+                }
+                return
+            }
             if YapDeepLink.isOpenAppURL(url) {
                 self?.presentMainWindow()
                 return
@@ -217,9 +235,12 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     public func application(_ application: NSApplication, open urls: [URL]) {
         // Handle URL delivery at the application boundary, including cold launch
         // before SwiftUI attaches the main window and while Settings is in front.
-        guard !urls.isEmpty else { return }
+        // Authentication callbacks must never enter the meeting-link parser or
+        // displace an invitation waiting for the main window to attach.
+        let navigationURLs = urls.filter { !ZoomManagedOAuthCallback.receive($0) }
+        guard !navigationURLs.isEmpty else { return }
         YapSystemActions.discardPendingMeetingNavigation()
-        incomingURLs.receive(urls)
+        incomingURLs.receive(navigationURLs)
     }
 
     func toggleMainWindow() {

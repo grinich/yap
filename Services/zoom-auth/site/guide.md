@@ -1,32 +1,60 @@
 # User guide
 
-This guide covers **Yap 0.1.4 (build 5)**, the public early preview for Apple silicon Macs. The signed and notarized installer is available on [GitHub Releases](https://github.com/grinich/yap/releases/tag/v0.1.4). Zoom Marketplace review and Google OAuth verification are separate from installer availability; account restrictions may still apply. [Current availability](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md).
+This guide covers **Yap 0.1.6 (build 7)**, the public early preview for Apple silicon Macs. The signed and notarized installer is available on [GitHub Releases](https://github.com/grinich/yap/releases/tag/v0.1.6). Zoom Marketplace review and Google OAuth verification are separate from installer availability; account restrictions may still apply. [Current availability](https://github.com/grinich/yap/blob/main/Documentation/Distribution.md).
 
 ## Install and connect
 
-Yap requires **Apple silicon and macOS 26 or newer**. Download **Yap.dmg** from [GitHub Releases](https://github.com/grinich/yap/releases/tag/v0.1.4), open it, drag **Yap.app** to **Applications**, eject the disk image and launch Yap. Alternatively, expand **Yap-macOS.zip** and move Yap.app to Applications. Both downloads have matching SHA-256 files.
+Yap requires **Apple silicon and macOS 26 or newer**. Download [**Yap.dmg**](https://github.com/grinich/yap/releases/download/v0.1.6/Yap.dmg), open it, drag **Yap.app** to **Applications**, eject the disk image and launch Yap. Alternatively, expand [**Yap-macOS.zip**](https://github.com/grinich/yap/releases/download/v0.1.6/Yap-macOS.zip) and move Yap.app to Applications. Both downloads have matching SHA-256 files on the release page. To update an installed copy, choose **Yap → Check for Updates…** after finishing any active call.
 
 Quit any older app before switching to Yap. Keep it until you have verified the new app's account access; supported saved accounts and preferences can migrate through normal macOS permissions. See [migration details](https://github.com/grinich/yap/blob/main/Documentation/Bundle-Identity.md). For the SDK-free sample interface and personal developer setup, see the [source README](https://github.com/grinich/yap#try-yap).
 
-Open **Settings → Connections → Your meetings → Zoom → Sign in with Zoom**. The browser opens Zoom's sign-in and consent page. Approve access with the account you want to use, and return to the app. The app does not ask for your Zoom password directly.
+Open **Yap → Settings → Connections** and choose **Sign in to Zoom** under **Your meetings**. The browser opens Zoom's sign-in and consent page. Approve access with the account you want to use, and return to the app. The app does not ask for your Zoom password directly.
 
-Builds with the managed connection already know the project's public client and authorization service. If a saved personal developer configuration is active, the developer menu offers **Use Yap sign-in** to switch to the bundled managed connection. A build that requires a configuration before sign-in needs the [personal Zoom setup](https://github.com/grinich/yap/blob/main/Documentation/Zoom-Setup.md). The developer menu alone does not indicate which mode is active. Do not use another person's SDK secret. See [Privacy](https://github.com/grinich/yap/blob/main/PRIVACY.md) for the two connection modes and their data flows.
+The official installer includes Yap's sign-in configuration; no developer setup is needed. If you previously used a personal developer configuration, choose **Developer configuration… → Use Yap sign-in** in the Zoom connection settings to switch to Yap's bundled connection. See [Privacy](https://github.com/grinich/yap/blob/main/PRIVACY.md) for connection modes and data handling.
+
+During setup, choose **Enable screen sharing** to allow access in **System Settings → Privacy & Security → Screen & System Audio Recording**. Return to Yap and choose **Check again** if needed. You can choose **Set up later**; nothing is shared until you select content and choose Share.
 
 ## Join or start a meeting
 
 - Choose **Join with a link…**, paste your Zoom invitation, check your display name, and choose **Join meeting**. If an invitation contains several meeting links, choose the one you intend to join.
-- Choose **Start a meeting** to create a meeting using the connected Zoom account. Hosting and admission remain subject to that account's Zoom permissions.
+- Choose **Start new meeting** to create a meeting using the connected Zoom account. Hosting and admission remain subject to that account's Zoom permissions.
 - Meetings begin with the microphone muted and camera off. Use the meeting controls to enable them when you are ready; macOS may request permission.
-- Use the chat and participant controls to open their side panes. Choose Share to select the window or display you want to share, and use **Stop sharing** to finish.
+- Use the chat and participant controls to open their side panes. **Raise hand** appears when other people are present; choose **Lower hand** when finished.
 - When you leave, the app stops your microphone, camera, and sharing. Hosts can separately choose **End for everyone**; that ends the call for the other participants too.
 
 An optional setting lets the app handle Zoom's native meeting links. Unsupported link types offer an explicit option to open Zoom Workplace. Access to meetings outside the developer's account depends on the applicable Zoom approval and authorization.
 
+## Microphone, camera and meeting views
+
+Use the **Microphone**, **Speaker**, and **Camera** menus in the Mac menu bar to choose devices. The audio menus also offer volume controls and audio tests. Turn off **Automatically adjust microphone volume** to set microphone volume yourself. Choose **Refresh devices** if a newly connected device is missing.
+
+Open **Yap → Settings → Camera**, or **Camera → Camera effects…**, to choose **None**, **Blur**, or **Photo**, and enable **Automatically frame me** when available. **Preview camera** starts a local preview before a meeting; closing Camera settings stops it. During a meeting, check effects in your self-view. Background photos are copied to Yap's application support folder; moving the original does not remove the saved background. Choosing None stops the effect but does not delete the copied photo. Availability depends on Zoom, your camera and your Mac.
+
+The meeting's layout menu changes the people view and offers **Hide self view** and **Show non-video participants**. Drag the corner self-view to another corner. **Keep on Top** keeps the call window above other windows.
+
+## Share content and take a group photo
+
+Choose **Share**, select **Screen or window**, pick the content, then choose **Share**. To send sound without showing a screen, select **Computer audio** instead. Your microphone keeps its current state. Use **Switch** to select different content and **Stop sharing** to finish; switching between screen sharing and audio-only sharing may require stopping first.
+
+When someone shares, use **Show people** or **Show shared content** to change your view. Nearby Zoom Room pairing remains experimental; if pairing is unavailable, join the room's meeting by link or ID before sharing.
+
+Choose **Take photo** from the layout menu for a countdown and a collage of participants with cameras on. Keep the call window visible and still. The photo excludes names and camera-off tiles, and requires macOS screen-recording access. Groups larger than 49 cameras are captured in batches, so the result is not one simultaneous moment. A successful photo is saved automatically as a PNG in **Downloads** and stays there until you delete it.
+
+## Chat during a meeting
+
+Open the chat pane and choose the audience in **To:** before sending. Available choices, including private participants or the waiting room, follow the meeting's permissions. Return sends; Shift-Return adds a line. Select text to format it or insert a link. Message actions include **Reply**, **Copy**, **Quote**, and **Delete message** for your own messages when permitted. Sent-message editing and per-message emoji reactions are not available in Yap.
+
+Choose **Attach file** to send a file to the selected audience. Incoming files download only when you choose **Save file** and a destination. Transfers show progress, with **Cancel transfer** and **Retry download** when available. File types, sizes and recipients depend on Zoom's meeting settings.
+
+Use **Find in chat** to search, or **Chat options → Save Chat…** to save the history currently retained in Yap as a text file. A saved chat includes file details, not the attachments themselves. Saved chats and attachments remain in the locations you choose after leaving the meeting or disconnecting; delete them separately when no longer needed.
+
+Unread badges and temporary message bubbles appear when chat is closed. Set **Yap → Settings → General → Message sound** to choose a sound or **None**; the unread badge remains available without sound.
+
 ## Add your calendar
 
-Google Calendar is optional. In **Yap 0.1.4 or newer**, open **Settings → Connections → Sign in with Google**. The official app includes its desktop client configuration; you do not need to create a Cloud project or import a JSON file. Choose your Google account in the browser, review the read-only permissions, complete consent, and select the calendars you want in Yap. The consent app is **Yap**. While Google's project is in Testing, only approved test users can connect and an unverified-app notice is expected. Calendar can stay disconnected while using Zoom features. [Calendar details](https://github.com/grinich/yap/blob/main/Documentation/GoogleCalendar.md).
+Google Calendar is optional. Choose **Connect Google Calendar** in the agenda to start sign-in directly, or open **Yap → Settings → Connections → Sign in with Google**. The official app includes its configuration; you do not need to create a Cloud project or import a JSON file. Choose your Google account in the browser, review the read-only permissions, complete consent, and select the calendars you want in Yap. The consent app is **Yap**. Google sign-in is in production but remains unverified, so Google's warning and user cap apply. Calendar can stay disconnected while using Zoom features. [Calendar details](https://github.com/grinich/yap/blob/main/Documentation/GoogleCalendar.md).
 
-The agenda shows upcoming events with supported Zoom links. Join from the agenda or the menu bar. Calendar access is read-only: the app does not create events, invite people, or change your RSVP. You can deselect calendars or disconnect the account in Settings.
+The agenda shows upcoming events with supported Zoom links. Open Yap's schedule in the menu bar to see current and upcoming events, today and tomorrow, all-day events, and earlier meetings. Join an eligible Zoom meeting or open the event's day in Google Calendar. Matching meetings show the calendar title and time interval in Yap. Calendar access is read-only: the app does not create events, invite people, or change your RSVP. You can deselect calendars or disconnect the account in Settings.
 
 ## Find and watch a recording
 
@@ -63,9 +91,9 @@ Left and Right skip ten seconds at a time. Recording shortcuts apply to the acti
 
 ## Disconnect or remove the app
 
-Leave active calls, then use **Settings → Disconnect Zoom** and disconnect Calendar if connected. Disconnect removes the app's local authorization and clears associated app playback and caches; personal developer configuration can remain. To revoke the provider's server-side grant too, remove the app from Zoom's or Google's connected-app settings.
+Leave active calls, then open **Yap → Settings → Connections** and choose **Disconnect Zoom** and **Disconnect Google Calendar** if connected. Disconnect removes the app's local authorization and clears associated app playback and caches; personal developer configuration can remain. To revoke the provider's server-side grant too, remove the app from Zoom's or Google's connected-app settings.
 
-Quit the app and delete it from Applications to uninstall. Files you explicitly exported stay where you saved them until you delete them. Deleting the app does not remove every preference or SDK-owned item. The [Privacy policy](https://github.com/grinich/yap/blob/main/PRIVACY.md) explains storage, retention, and deletion choices.
+Quit the app and delete it from Applications to uninstall. Saved videos, transcripts, meeting chats, attachments, and group photos stay where they were saved until you delete them. Copied background photos also remain; to remove them after quitting Yap, use Finder's **Go → Go to Folder…** to open `~/Library/Application Support/Yap/Camera Backgrounds` and delete the photos you no longer want. Deleting the app does not remove every preference or SDK-owned item. The [Privacy policy](https://github.com/grinich/yap/blob/main/PRIVACY.md) explains storage, retention, and deletion choices.
 
 ## Troubleshooting
 

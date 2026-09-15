@@ -100,4 +100,14 @@ struct AgendaRulesTests {
             #expect(!YapDeepLink.isOpenAppURL(URL(string: value)!))
         }
     }
+
+    @Test func connectZoomLinkCannotSupplyAnAccountOrRedirect() {
+        #expect(YapDeepLink.isConnectZoomURL(URL(string: "yap://connect/zoom")!))
+        for value in ["yap://connect/zoom?code=private", "yap://connect/zoom#token",
+                      "yap://connect/zoom?redirect_uri=https://example.com", "yap://user@connect/zoom",
+                      "yap://connect:80/zoom", "https://connect/zoom", "yap://connect/zoom/",
+                      "yap://connect/google", "whoosh://connect/zoom"] {
+            #expect(!YapDeepLink.isConnectZoomURL(URL(string: value)!))
+        }
+    }
 }

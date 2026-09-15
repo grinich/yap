@@ -117,6 +117,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 @property(nonatomic, strong) ZoomSDKJoinMeetingElements *joinParameters;
 @property(nonatomic, strong) ZoomSDKStartMeetingUseZakElements *hostParameters;
 @property(nonatomic) BOOL initialized;
+@property(nonatomic) BOOL shutdownRequested;
 @property(nonatomic) BOOL joinRequested;
 @property(nonatomic) BOOL ending;
 @property(nonatomic) BOOL hosting;
@@ -598,6 +599,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 
 - (NSInteger)prepareCameraEffectsWithJWT:(NSString *)jwt completion:(void (^)(NSInteger, NSString *))completion {
     NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if (self.shutdownRequested) return ZoomSDKError_WrongUsage;
     if (WHZoomNativeOwner && WHZoomNativeOwner != self) return ZoomSDKError_WrongUsage;
     if (self.cameraEffectsReady && !self.ending) { completion(0, nil); return 0; }
     if (self.initialized || self.sessionID || self.cameraPreparationCompletion) return ZoomSDKError_WrongUsage;
@@ -943,6 +945,27 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     if (callback) callback(ZoomSDKError_WrongUsage, @"Camera settings were closed.");
 }
 
+- (BOOL)shutdown {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if (self.shutdownRequested) return YES;
+    if (![self canSafelyResetNative]) return NO;
+    self.shutdownRequested = YES;
+    self.ending = YES;
+    // Application termination must release Zoom while the native owner is alive,
+    // before the SDK's process-exit destructors start tearing down its modules.
+    self.eventHandler = nil;
+    self.cameraEffectsChanged = nil;
+    self.mediaDevicesChanged = nil;
+    void (^callback)(NSInteger, NSString *) = self.cameraPreparationCompletion;
+    self.cameraPreparationCompletion = nil;
+    self.cameraPreparationToken = nil;
+    self.sessionID = nil; // Invalidate any already queued terminal/auth callbacks.
+    [self resetNative];
+    self.cameraSettingsOnly = NO;
+    if (callback) callback(ZoomSDKError_WrongUsage, @"Camera settings were closed.");
+    return YES;
+}
+
 - (void)onSelectedVBImageChanged { [self emitCameraEffects]; }
 - (void)onVBImageDidDownloaded:(NSString *)path { [self emitCameraEffects]; }
 - (void)onCameraStatusChanged:(ZoomSDKDeviceStatus)status {
@@ -1076,7 +1099,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID {
-    if (self.sessionID) return ZoomSDKError_WrongUsage;
+    if (self.shutdownRequested || self.sessionID) return ZoomSDKError_WrongUsage;
     self.roomShare = YES;
     return [self beginWithJWT:jwt zak:@"" meetingNumber:0 vanityID:nil passcode:nil registrantToken:nil
                  displayName:@"" host:NO sessionID:sessionID];
@@ -1087,7 +1110,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
          registrantToken:(NSString *)registrantToken displayName:(NSString *)displayName
                     host:(BOOL)host sessionID:(NSString *)sessionID {
     NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
-    if (self.sessionID || self.initialized || (WHZoomNativeOwner && WHZoomNativeOwner != self)) return ZoomSDKError_WrongUsage;
+    if (self.shutdownRequested || self.sessionID || self.initialized || (WHZoomNativeOwner && WHZoomNativeOwner != self)) return ZoomSDKError_WrongUsage;
     self.sessionID = sessionID; self.ending = NO; self.joinRequested = NO; self.hosting = host;
     self.hasEnteredMeeting = NO; self.terminalStatusObserved = NO; self.terminationMessage = nil;
     ZoomSDKInitParams *params = [ZoomSDKInitParams new];

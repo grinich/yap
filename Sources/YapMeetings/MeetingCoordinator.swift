@@ -132,6 +132,7 @@ public final class MeetingCoordinator {
     public let capabilities: MeetingCapabilities
 
     @ObservationIgnored private let driver: any MeetingDriver
+    @ObservationIgnored private var isShutDown = false
     public var cameraEffectsDriver: (any CameraEffectsDriver)? { driver as? any CameraEffectsDriver }
     public var demoDriver: DemoMeetingDriver? { driver as? DemoMeetingDriver }
     @ObservationIgnored private let cloudRecordingConfirmationTimeout: Duration
@@ -147,8 +148,9 @@ public final class MeetingCoordinator {
         self.capabilities = driver.capabilities
         driver.onEvent = { [weak self] sessionID, event in self?.receive(event, for: sessionID) }
         (driver as? any MeetingMediaDriver)?.onMediaDevicesChanged = { [weak self] state in
-            self?.mediaDevices = state
-            self?.mediaDevicesError = state.error
+            guard let self, !self.isShutDown else { return }
+            self.mediaDevices = state
+            self.mediaDevicesError = state.error
         }
     }
 
@@ -169,7 +171,7 @@ public final class MeetingCoordinator {
     public var canRaiseHand: Bool { isConnected && !isRoomShare && participants.count > 1 && participants.contains(where: \.isSelf) }
 
     public func prepareMediaDevices() async {
-        guard !isPreparingMediaDevices, !isApplyingMediaControl else { return }
+        guard !isShutDown, !isPreparingMediaDevices, !isApplyingMediaControl else { return }
         guard let media = driver as? any MeetingMediaDriver else {
             mediaDevicesError = "Device controls aren’t available in this build."; return
         }
@@ -211,8 +213,22 @@ public final class MeetingCoordinator {
         (driver as? any MeetingMediaDriver)?.stopMediaTests()
     }
 
+    /// Quit only after the normal leave path confirms that active media ended.
+    /// Settings can initialize Zoom even when no meeting has ever been joined.
+    @discardableResult public func shutdown() -> Bool {
+        guard !status.isActive else { return false }
+        guard !isShutDown else { return true }
+        guard driver.shutdown() else { return false }
+        isShutDown = true
+        stopMediaTests()
+        resetSession()
+        driver.onEvent = nil
+        (driver as? any MeetingMediaDriver)?.onMediaDevicesChanged = nil
+        return true
+    }
+
     private func applyMediaControl(_ operation: @MainActor (any MeetingMediaDriver) async throws -> MeetingMediaState) async {
-        guard mediaDevices.isReady, !isApplyingMediaControl, !isPreparingMediaDevices,
+        guard !isShutDown, mediaDevices.isReady, !isApplyingMediaControl, !isPreparingMediaDevices,
               let media = driver as? any MeetingMediaDriver else { return }
         let identifier = UUID(), expectedSession = sessionID
         mediaOperation = identifier; isApplyingMediaControl = true; mediaDevicesError = nil
@@ -413,7 +429,7 @@ public final class MeetingCoordinator {
     }
 
     private func connect(_ request: MeetingRequest) async {
-        guard !Task.isCancelled else { return }
+        guard !isShutDown, !Task.isCancelled else { return }
         guard !status.isActive else { lastError = MeetingError.alreadyInMeeting.localizedDescription; return }
         let trimmedName = request.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { lastError = MeetingError.invalidName.localizedDescription; return }

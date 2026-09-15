@@ -1,5 +1,7 @@
 # Yap security evidence for the Zoom review
 
+**Current release evidence:** [Yap 0.1.6 review handoff](ZoomReview-0.1.6.md#current-security-and-test-evidence) records the exact 0.1.6 source scan, packaged artifacts and validation limits. The 0.1.3 candidate, saved portal answers and attached PDF described below remain historical September 7 evidence; they must not be represented as a scan or acceptance of 0.1.6.
+
 Updated September 7, 2026 (Pacific), for **Yap 0.1.3, build 4**, source `b920870e4a4a1f53b31d6f73c818c5aa2f75e5cf`. Its actual-SDK packaging, independent downloaded-artifact verification, exact-tag CodeQL and scoped native managed-account checks passed. The candidate remains an unpublished draft while the submitted app is in Zoom functional review. This is Michael Grinich's evidence inventory, not certification or an independent security assessment. CI, scans, notarization, native acceptance and provider approval are separate claims. Superseded versions remain in the [historical release evidence](Releases.md#superseded-candidate-v012).
 
 ## Current candidate checkpoint

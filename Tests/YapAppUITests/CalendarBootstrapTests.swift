@@ -30,14 +30,75 @@ struct CalendarBootstrapTests {
         #expect(!fixture.model.showSettings)
     }
 
-    @Test func connectWithMissingConfigurationShowsAnErrorWithoutOpeningSettings() async {
+    @Test func connectWithMissingConfigurationShowsAnInlineErrorWithoutOpeningSettings() async {
         let fixture = BootstrapFixture(loader: { nil })
         defer { fixture.cleanUp() }
         await fixture.model.connectGoogle()
         #expect(!fixture.model.showSettings)
-        #expect(fixture.model.error != nil)
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.calendarConnectionError == GoogleCalendarError.notConfigured.localizedDescription)
         #expect(!fixture.model.isConnecting)
         #expect(await fixture.initial.connections == 0)
+    }
+
+    @Test func browserCancellationReturnsQuietlyAndAllowsRetry() async {
+        let fixture = BootstrapFixture(loader: { GoogleOAuthConfiguration(clientID: "saved.apps.googleusercontent.com") })
+        defer { fixture.cleanUp() }
+        await fixture.configured.failConnection(with: GoogleCalendarError.authorizationCancelled)
+        await fixture.model.connectGoogle()
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.calendarConnectionError == nil)
+        #expect(!fixture.model.isCalendarConnected)
+        #expect(!fixture.model.isConnecting)
+        #expect(!fixture.model.showSettings)
+
+        await fixture.configured.failConnection(with: nil)
+        await fixture.model.connectGoogle()
+        #expect(fixture.model.isCalendarConnected)
+        #expect(await fixture.configured.connections == 2)
+        #expect(fixture.model.error == nil)
+    }
+
+    @Test func taskCancellationDoesNotReplaceAnUnrelatedError() async {
+        let fixture = BootstrapFixture(loader: { GoogleOAuthConfiguration(clientID: "saved.apps.googleusercontent.com") })
+        defer { fixture.cleanUp() }
+        fixture.model.error = "An unrelated meeting error"
+        await fixture.configured.failConnection(with: CancellationError())
+        await fixture.model.connectGoogle()
+        #expect(fixture.model.error == "An unrelated meeting error")
+        #expect(fixture.model.calendarConnectionError == nil)
+        #expect(!fixture.model.isConnecting)
+        #expect(!fixture.model.isCalendarConnected)
+    }
+
+    @Test(arguments: [GoogleCalendarError.authorizationDenied, .authorizationTimedOut, .httpStatus(503)])
+    func genuineConnectionFailureAppearsInlineAndRetryClearsIt(_ failure: GoogleCalendarError) async {
+        let fixture = BootstrapFixture(loader: { GoogleOAuthConfiguration(clientID: "saved.apps.googleusercontent.com") })
+        defer { fixture.cleanUp() }
+        await fixture.configured.failConnection(with: failure)
+        await fixture.model.connectGoogle()
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.calendarConnectionError == failure.localizedDescription)
+        #expect(!fixture.model.isConnecting)
+        #expect(!fixture.model.isCalendarConnected)
+
+        await fixture.configured.failConnection(with: GoogleCalendarError.authorizationCancelled)
+        await fixture.model.connectGoogle()
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.calendarConnectionError == nil)
+        #expect(!fixture.model.isConnecting)
+    }
+
+    @Test func firstEventLoadFailureStaysInlineAfterSuccessfulSignIn() async {
+        let fixture = BootstrapFixture(loader: { GoogleOAuthConfiguration(clientID: "saved.apps.googleusercontent.com") })
+        defer { fixture.cleanUp() }
+        await fixture.configured.failEvents(with: GoogleCalendarError.httpStatus(503))
+        await fixture.model.connectGoogle()
+        #expect(fixture.model.isCalendarConnected)
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.calendarConnectionError == GoogleCalendarError.httpStatus(503).localizedDescription)
+        await fixture.model.disconnectGoogle()
+        #expect(fixture.model.calendarConnectionError == nil)
     }
 
     @Test func cancelledConfigurationLoadDoesNotStartSignIn() async {
@@ -157,13 +218,15 @@ struct CalendarBootstrapTests {
         await fixture.model.start()
         #expect(fixture.model.googleConfigurationLoadState == .failed)
         #expect(!fixture.model.googleConfigured)
-        #expect(fixture.model.error != nil)
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.calendarConnectionError != nil)
 
         await fixture.model.loadGoogleConnection()
 
         #expect(fixture.model.googleConfigurationLoadState == .loaded)
         #expect(fixture.model.isCalendarConnected)
         #expect(fixture.model.error == nil)
+        #expect(fixture.model.calendarConnectionError == nil)
         #expect(attempts.withLock { $0 } == 2)
     }
 
@@ -202,8 +265,9 @@ struct CalendarBootstrapTests {
         #expect(!fixture.model.googleConfigured)
         #expect(!fixture.model.isCalendarConnected)
         await fixture.model.connectGoogle()
-        #expect(fixture.model.error?.contains("Reinstall") == true)
-        #expect(fixture.model.error?.contains("import") == false)
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.calendarConnectionError?.contains("Reinstall") == true)
+        #expect(fixture.model.calendarConnectionError?.contains("import") == false)
     }
 }
 
@@ -281,15 +345,24 @@ private actor BootstrapCalendar: YapCalendarServing {
     var connections = 0
     var credentialsReads = 0
     var disconnects = 0
+    var connectionFailure: (any Error)?
+    var eventFailure: (any Error)?
     init(isConfigured: Bool) { self.isConfigured = isConfigured }
     func hasCredentials() async -> Bool { credentialsReads += 1; return isConfigured }
     func cachedSnapshot() async -> CalendarSnapshot? { nil }
     func clearCachedEvents() async {}
     func disconnect() async { disconnects += 1 }
     func calendars() async -> [GoogleCalendar] { [GoogleCalendar(id: "personal", name: "Personal", isPrimary: true)] }
-    func connect(openURL: @escaping @MainActor @Sendable (URL) -> Void) async -> [GoogleCalendar] { connections += 1; return await calendars() }
-    func events(in calendars: [GoogleCalendar], from: Date, to: Date) async -> [CalendarEvent] {
-        [CalendarEvent(id: "live", title: "Upcoming", startDate: .now.addingTimeInterval(600), endDate: .now.addingTimeInterval(1800),
+    func failConnection(with failure: (any Error)?) { connectionFailure = failure }
+    func failEvents(with failure: (any Error)?) { eventFailure = failure }
+    func connect(openURL: @escaping @MainActor @Sendable (URL) -> Void) async throws -> [GoogleCalendar] {
+        connections += 1
+        if let connectionFailure { throw connectionFailure }
+        return await calendars()
+    }
+    func events(in calendars: [GoogleCalendar], from: Date, to: Date) async throws -> [CalendarEvent] {
+        if let eventFailure { throw eventFailure }
+        return [CalendarEvent(id: "live", title: "Upcoming", startDate: .now.addingTimeInterval(600), endDate: .now.addingTimeInterval(1800),
                        calendarID: "personal", calendarName: "Personal", meetingURLs: [URL(string: "https://zoom.us/j/12345678901")!])]
     }
 }

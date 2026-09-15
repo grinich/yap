@@ -70,6 +70,7 @@ public final class YapModel {
     public private(set) var isCalendarConnected = false
     public private(set) var isRefreshing = false
     public private(set) var isConnecting = false
+    public private(set) var calendarConnectionError: String?
     public private(set) var googleConfigurationLoadState: GoogleConfigurationLoadState
     public private(set) var lastRefreshed: Date?
     public private(set) var isPreview = false
@@ -256,7 +257,7 @@ public final class YapModel {
             resumeConfigurationWaiters(loaded: true)
         case .failure(let error):
             googleConfigurationLoadState = .failed
-            self.error = error.localizedDescription
+            calendarConnectionError = error.localizedDescription
             resumeConfigurationWaiters(loaded: false)
         }
     }
@@ -270,7 +271,7 @@ public final class YapModel {
     public func loadGoogleConnection() async {
         if googleConfigurationLoadState == .failed || googleConfigurationLoadState == .cancelled {
             googleConfigurationLoadState = .pending
-            error = nil
+            calendarConnectionError = nil
         }
         if isPreview { _ = await bootstrapGoogleConfiguration() }
         else { await loadLiveCalendar() }
@@ -351,7 +352,7 @@ public final class YapModel {
         }
         guard !isConnecting else { return }
         isConnecting = true
-        error = nil
+        calendarConnectionError = nil
         let current = generation
         defer { if current == generation { isConnecting = false } }
         if googleConfigurationLoadState == .failed || googleConfigurationLoadState == .cancelled {
@@ -361,7 +362,7 @@ public final class YapModel {
         // Join that load and continue straight into sign-in, without a Settings detour.
         guard await bootstrapGoogleConfiguration(), current == generation, !Task.isCancelled else { return }
         guard googleConfigured else {
-            error = "Google Calendar sign-in is unavailable in this copy of Yap. Reinstall the latest Yap build and try again."
+            calendarConnectionError = GoogleCalendarError.notConfigured.localizedDescription
             return
         }
         do {
@@ -372,12 +373,19 @@ public final class YapModel {
             YapSystemActions.request(.openYap)
             selectInitialCalendars()
             await refresh(reloadCalendars: false)
-        } catch { if generation == current { self.error = error.localizedDescription } }
+        } catch is CancellationError {
+            // Cancelling a sign-in is an ordinary return to the disconnected state.
+        } catch GoogleCalendarError.authorizationCancelled {
+            // The browser already confirms cancellation; don't interrupt Yap with an alert.
+        } catch {
+            if generation == current { calendarConnectionError = error.localizedDescription }
+        }
     }
 
     @discardableResult
     public func refresh() async -> Bool {
-        await refresh(reloadCalendars: true)
+        calendarConnectionError = nil
+        return await refresh(reloadCalendars: true)
     }
 
     /// Refresh an existing connection on activation without restarting account setup.
@@ -457,7 +465,10 @@ public final class YapModel {
             return generation == current && selectionRevision == selection && !isPreview
         } catch {
             guard generation == current, selectionRevision == selection, !isPreview else { return false }
-            if activeRefreshPresentsErrors { self.error = error.localizedDescription }
+            if activeRefreshPresentsErrors {
+                if isConnecting { calendarConnectionError = error.localizedDescription }
+                else { self.error = error.localizedDescription }
+            }
             switch error as? GoogleCalendarError {
             case .signInExpired, .notConnected:
                 events = []; liveCalendarEvents = []; calendars = []; lastRefreshed = nil
@@ -524,6 +535,7 @@ public final class YapModel {
     private func disconnectCalendarConnection() async throws {
         cancelGoogleConfigurationLoad()
         invalidateCalendarOperations()
+        calendarConnectionError = nil
         let client = calendarClient
         if !isPreview { events = [] }
         liveCalendarEvents = []
@@ -811,6 +823,22 @@ public final class YapModel {
         recordings.enterPreview()
         meeting = MeetingCoordinator(driver: DemoMeetingDriver(participantCount: previewPeople))
         events = Self.sampleEvents(now: .now)
+    }
+
+    /// The saved live coordinator may still own device settings while a demo is shown.
+    /// This is terminal cleanup, never the path for a cancelled quit or hiding a window.
+    @discardableResult func shutdownForTermination() -> Bool {
+        guard !meeting.status.isActive, !liveMeeting.status.isActive else { return false }
+        // The live SDK is the only driver that can refuse while it is busy.
+        // Keep a displayed preview usable if that happens and quit is cancelled.
+        guard liveMeeting.shutdown() else { return false }
+        if liveMeeting !== meeting, !meeting.shutdown() { return false }
+        meetingLinkRevision = UUID()
+        refreshLoop?.cancel(); refreshLoop = nil
+        activeRefresh?.cancel(); activeRefresh = nil
+        configurationLoad?.cancel()
+        cameraEffects.close()
+        return true
     }
 
     public func exitPreview() async {

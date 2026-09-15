@@ -35,6 +35,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSView *)startCameraEffectsPreview;
 - (void)stopCameraEffectsPreview;
 - (void)closeCameraEffects;
+/// Terminal main-thread cleanup after a meeting has ended. Rejects active sessions.
+/// Cancels pending settings authorization and uninitializes the owned SDK once.
+/// NO keeps the owner intact; callers must not discard it or terminate yet.
+- (BOOL)shutdown;
 - (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID NS_SWIFT_NAME(beginRoomShare(jwt:sessionID:));
 - (NSInteger)submitRoomSharingCode:(NSString *)code;
 - (NSInteger)beginWithJWT:(NSString *)jwt zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber

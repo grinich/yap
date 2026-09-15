@@ -139,7 +139,7 @@ private enum NativeMeetingSharePreviews {
                 filter = SCContentFilter(display: display, excludingWindows: [])
                 bounds = display.frame
                 application = nil
-            case .demo:
+            case .demo, .computerAudio:
                 continue
             }
             let applicationIcon = application.flatMap { NSRunningApplication(processIdentifier: $0.processID)?.icon }

@@ -8,13 +8,20 @@ struct MeetingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @State private var photo: GalleryPhotoCapture
     @State private var showShareChooser = false
     @State private var copiedInvitation: URL?
     @State private var isPointerInside = false
     @State private var keyboardControlsActive = false
     @State private var isTrackingMenu = false
     @State private var participantSearch = ""
+    @State private var canvasHeight: CGFloat = 760
     @FocusState private var isParticipantSearchFocused: Bool
+
+    init(model: YapModel, photo: GalleryPhotoCapture = GalleryPhotoCapture()) {
+        self.model = model
+        _photo = State(initialValue: photo)
+    }
 
     private var meeting: MeetingCoordinator { model.meeting }
     private var focusedParticipant: MeetingParticipant? {
@@ -30,8 +37,8 @@ struct MeetingView: View {
         !meeting.isConnected && meeting.participants.isEmpty && meeting.selectedReceivedShare == nil
     }
     private var showsControls: Bool {
-        isPointerInside || keyboardControlsActive || voiceOverEnabled || isTrackingMenu ||
-        showShareChooser || model.showLeaveConfirmation || !meeting.isConnected
+        !meeting.isTakingGroupPhoto && (isPointerInside || keyboardControlsActive || voiceOverEnabled || isTrackingMenu ||
+        showShareChooser || model.showLeaveConfirmation || !meeting.isConnected || !meeting.unreadChatMessageIDs.isEmpty)
     }
 
     private func copyInvitation(_ invitation: URL) {
@@ -54,12 +61,19 @@ struct MeetingView: View {
                     HStack(spacing: 0) {
                         participantCanvas(compactHeight: compactHeight)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .overlay(alignment: .bottomTrailing) {
+                                if !overlayInspector {
+                                    cancelPhotoButton
+                                        .padding(.trailing, !compactWidth && model.sidebar != nil ? 22 : 0)
+                                        .padding(.bottom, available.size.width - (model.sidebar != nil ? inspectorWidth : 0) < 900 ? 76 : 0)
+                                }
+                            }
                             .environment(\.colorScheme, .dark)
                             .overlay(alignment: .top) {
                                 // Keep important meeting state readable without
                                 // covering the adjacent conversation panel.
                                 Group {
-                                    if overlayInspector { EmptyView() }
+                                    if overlayInspector || meeting.isTakingGroupPhoto { EmptyView() }
                                     else if compactHeight && hasPersistentNotices {
                                         ScrollView { persistentNotices }
                                             .scrollBounceBehavior(.basedOnSize)
@@ -101,40 +115,89 @@ struct MeetingView: View {
                     }
                     .background(Color.black)
                     .overlay(alignment: .top) {
-                        meetingHeader
+                        meetingHeader(inspectorWidth: !compactWidth && model.sidebar != nil ? inspectorWidth : 0)
                             .background(LinearGradient(colors: [.black.opacity(0.56), .clear], startPoint: .top, endPoint: .bottom))
                             .modifier(MeetingChromeVisibility(isVisible: showsControls, reduceMotion: reduceMotion))
                         .environment(\.colorScheme, .dark)
                     }
                     .overlay(alignment: .topLeading) {
-                        if let sidebar = model.sidebar {
+                        if !compactWidth, let sidebar = model.sidebar {
                             Text(sidebar == .chat ? "Chat" : "People")
                                 .font(.headline).foregroundStyle(.white)
                                 .accessibilityAddTraits(.isHeader)
-                                .padding(.leading, compactWidth ? 78 : available.size.width - inspectorWidth + 16)
+                                .padding(.leading, available.size.width - inspectorWidth + 16)
                                 .padding(.top, 22)
                                 .allowsHitTesting(false)
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
                         }
                     }
                 }
-                .ignoresSafeArea()
+                .ignoresSafeArea(.container, edges: model.isPreview ? [.top, .leading, .trailing] : .all)
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { canvasHeight = $0 }
         .background(YapWindowPointerPresence(onChange: { inside in
             isPointerInside = inside
             keyboardControlsActive = false
         }, onKeyboardActivity: { keyboardControlsActive = true }))
+        .overlay(alignment: .bottomTrailing) {
+            MeetingChatToasts(meeting: meeting, isChatOpen: model.sidebar == .chat,
+                              isSuppressed: photo.isBusy || showShareChooser || !meeting.isConnected,
+                              maximumVisible: max(1, min(3, Int((canvasHeight - (meeting.selectedReceivedShare == nil ? 170 : 270)) / 88)))) {
+                model.sidebar = .chat
+            }
+            .padding(.trailing, 16).padding(.leading, 16)
+            .padding(.bottom, meeting.selectedReceivedShare == nil ? 86 : 190)
+        }
+        .overlay {
+            if let number = photo.countdown {
+                Text(String(number)).font(.system(size: 110, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white).shadow(color: .black.opacity(0.5), radius: 12)
+                    .contentTransition(.numericText(countsDown: true))
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: number)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .top) {
+            if let progress = photo.progressText {
+                Text(progress).font(.callout.weight(.medium)).foregroundStyle(.white)
+                    .padding(.horizontal, 16).padding(.top, 18)
+                    .opacity(photo.isCapturingFrame ? 0 : 1)
+                    .allowsHitTesting(false)
+            }
+        }
+        .sheet(isPresented: Binding(get: { photo.image != nil && !photo.isBusy }, set: { if !$0 { photo.image = nil } })) {
+            GalleryPhotoPreview(photo: photo)
+        }
+        .alert("Couldn’t take the photo", isPresented: Binding(get: { photo.error != nil }, set: { if !$0 { photo.error = nil } })) {
+            if photo.needsScreenRecordingPermission {
+                Button("Open System Settings") { ScreenSharingAccess.openSettings() }
+            }
+            Button("OK", role: .cancel) { photo.error = nil }
+        } message: { Text(photo.error ?? "") }
         .sheet(isPresented: $showShareChooser) { MeetingShareChooser(meeting: meeting) }
         .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: model.sidebar)
         .onChange(of: showsControls, initial: true) { _, visible in model.areMeetingControlsVisible = visible }
-        .onDisappear { model.areMeetingControlsVisible = true }
+        .onAppear { updateChatReadState() }
+        .onChange(of: model.sidebar) { updateChatReadState() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in updateChatReadState() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in updateChatReadState() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in meeting.setChatBeingRead(false) }
+        .onDisappear {
+            photo.cancel()
+            model.areMeetingControlsVisible = true
+            meeting.setChatBeingRead(false)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in isTrackingMenu = true }
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in isTrackingMenu = false }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
-            if notification.object as? NSWindow === model.meetingPresentation.mainWindow { keyboardControlsActive = false }
+            if notification.object as? NSWindow === model.meetingPresentation.mainWindow {
+                keyboardControlsActive = false
+                meeting.setChatBeingRead(false)
+            }
         }
         .onChange(of: meeting.sessionID) { _, _ in
+            photo.cancel()
             showShareChooser = false
             copiedInvitation = nil
         }
@@ -145,9 +208,28 @@ struct MeetingView: View {
         }
     }
 
+    private var showsPhotoAction: Bool {
+        meeting.isConnected && meeting.layout == .gallery && meeting.presentationParticipant == nil &&
+            meeting.oneToOneParticipants == nil && meeting.selectedReceivedShare == nil
+    }
+
+    @ViewBuilder private var cancelPhotoButton: some View {
+        if photo.isBusy {
+            Button("Cancel photo") { photo.cancel() }
+                .buttonStyle(.bordered).padding(20)
+                .opacity(photo.isCapturingFrame ? 0 : 1)
+                .allowsHitTesting(!photo.isCapturingFrame)
+        }
+    }
+
+    private func updateChatReadState() {
+        meeting.setChatBeingRead(model.sidebar == .chat && NSApp.isActive &&
+            (model.meetingPresentation.mainWindow?.isKeyWindow ?? false))
+    }
+
     private var hasPersistentNotices: Bool {
-        !meeting.meetingIndicators.isEmpty || meeting.sharing.target != nil ||
-        (canManageWaitingRoom && !meeting.waitingRoomParticipants.isEmpty) || !meeting.isConnected
+        !meeting.isTakingGroupPhoto && (!meeting.meetingIndicators.isEmpty || meeting.sharing.target != nil ||
+        (canManageWaitingRoom && !meeting.waitingRoomParticipants.isEmpty) || !meeting.isConnected)
     }
 
     private var persistentNotices: some View {
@@ -159,41 +241,66 @@ struct MeetingView: View {
         }
     }
 
-    private var meetingHeader: some View {
+    private var meetingHeader: some View { meetingHeader(inspectorWidth: 0) }
+
+    private func meetingHeader(inspectorWidth: CGFloat) -> some View {
         ViewThatFits(in: .horizontal) {
-            meetingHeaderRow(showsTitle: true)
-            meetingHeaderRow(showsTitle: false)
+            meetingHeaderRow(showsTitle: true, inspectorWidth: inspectorWidth)
+            meetingHeaderRow(showsTitle: false, inspectorWidth: inspectorWidth)
         }
     }
 
-    private func meetingHeaderRow(showsTitle: Bool) -> some View {
+    private func meetingHeaderRow(showsTitle: Bool, inspectorWidth: CGFloat) -> some View {
         HStack(spacing: 10) {
             if showsTitle {
             VStack(alignment: .leading, spacing: 4) {
-                Text(meeting.displayTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                if !showsConnectionStage {
+                HStack(spacing: 6) {
+                    Text(meeting.displayTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                    invitationButton
+                }
+                if let interval = meeting.scheduledInterval {
+                    Text("\(interval.start.formatted(date: .omitted, time: .shortened)) – \(interval.end.formatted(date: .omitted, time: .shortened)) · \(meeting.participants.count) people")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !showsConnectionStage && meeting.scheduledInterval == nil {
                     Text("\(meeting.participants.count) \(meeting.participants.count == 1 ? "person" : "people")\(meeting.isHost ? " · You’re hosting" : "")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .frame(minWidth: 120, alignment: .leading)
             }
+            if !showsTitle {
+                HStack(spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(meeting.displayTitle).font(.caption.weight(.semibold)).lineLimit(1)
+                        if let interval = meeting.scheduledInterval {
+                            Text("\(interval.start.formatted(date: .omitted, time: .shortened))–\(interval.end.formatted(date: .omitted, time: .shortened))")
+                                .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    invitationButton
+                }.frame(width: 120, alignment: .leading)
+            }
             Spacer(minLength: 12)
-            if let invitation = invitationToCopy {
+            if meeting.capabilities.canReceiveShare && !meeting.receivedShares.isEmpty {
                 Button {
-                    copyInvitation(invitation)
+                    if meeting.selectedReceivedShare == nil { model.focusedParticipantID = nil }
+                    meeting.toggleSharedContent()
                 } label: {
-                    Label(copiedInvitation == invitation ? "Invite link copied" : "Copy invite link",
-                          systemImage: copiedInvitation == invitation ? "checkmark" : "link")
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
+                    Label(meeting.selectedReceivedShare == nil ? "Show shared content" : "Show people",
+                          systemImage: meeting.selectedReceivedShare == nil ? "rectangle.on.rectangle" : "person.crop.rectangle")
+                        .frame(width: 32, height: 32).contentShape(Rectangle())
                 }
                 .labelStyle(.iconOnly).buttonStyle(.borderless)
                 .yapIconHover()
                 .tint(nil as Color?).foregroundStyle(.primary)
-                .help("Copy invite link")
+                .help(meeting.selectedReceivedShare == nil ? "Show shared content" : "Show people")
+                .accessibilityLabel(meeting.selectedReceivedShare == nil ? "Show shared content" : "Show people")
+                .accessibilityIdentifier("toggleSharedContent")
+                .accessibilityValue(meeting.selectedReceivedShare == nil ? "Viewing people" : "Viewing shared content")
+                .disabled(!meeting.isConnected)
             }
             if !showsConnectionStage {
                 Menu {
@@ -208,17 +315,14 @@ struct MeetingView: View {
                     if model.focusedParticipantID != nil {
                         Button("Unpin participant", systemImage: "pin.slash") { model.focusedParticipantID = nil }
                     }
-                    if meeting.layout == .gallery || !meeting.receivedShares.isEmpty || model.isPreview { Divider() }
-                    if meeting.capabilities.canReceiveShare && !meeting.receivedShares.isEmpty {
+                    if meeting.layout == .gallery || meeting.receivedShares.count > 1 || model.isPreview { Divider() }
+                    if meeting.capabilities.canReceiveShare && meeting.receivedShares.count > 1 {
                         Section("Shared content") {
                             ForEach(meeting.receivedShares) { share in
                                 Button("View \(share.ownerName)’s screen", systemImage: "rectangle.on.rectangle") {
                                     model.focusedParticipantID = nil
                                     meeting.selectReceivedShare(share.id)
                                 }
-                            }
-                            if meeting.selectedReceivedShare != nil {
-                                Button("Show people", systemImage: "person.2") { meeting.selectReceivedShare(nil) }
                             }
                         }
                     }
@@ -231,6 +335,9 @@ struct MeetingView: View {
                         }
                         .pickerStyle(.inline)
                     }
+                    Divider()
+                    Toggle("Hide self view", isOn: Binding(get: { model.hideSelfView }, set: { model.hideSelfView = $0 }))
+                    Toggle("Show non-video participants", isOn: Binding(get: { model.showNonVideoParticipants }, set: { model.showNonVideoParticipants = $0 }))
                     if model.isPreview {
                         Section("Sample participants") {
                             ForEach([2, 6, 25, 49, 100], id: \.self) { count in
@@ -240,6 +347,15 @@ struct MeetingView: View {
                                 }
                             }
                         }
+                    }
+                    if showsPhotoAction {
+                        Divider()
+                        Button("Take photo", systemImage: "camera") {
+                            model.sidebar = nil
+                            photo.start(meeting: meeting, window: model.meetingPresentation.mainWindow)
+                        }
+                        .disabled(photo.isBusy || meeting.photoParticipants.isEmpty || !meeting.capabilities.supportsNativeVideo)
+                        .help("Take a group photo of everyone with their camera on")
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -257,13 +373,51 @@ struct MeetingView: View {
                 .help("Meeting layout").accessibilityLabel("Meeting layout")
                 .accessibilityValue(meeting.layout.title)
                 .disabled(!meeting.isConnected)
+                // Keep layout controls 16pt inside the video edge. Chat and
+                // People retain their positions at the inspector’s right edge.
+                if inspectorWidth > 0 {
+                    Spacer(minLength: 0).frame(width: max(0, inspectorWidth - 94))
+                }
                 inspectorToggle("Chat", symbol: "bubble", sidebar: .chat)
+                    .overlay(alignment: .topTrailing) {
+                        if !meeting.unreadChatMessageIDs.isEmpty {
+                            Text(meeting.unreadChatMessageIDs.count > 99 ? "99+" : String(meeting.unreadChatMessageIDs.count))
+                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4).frame(minWidth: 16, minHeight: 16)
+                                .background(.red, in: Capsule())
+                                .phaseAnimator([false, true, false], trigger: meeting.latestUnreadChatMessageID) { badge, expanded in
+                                    badge.scaleEffect(expanded && !reduceMotion ? 1.2 : 1)
+                                } animation: { _ in .easeInOut(duration: 0.2) }
+                                .offset(x: 4, y: -3)
+                                .allowsHitTesting(false).accessibilityHidden(true)
+                        }
+                    }
+                    .accessibilityLabel("Chat")
+                    .accessibilityValue(meeting.unreadChatMessageIDs.isEmpty ? "No unread messages" : "\(meeting.unreadChatMessageIDs.count) unread messages")
                     .disabled(!meeting.isConnected)
                 inspectorToggle("People", symbol: "person.2", sidebar: .people)
                     .disabled(!meeting.isConnected)
             }
         }
         .padding(.leading, 78).padding(.trailing, 16).padding(.top, 14).padding(.bottom, 16)
+    }
+
+    @ViewBuilder private var invitationButton: some View {
+            if let invitation = invitationToCopy {
+                Button {
+                    copyInvitation(invitation)
+                } label: {
+                    Label(copiedInvitation == invitation ? "Invite link copied" : "Copy invite link",
+                          systemImage: copiedInvitation == invitation ? "checkmark" : "link")
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .labelStyle(.iconOnly).buttonStyle(.borderless)
+                .yapIconHover()
+                .tint(nil as Color?).foregroundStyle(.primary)
+                .help("Copy invite link")
+            }
     }
 
     private func inspectorToggle(_ label: String, symbol: String, sidebar: MeetingSidebar) -> some View {
@@ -283,18 +437,30 @@ struct MeetingView: View {
 
     @ViewBuilder
     private func participantCanvas(compactHeight: Bool) -> some View {
-        if meeting.capabilities.canReceiveShare, let share = meeting.selectedReceivedShare {
+        if meeting.isTakingGroupPhoto {
+            MeetingTileLayout(aspectRatios: meeting.photoBatchParticipants.map { _ in 16.0 / 9.0 }, spacing: 0) {
+                ForEach(meeting.photoBatchParticipants) { participant in
+                    NativeVideoContainer(meeting: meeting, participantID: participant.id)
+                        .id(participant.id)
+                }
+            }.padding(.horizontal, 6).padding(.top, 54).padding(.bottom, 36)
+        } else if meeting.capabilities.canReceiveShare, let share = meeting.selectedReceivedShare {
             GeometryReader { geometry in
                 let stripHeight = min(90, max(40, geometry.size.height * 0.22))
                 VStack(spacing: 12) {
                     ReceivedShareSurface(meeting: meeting, share: share)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if !compactHeight && !meeting.visibleParticipants.isEmpty {
+                    if !meeting.shareStripParticipants.isEmpty {
                         ScrollView(.horizontal) {
                             HStack(spacing: 8) {
-                                ForEach(meeting.visibleParticipants) { participant in
+                                ForEach(meeting.visibleShareStripParticipants) { participant in
                                     participantTile(participant)
-                                        .frame(width: stripHeight * participant.tileAspectRatio, height: stripHeight)
+                                        .frame(width: stripHeight * 16 / 9, height: stripHeight)
+                                        .contextMenu {
+                                            if !participant.isSelf && !participant.isConferenceRoom {
+                                                Button(meeting.isConferenceRoom(participant) ? "Remove conference room priority" : "Treat as conference room") { meeting.setConferenceRoom(participant.id, enabled: !meeting.isConferenceRoom(participant)) }
+                                            }
+                                        }
                                 }
                             }
                         }
@@ -302,6 +468,9 @@ struct MeetingView: View {
                         .frame(height: stripHeight)
                     }
                 }
+                .onGeometryChange(for: Int.self) { proxy in
+                    max(2, Int(proxy.size.width / (stripHeight * 16 / 9 + 8)))
+                } action: { meeting.setShareStripCapacity($0) }
             }
             // Shared documents keep their full bounds and their own toolbar;
             // unlike camera video, they must not sit beneath floating controls.
@@ -318,10 +487,10 @@ struct MeetingView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let pair = meeting.oneToOneParticipants {
-            speakerCanvas(pair.remote, local: pair.local, compactHeight: compactHeight)
+            speakerCanvas(pair.remote, local: meeting.hideSelfView ? nil : pair.local, compactHeight: compactHeight)
         } else if let focusedParticipant {
             speakerCanvas(focusedParticipant,
-                          local: meeting.participants.first { $0.isSelf && $0.id != focusedParticipant.id },
+                          local: meeting.participants.first { $0.isSelf && !meeting.hideSelfView && $0.id != focusedParticipant.id },
                           compactHeight: compactHeight)
         } else if meeting.visibleParticipants.count == 1, let participant = meeting.visibleParticipants.first {
             participantTile(participant, immersive: true)
@@ -433,10 +602,20 @@ struct MeetingView: View {
                     .disabled(model.isPreview || !meeting.isCameraEnabled)
                 }
                 .disabled(!meeting.isConnected || meeting.isApplyingControl)
-                callButton(meeting.sharing.isSharing ? "Switch shared window or display" : "Choose a window or display to share", symbol: "rectangle.on.rectangle", caption: meeting.sharing.isSharing ? "Switch" : "Share", iconOnly: iconOnly) {
+                callButton(meeting.sharing.isSharing ? "Choose what to share" : "Share a screen, window, or computer audio", symbol: "rectangle.on.rectangle", caption: meeting.sharing.isSharing ? "Switch" : "Share", iconOnly: iconOnly) {
                     showShareChooser = true
                 }
                 .disabled(!meeting.isConnected || !meeting.capabilities.canShare || (!meeting.isDemo && !meeting.capabilities.canEnumerateShareTargets) || meeting.isApplyingControl)
+                if meeting.canRaiseHand {
+                    callButton(meeting.isHandRaised ? "Lower hand" : "Raise hand",
+                               symbol: meeting.isHandRaised ? "hand.raised.fill" : "hand.raised",
+                               caption: meeting.isHandRaised ? "Lower hand" : "Raise hand", iconOnly: iconOnly) {
+                        Task { await meeting.setHandRaised(!meeting.isHandRaised) }
+                    }
+                    .accessibilityIdentifier("meetingRaiseHand")
+                    .accessibilityValue(meeting.isHandRaised ? "Raised" : "Lowered")
+                    .disabled(meeting.isApplyingControl)
+                }
                 MeetingCloudRecordingCallControl(meeting: meeting, iconOnly: iconOnly)
                 Divider().frame(height: 24).padding(.horizontal, 2)
                 callButton("Leave meeting", symbol: "phone.down.fill", caption: "Leave", iconOnly: iconOnly, destructive: true) {
@@ -471,10 +650,10 @@ struct MeetingView: View {
 
     private func sharingBanner(_ target: ShareTarget) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: target.kind == .demo ? "rectangle.dashed" : "rectangle.inset.filled")
+            Image(systemName: target.kind == .demo ? "rectangle.dashed" : target.kind == .computerAudio ? "speaker.wave.2.fill" : "rectangle.inset.filled")
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
-                Text(target.kind == .demo ? "Preview · nothing is being broadcast" : "You’re sharing \(target.title)")
+                Text(target.kind == .demo ? "Preview · nothing is being broadcast" : target.kind == .computerAudio ? "You’re sharing computer audio" : "You’re sharing \(target.title)")
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(2)
                 if target.kind == .demo { Text(target.title).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1) }
@@ -527,6 +706,13 @@ struct MeetingView: View {
 
     private func inspector(_ sidebar: MeetingSidebar, compact: Bool = false) -> some View {
         VStack(spacing: 0) {
+            if compact {
+                Text(sidebar == .chat ? "Chat" : "People")
+                    .font(.headline).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14).padding(.bottom, 10)
+                    .accessibilityAddTraits(.isHeader)
+            }
             if compact && hasPersistentNotices {
                 ScrollView { persistentNotices }
                     .scrollBounceBehavior(.basedOnSize)
@@ -539,7 +725,9 @@ struct MeetingView: View {
         }
         // The shared header keeps its buttons fixed at the window's trailing
         // edge. The panel's glass reaches behind that row, just like the video.
-        .padding(.top, compact ? 54 : 62)
+        .padding(.top, compact ? 74 : 62)
+        // A bright shared document must not wash out the conversation overlay.
+        .background(compact ? Color.black.opacity(0.78) : Color.clear)
         .yapTrailingPanelSurface()
     }
 

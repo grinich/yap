@@ -5,6 +5,49 @@ import Testing
 
 @Suite("Share chooser error ownership") @MainActor
 struct MeetingShareErrorRoutingTests {
+    @Test func audioSharingDoesNotEnumerateScreensOrChangeMicrophone() async throws {
+        let driver = ShareErrorDriver()
+        let meeting = MeetingCoordinator(driver: driver)
+        await meeting.host(displayName: "Fixture")
+        driver.enumerationError = .screenCapturePermissionRequired
+        try await meeting.startShareFromChooser(.computerAudio)
+        #expect(driver.enumerationRequests == 0)
+        #expect(driver.lastSharedTarget == .computerAudio)
+        #expect(!meeting.sharing.isSharing)
+        driver.onEvent?(meeting.sessionID!, .sharing(.sharing(.computerAudio)))
+        #expect(meeting.sharing.target == .computerAudio)
+        await meeting.stopShare()
+        #expect(!meeting.sharing.isSharing)
+        #expect(driver.microphoneChanges == 0)
+    }
+
+    @Test func audioOnlyCannotRetainAnExistingScreenBroadcast() async throws {
+        let driver = ShareErrorDriver()
+        let meeting = MeetingCoordinator(driver: driver)
+        await meeting.host(displayName: "Fixture")
+        driver.onEvent?(meeting.sessionID!, .sharing(.sharing(driver.target)))
+        await #expect(throws: MeetingError.self) { try await meeting.startShareFromChooser(.computerAudio) }
+        #expect(driver.startedShares == 0)
+        #expect(meeting.sharing.target == driver.target)
+        await meeting.stopShare()
+        try await meeting.startShareFromChooser(.computerAudio)
+        #expect(driver.startedShares == 1)
+        driver.onEvent?(meeting.sessionID!, .sharing(.sharing(.computerAudio)))
+        await #expect(throws: MeetingError.self) { try await meeting.startShareFromChooser(driver.target) }
+        #expect(driver.startedShares == 1)
+    }
+
+    @Test func failedAudioStartDoesNotClaimAnActiveShare() async throws {
+        let driver = ShareErrorDriver()
+        let meeting = MeetingCoordinator(driver: driver)
+        await meeting.host(displayName: "Fixture")
+        driver.shareError = .unavailable("Sharing is disabled by the host")
+        await #expect(throws: MeetingError.self) { try await meeting.startShareFromChooser(.computerAudio) }
+        #expect(!meeting.sharing.isSharing)
+        #expect(!meeting.isApplyingControl)
+        #expect(meeting.lastError == nil)
+    }
+
     @Test func permissionFailureStaysLocalToChooser() async throws {
         let driver = ShareErrorDriver()
         let meeting = MeetingCoordinator(driver: driver)
@@ -103,13 +146,15 @@ struct MeetingShareErrorRoutingTests {
     var endDuringEnumeration = false
     var enumerationRequests = 0
     var startedShares = 0
+    var lastSharedTarget: ShareTarget?
+    var microphoneChanges = 0
 
     func connect(_ request: MeetingRequest, sessionID: UUID) async throws { onEvent?(sessionID, .status(.inMeeting)) }
     func leave(sessionID: UUID, endForEveryone: Bool) async throws { onEvent?(sessionID, .status(.idle)) }
-    func setMicrophoneMuted(_ muted: Bool, sessionID: UUID) async throws { throw MeetingError.noMeeting }
+    func setMicrophoneMuted(_ muted: Bool, sessionID: UUID) async throws { microphoneChanges += 1 }
     func setCameraEnabled(_ enabled: Bool, sessionID: UUID) async throws { throw MeetingError.noMeeting }
     func sendChat(text: String, sessionID: UUID) async throws { throw MeetingError.noMeeting }
-    func stopShare(sessionID: UUID) async throws { throw MeetingError.noMeeting }
+    func stopShare(sessionID: UUID) async throws { onEvent?(sessionID, .sharing(.idle)) }
     func availableShareTargets(sessionID: UUID) async throws -> [ShareTarget] {
         enumerationRequests += 1
         if let eventDuringEnumeration { onEvent?(sessionID, .controlError(eventDuringEnumeration)) }
@@ -120,5 +165,6 @@ struct MeetingShareErrorRoutingTests {
     func startShare(_ target: ShareTarget, sessionID: UUID) async throws {
         if let shareError { throw shareError }
         startedShares += 1
+        lastSharedTarget = target
     }
 }

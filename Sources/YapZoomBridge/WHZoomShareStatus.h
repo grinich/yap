@@ -19,7 +19,9 @@ static inline WHZoomLocalShareUpdate WHZoomLocalShareUpdateForStatus(
     // SelfBegin/SelfEnd already identify the local user. Do not discard those
     // authoritative callbacks merely because their source metadata is incomplete.
     switch (status) {
+        case ZoomSDKShareStatus_SelfStartAudioShare:
         case ZoomSDKShareStatus_SelfBegin: return WHZoomLocalShareUpdateActive;
+        case ZoomSDKShareStatus_SelfStopAudioShare:
         case ZoomSDKShareStatus_SelfEnd: return WHZoomLocalShareUpdateIdle;
         case ZoomSDKShareStatus_Resume:
             return ownerID != 0 && ownerID == localID ? WHZoomLocalShareUpdateActive : WHZoomLocalShareUpdateUnchanged;

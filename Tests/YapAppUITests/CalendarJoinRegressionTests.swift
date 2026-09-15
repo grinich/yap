@@ -29,6 +29,91 @@ struct CalendarJoinRegressionTests {
         #expect(fixture.model.error == nil)
     }
 
+    @Test(arguments: ["incoming", "pasted"])
+    func calendarRefreshDoesNotDelayJoiningAndEnrichesTheSameCallLater(_ source: String) async {
+        let fixture = CalendarJoinFixture()
+        defer { fixture.cleanUp() }
+        await fixture.calendar.pauseNextEvents()
+        let startup = Task { await fixture.model.start() }
+        await fixture.calendar.waitUntilPaused()
+        let invitation = URL(string: "https://zoom.us/j/12345678901")!
+        let join: Task<Void, Never>?
+        if source == "incoming" {
+            fixture.model.receiveMeetingLink(invitation)
+            join = nil
+        } else {
+            fixture.model.joinLink = invitation.absoluteString
+            join = Task { await fixture.model.joinPastedLink() }
+        }
+        for _ in 0..<100 where fixture.driver.requests.isEmpty { await Task.yield() }
+        // The provider is deliberately still paused: Zoom must already be connected.
+        #expect(fixture.driver.requests.count == 1)
+        #expect(fixture.model.meeting.status == .inMeeting)
+        #expect(fixture.model.meeting.displayTitle == "Your meeting")
+        await fixture.calendar.resumeEvents()
+        await startup.value
+        await join?.value
+        for _ in 0..<100 where fixture.model.meeting.scheduledInterval == nil { await Task.yield() }
+        #expect(fixture.model.meeting.displayTitle == "Ready meeting")
+        #expect(fixture.model.meeting.scheduledInterval != nil)
+        #expect(fixture.driver.requests.count == 1)
+    }
+
+    @Test func coldLaunchInvitationGetsCalendarTitleAfterStartupBegins() async {
+        let fixture = CalendarJoinFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.receiveMeetingLink(URL(string: "https://zoom.us/j/12345678901")!)
+        for _ in 0..<100 where fixture.driver.requests.isEmpty { await Task.yield() }
+        #expect(fixture.driver.requests.count == 1)
+        #expect(fixture.model.meeting.displayTitle == "Your meeting")
+        // The link was handled before startup created any Calendar refresh task.
+        await fixture.model.start()
+        #expect(fixture.model.meeting.displayTitle == "Ready meeting")
+        #expect(fixture.model.meeting.scheduledInterval != nil)
+    }
+
+    @Test func lateCalendarMetadataCannotRenameAReplacementMeeting() async {
+        let fixture = CalendarJoinFixture()
+        defer { fixture.cleanUp() }
+        await fixture.calendar.pauseNextEvents()
+        let startup = Task { await fixture.model.start() }
+        await fixture.calendar.waitUntilPaused()
+        fixture.model.receiveMeetingLink(URL(string: "https://zoom.us/j/12345678901")!)
+        for _ in 0..<100 where fixture.driver.requests.isEmpty { await Task.yield() }
+        #expect(fixture.driver.requests.count == 1)
+        await fixture.model.leaveMeeting()
+        let replacement = CalendarEvent(id: "replacement", title: "Chosen workshop", startDate: .now,
+            endDate: Date().addingTimeInterval(1200), calendarID: "fixture", calendarName: "Fixture",
+            meetingURLs: [URL(string: "https://zoom.us/j/98765432101")!])
+        await fixture.model.join(replacement)
+        let replacementSession = fixture.model.meeting.sessionID
+        await fixture.calendar.resumeEvents()
+        await startup.value
+        for _ in 0..<100 { await Task.yield() }
+        #expect(fixture.model.meeting.sessionID == replacementSession)
+        #expect(fixture.model.meeting.displayTitle == "Chosen workshop")
+        #expect(fixture.model.meeting.scheduledInterval?.start == replacement.startDate)
+        #expect(fixture.driver.requests.count == 2)
+    }
+
+    @Test func disconnectingCalendarCancelsDeferredMetadataWithoutCancellingTheCall() async {
+        let fixture = CalendarJoinFixture()
+        defer { fixture.cleanUp() }
+        await fixture.calendar.pauseNextEvents()
+        let startup = Task { await fixture.model.start() }
+        await fixture.calendar.waitUntilPaused()
+        fixture.model.receiveMeetingLink(URL(string: "https://zoom.us/j/12345678901")!)
+        for _ in 0..<100 where fixture.driver.requests.isEmpty { await Task.yield() }
+        #expect(fixture.driver.requests.count == 1)
+        await fixture.model.disconnectGoogle()
+        await fixture.calendar.resumeEvents()
+        await startup.value
+        for _ in 0..<100 { await Task.yield() }
+        #expect(fixture.model.meeting.status == .inMeeting)
+        #expect(fixture.model.meeting.displayTitle == "Your meeting")
+        #expect(fixture.model.meeting.scheduledInterval == nil)
+    }
+
     @Test func overlappingJoinActionsProduceOneJoinWithoutAnActiveCallError() async {
         let fixture = CalendarJoinFixture()
         defer { fixture.cleanUp() }

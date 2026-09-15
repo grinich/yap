@@ -119,4 +119,29 @@ struct MeetingLayoutTests {
         meeting.setLayout(.gallery)
         #expect(driver.visibleParticipantIDs.count == 150)
     }
+
+    @Test func hideSelfAlsoHidesSoloSpeakerViewAndClearsSelfPins() async throws {
+        let (meeting, driver, session) = try await fixture()
+        driver.onEvent?(session, .participants([person("self", isSelf: true)]))
+        meeting.setLayout(.activeSpeaker)
+        #expect(meeting.presentationParticipant?.id == "self")
+        meeting.hideSelfView = true
+        #expect(meeting.presentationParticipant == nil)
+        #expect(meeting.visibleParticipants.isEmpty)
+        #expect(driver.visibleParticipantIDs.isEmpty)
+        meeting.hideSelfView = false
+        #expect(meeting.presentationParticipant?.id == "self")
+
+        driver.onEvent?(session, .participants([person("self", isSelf: true), person("A"), person("B")]))
+        meeting.setLayout(.gallery)
+        meeting.setPinnedParticipant("self")
+        #expect(meeting.presentationParticipant?.id == "self")
+        meeting.hideSelfView = true
+        #expect(meeting.pinnedParticipantID == nil)
+        #expect(meeting.visibleParticipants.map(\.id) == ["A", "B"])
+        #expect(driver.visibleParticipantIDs == ["A", "B"])
+        meeting.setPinnedParticipant("self")
+        #expect(meeting.pinnedParticipantID == nil)
+        #expect(driver.visibleParticipantIDs == ["A", "B"])
+    }
 }

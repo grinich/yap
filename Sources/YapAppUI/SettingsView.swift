@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 import YapSystem
 
 public struct YapSettingsView: View {
@@ -14,10 +13,12 @@ public struct YapSettingsView: View {
         TabView(selection: $selectedTab) {
             connections.tabItem { Label("Connections", systemImage: "person.crop.circle.badge.checkmark") }.tag(0)
             preferences.tabItem { Label("General", systemImage: "gearshape") }.tag(1)
+            CameraEffectsSettingsView(effects: model.cameraEffects, connection: model.zoomConnection, isDemo: model.isPreview)
+                .tabItem { Label("Camera", systemImage: "camera") }.tag(3)
             development.tabItem { Label("Development", systemImage: "hammer") }.tag(2)
         }
-        .frame(width: 590, height: 560)
-        .navigationTitle(selectedTab == 1 ? "General" : selectedTab == 2 ? "Development" : "Connections")
+        .frame(width: 590, height: 600)
+        .navigationTitle(selectedTab == 3 ? "Camera" : selectedTab == 1 ? "General" : selectedTab == 2 ? "Development" : "Connections")
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.refreshReminderAuthorization() }
         }
@@ -44,26 +45,12 @@ public struct YapSettingsView: View {
                 } else {
                     Text("Read-only access to the calendars you select. Yap does not create, edit, or delete events.")
                         .font(.callout).foregroundStyle(.secondary)
-                    if model.googleConfigurationLoadState == .loading {
-                        ProgressView("Loading your saved Google connection…")
-                        Text("If macOS asks for Keychain access, respond in its dialog. You can keep using Yap while it waits.")
-                            .font(.callout).foregroundStyle(.secondary)
-                        Button("Continue without calendar") { model.cancelGoogleConfigurationLoad() }
-                    } else if model.googleConfigurationLoadState == .pending || model.googleConfigurationLoadState == .cancelled || model.googleConfigurationLoadState == .failed {
-                        Text("Your saved Google connection hasn’t been loaded.").font(.callout)
-                        Button("Load saved Google connection") { Task { await model.loadGoogleConnection() } }
-                        Button("Import Google desktop client…") { importGoogle() }
-                    } else if model.googleConfigured {
-                        Button(model.isConnecting ? "Waiting for Google…" : "Sign in with Google") { Task { await model.connectGoogle() } }
-                            .disabled(model.isConnecting)
-                        if model.isConnecting {
-                            Button("Cancel sign-in") { Task { await model.disconnectGoogle() } }
-                        }
-                    } else {
-                        Text("Your personal Google connection needs its initial developer setup.").font(.callout)
-                        Button("Import Google desktop client…") { importGoogle() }
-                            .disabled(model.isConnecting)
-                        Link("Open Google Cloud setup", destination: URL(string: "https://console.cloud.google.com/auth/clients")!)
+                    Button(model.isConnecting ? "Waiting for Google…" : "Sign in with Google") {
+                        Task { await model.connectGoogle() }
+                    }
+                    .disabled(model.isConnecting)
+                    if model.isConnecting {
+                        Button("Cancel sign-in") { Task { await model.disconnectGoogle() } }
                     }
                 }
             } header: { Text("Your calendar") }
@@ -74,34 +61,70 @@ public struct YapSettingsView: View {
     private var preferences: some View {
         Form {
             Section("In meetings") {
-                TextField("Display name", text: $model.displayName)
-                Label("Join with microphone muted and camera off", systemImage: "mic.slash")
-                Text("Turn them on when you’re ready, using the call controls.").font(.caption).foregroundStyle(.secondary)
-                Toggle("Ask before leaving a meeting", isOn: $model.askBeforeLeavingMeeting)
-                Text("When off, Leave exits the call immediately without ending it for everyone.")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 20) {
+                    SettingsLabel(title: "Display name", detail: "How you appear to other people in meetings.")
+                    Spacer(minLength: 0)
+                    TextField("Your name", text: $model.displayName)
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
+                        .multilineTextAlignment(.leading)
+                        .frame(width: 190)
+                        .accessibilityLabel("Display name")
+                        .accessibilityIdentifier("settingsDisplayName")
+                }
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "video.slash")
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 6)
+                    SettingsLabel(title: "Join quietly", detail: "Your microphone and camera start off. Turn them on when you’re ready.")
+                    Spacer(minLength: 0)
+                }
+                Toggle(isOn: $model.askBeforeLeavingMeeting) {
+                    SettingsLabel(title: "Confirm before leaving", detail: "Ask whether to leave or end the meeting. When off, Leave exits only your call.")
+                }
+                .toggleStyle(.switch)
+            }
+            Section("Chat") {
+                HStack(spacing: 20) {
+                    SettingsLabel(title: "Message sound", detail: "Plays when a new message arrives while you aren’t viewing chat. The badge stays on with sound set to None.")
+                    Spacer(minLength: 0)
+                    SettingsChoiceMenu(title: "Message sound", selection: $model.chatNotificationSound,
+                        choices: ChatNotificationSound.allCases.map { SettingsChoice(value: $0, title: $0.rawValue) })
+                        .frame(width: 190)
+                        .onChange(of: model.chatNotificationSound) { _, sound in sound.play() }
+                }
             }
             ZoomLinkSettingsView()
             Section("Reminders") {
-                Toggle("Notify me before meetings", isOn: Binding(get: { model.remindersEnabled }, set: { enabled in
+                Toggle(isOn: Binding(get: { model.remindersEnabled }, set: { enabled in
                     Task {
                         if enabled { await model.beginReminderSetup() }
                         else { await model.setReminders(false) }
                     }
-                }))
+                })) {
+                    SettingsLabel(title: "Meeting reminders", detail: "Get a notification before your next meeting.")
+                }
+                .toggleStyle(.switch)
                 .disabled(model.isChangingReminders || model.isPreview)
                 if model.reminderAuthorizationStatus == .denied {
                     Text("Notifications are off in macOS. Turn on reminders to review the setting.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Picker("Remind me", selection: $model.reminderMinutes) {
-                    Text("1 minute before").tag(1)
-                    Text("2 minutes before").tag(2)
-                    Text("5 minutes before").tag(5)
+                HStack(spacing: 20) {
+                    SettingsLabel(title: "Remind me", detail: model.remindersEnabled
+                        ? "Opens meeting details without turning on your camera or microphone."
+                        : "Turn on meeting reminders to choose a time.")
+                    Spacer(minLength: 0)
+                    SettingsChoiceMenu(title: "Remind me", selection: $model.reminderMinutes, choices: [
+                        SettingsChoice(value: 1, title: "1 minute before"),
+                        SettingsChoice(value: 2, title: "2 minutes before"),
+                        SettingsChoice(value: 5, title: "5 minutes before")
+                    ])
+                    .frame(width: 190)
+                    .disabled(!model.remindersEnabled)
+                    .onChange(of: model.reminderMinutes) { Task { await model.synchronizeReminders() } }
                 }
-                .disabled(!model.remindersEnabled)
-                .onChange(of: model.reminderMinutes) { Task { await model.synchronizeReminders() } }
-                Text("Reminders open meeting details. Your camera and microphone never turn on automatically.").font(.caption).foregroundStyle(.secondary)
             }
             LaunchAtLoginSettingsView()
         }.formStyle(.grouped)
@@ -124,13 +147,7 @@ public struct YapSettingsView: View {
                 Text("100+ participant layouts are a test target. Rendering sample tiles does not verify that Zoom can deliver 100 simultaneous live videos.")
                     .font(.callout).foregroundStyle(.secondary)
             }
-            if Bundle.main.object(forInfoDictionaryKey: "YapGoogleClientID") == nil {
-                Section("Developer configuration") {
-                    Button("Replace Google desktop client…") { importGoogle() }.disabled(model.isConnecting)
-                    Text("Imports the downloaded desktop OAuth client JSON for a source build. Connection tokens are stored in your Mac’s Keychain.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
+
         }.formStyle(.grouped)
     }
 
@@ -140,13 +157,4 @@ public struct YapSettingsView: View {
         return "Yap \(version)"
     }
 
-    private func importGoogle() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose the Google desktop OAuth client"
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await model.importGoogleConfiguration(from: url) }
-    }
 }

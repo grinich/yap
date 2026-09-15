@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import YapSystem
+import YapMeetings
 
 private let yapMainWindowAttached = Notification.Name("com.grinich.yap.main-window-attached")
 let yapMainWindowWillHide = Notification.Name("com.grinich.yap.main-window-will-hide")
@@ -59,9 +60,13 @@ public struct YapMenuBarView: View {
 public struct YapCommands: Commands {
     let model: YapModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     public init(model: YapModel) { self.model = model }
 
     public var body: some Commands {
+        let shouldMuteMicrophone = !model.meeting.isMicrophoneMuted
+        let shouldEnableCamera = !model.meeting.isCameraEnabled
+        let shouldRaiseHand = !model.meeting.isHandRaised
         CommandGroup(after: .newItem) {
             Button("Open Yap") { YapSystemActions.request(.openYap) }.keyboardShortcut("0", modifiers: .command)
             Button("Join with a link…") {
@@ -74,6 +79,7 @@ public struct YapCommands: Commands {
         CommandGroup(after: .toolbar) {
             Toggle("Keep on Top", isOn: Binding(get: { YapWindowLevel.shared.isEnabled },
                                                 set: { YapWindowLevel.shared.isEnabled = $0 }))
+            Button("Show Schedule") { NotificationCenter.default.post(name: yapShowScheduleMenu, object: nil) }
             Divider()
             Button(model.recordings.isPresented ? "Hide Recordings" : "Show Recordings") {
                 openWindow(id: "main")
@@ -88,11 +94,36 @@ public struct YapCommands: Commands {
         CommandGroup(replacing: .help) {
             Link("Report a Bug", destination: URL(string: "https://github.com/grinich/yap/issues/new/choose")!)
         }
-        CommandMenu("Meeting") {
-            Button(model.meeting.isMicrophoneMuted ? "Unmute microphone" : "Mute microphone") { Task { await model.meeting.setMicrophoneMuted(!model.meeting.isMicrophoneMuted) } }
+        CommandMenu("Microphone") {
+            Button(shouldMuteMicrophone ? "Mute microphone" : "Unmute microphone") { Task { await model.meeting.setMicrophoneMuted(shouldMuteMicrophone) } }
                 .keyboardShortcut("a", modifiers: [.command, .shift]).disabled(!model.meeting.isConnected || model.meeting.isApplyingControl)
-            Button(model.meeting.isCameraEnabled ? "Turn camera off" : "Turn camera on") { Task { await model.meeting.setCameraEnabled(!model.meeting.isCameraEnabled) } }
+            Divider()
+            MeetingMediaMenuItems(meeting: model.meeting, kind: .microphone)
+            Divider()
+            Button("Microphone modes…") { YapSystemMediaEffects.showMicrophoneModes() }
+                .disabled(model.isPreview || !model.meeting.isConnected)
+        }
+        CommandMenu("Speaker") {
+            MeetingMediaMenuItems(meeting: model.meeting, kind: .speaker)
+        }
+        CommandMenu("Camera") {
+            Button(shouldEnableCamera ? "Turn camera on" : "Turn camera off") { Task { await model.meeting.setCameraEnabled(shouldEnableCamera) } }
                 .keyboardShortcut("v", modifiers: [.command, .shift]).disabled(!model.meeting.isConnected || model.meeting.isApplyingControl)
+            Divider()
+            MeetingMediaMenuItems(meeting: model.meeting, kind: .camera)
+            Divider()
+            Button("Camera effects…") {
+                UserDefaults.standard.set(3, forKey: "settings.selectedPane")
+                openSettings()
+            }.disabled(model.isPreview)
+            Button("macOS video effects…") { YapSystemMediaEffects.showVideoEffects() }
+                .disabled(model.isPreview || !model.meeting.isCameraEnabled)
+        }
+        CommandMenu("Meeting") {
+            Button(shouldRaiseHand ? "Raise hand" : "Lower hand") {
+                Task { await model.meeting.setHandRaised(shouldRaiseHand) }
+            }.keyboardShortcut("y", modifiers: [.command, .shift])
+                .disabled(!model.meeting.canRaiseHand || model.meeting.isApplyingControl)
             Button(model.sidebar == .chat ? "Hide Chat" : "Show Chat") { openWindow(id: "main"); NSApplication.shared.activate(); model.sidebar = model.sidebar == .chat ? nil : .chat }.keyboardShortcut("h", modifiers: [.command, .shift]).disabled(!model.meeting.isConnected)
             Button(model.sidebar == .people ? "Hide People" : "Show People") { openWindow(id: "main"); NSApplication.shared.activate(); model.sidebar = model.sidebar == .people ? nil : .people }.disabled(!model.meeting.isConnected)
             Button("Stop sharing") { Task { await model.meeting.stopShare() } }.disabled(!model.meeting.sharing.isSharing || !model.meeting.isConnected || model.meeting.isApplyingControl)

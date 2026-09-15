@@ -24,6 +24,7 @@ struct JoinMeetingFeedbackTests {
 
     @Test(arguments: [
         "https://us02web.zoom.us/j/12345678901?pwd=fixture",
+        "zoommtg://us02web.zoom.us/join?confno=12345678901&pwd=fixture&zc=0&stype=99&browser=chrome",
         "zoomus://us02web.zoom.us/join?action=join&confno=12345678901&pwd=fixture",
         "yap://join?url=https%3A%2F%2Fus02web.zoom.us%2Fj%2F12345678901%3Fpwd%3Dfixture"
     ])
@@ -35,6 +36,25 @@ struct JoinMeetingFeedbackTests {
         #expect(!fixture.model.showJoinSheet)
         #expect(fixture.driver.requests.count == 1)
         #expect(fixture.driver.requests.first?.url?.absoluteString == "https://us02web.zoom.us/j/12345678901?pwd=fixture")
+    }
+
+    @Test func workplaceInvitationWithOpaqueDottedPasscodeJoins() async {
+        let fixture = JoinFeedbackFixture()
+        defer { fixture.cleanUp() }
+        fixture.model.receiveMeetingLink(URL(string: "https://example.zoom.us/j/12345678901?pwd=syntheticOpaquePasscode.1")!)
+        await fixture.waitForAutomaticJoin()
+        #expect(fixture.model.unsupportedZoomLink == nil)
+        #expect(fixture.driver.requests.count == 1)
+    }
+
+    @Test func fallbackExplainsRestrictedFieldsWithoutTheirValues() {
+        let url = URL(string: "zoommtg://zoom.us/join?action=join&confno=12345678901&zak=secretFixture&pwd=privateFixture")!
+        let message = YapDeepLink.unsupportedExplanation(for: url)
+        #expect(message.contains("zak"))
+        #expect(message.contains("No meeting join was attempted"))
+        #expect(!message.contains("secretFixture"))
+        #expect(!message.contains("privateFixture"))
+        #expect(!message.contains("12345678901"))
     }
 
     @Test func latestIncomingInvitationWinsBeforeJoinStarts() async {

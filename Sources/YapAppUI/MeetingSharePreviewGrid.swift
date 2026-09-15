@@ -242,6 +242,7 @@ private extension ShareTarget {
         case .window: return "Untitled window"
         case .display: return "Display"
         case .demo: return "Sample content"
+        case .computerAudio: return "Computer audio"
         }
     }
 }

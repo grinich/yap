@@ -15,7 +15,14 @@ public protocol MeetingDriver: AnyObject {
     func leave(sessionID: UUID, endForEveryone: Bool) async throws
     func setMicrophoneMuted(_ muted: Bool, sessionID: UUID) async throws
     func setCameraEnabled(_ enabled: Bool, sessionID: UUID) async throws
+    func setHandRaised(_ raised: Bool, sessionID: UUID) async throws
     func sendChat(text: String, sessionID: UUID) async throws
+    func sendChatReply(text: String, messageID: String, sessionID: UUID) async throws
+    func sendChat(_ draft: MeetingChatDraft, sessionID: UUID) async throws
+    func deleteChat(messageID: String, sessionID: UUID) async throws
+    func sendChatFile(_ url: URL, recipient: MeetingChatRecipient, sessionID: UUID) async throws
+    func receiveChatFile(_ attachmentID: String, to url: URL, sessionID: UUID) async throws
+    func cancelChatFile(_ attachmentID: String, sessionID: UUID) async throws
     func startShare(_ target: ShareTarget, sessionID: UUID) async throws
     func stopShare(sessionID: UUID) async throws
     func submitRoomSharingCode(_ code: String, sessionID: UUID) async throws
@@ -27,7 +34,14 @@ public protocol MeetingDriver: AnyObject {
     func availableShareTargets(sessionID: UUID) async throws -> [ShareTarget]
     func admitParticipant(_ participantID: String, sessionID: UUID) async throws
     func showMeetingIndicator(_ indicatorID: String, sessionID: UUID) async throws
+    func preparePhotoShutter(_ pcm: Data, sessionID: UUID) async throws
+    func isPhotoShutterReady() -> Bool
+    func playPhotoShutter() -> Bool
+    func cancelPhotoShutter()
     func nativeVideoView(for participantID: String) -> NSView?
+    /// The current subscription has reported live video and has usable rendering geometry.
+    /// This is a readiness signal; callers must still allow the window compositor to settle.
+    func isVideoReadyForCapture(for participantID: String) -> Bool
     func nativeShareView(for sourceID: String) -> NSView?
     /// Subscribe to at most one received screen share and release the previous renderer.
     func setSelectedReceivedShare(_ sourceID: String?)
@@ -36,6 +50,29 @@ public protocol MeetingDriver: AnyObject {
 }
 
 public extension MeetingDriver {
+    func setHandRaised(_ raised: Bool, sessionID: UUID) async throws {
+        throw MeetingError.unavailable("Raising your hand isn’t available in this meeting.")
+    }
+    func sendChat(_ draft: MeetingChatDraft, sessionID: UUID) async throws {
+        guard draft.recipient.kind == .everyone, draft.runs.isEmpty else {
+            throw MeetingError.unavailable("This meeting connection doesn’t support this message format or recipient.")
+        }
+        if let reply = draft.replyToSDKID { try await sendChatReply(text: draft.text, messageID: reply, sessionID: sessionID) }
+        else { try await sendChat(text: draft.text, sessionID: sessionID) }
+    }
+    func deleteChat(messageID: String, sessionID: UUID) async throws { throw MeetingError.unavailable("Deleting messages isn’t available in this meeting.") }
+    func sendChatFile(_ url: URL, recipient: MeetingChatRecipient, sessionID: UUID) async throws { throw MeetingError.unavailable("File sharing isn’t available in this meeting.") }
+    func receiveChatFile(_ attachmentID: String, to url: URL, sessionID: UUID) async throws { throw MeetingError.unavailable("This file isn’t available to download.") }
+    func cancelChatFile(_ attachmentID: String, sessionID: UUID) async throws { throw MeetingError.unavailable("This file transfer cannot be cancelled.") }
+    func sendChatReply(text: String, messageID: String, sessionID: UUID) async throws {
+        throw MeetingError.unavailable("Threaded replies aren’t available for this message.")
+    }
+
+    func preparePhotoShutter(_ pcm: Data, sessionID: UUID) async throws { throw MeetingError.unavailable("The meeting doesn’t allow the shared shutter sound.") }
+    func isPhotoShutterReady() -> Bool { false }
+    func playPhotoShutter() -> Bool { false }
+    func cancelPhotoShutter() {}
+
     func submitRoomSharingCode(_ code: String, sessionID: UUID) async throws {
         throw MeetingError.unavailable("Zoom Room sharing isn’t available in this build.")
     }
@@ -47,6 +84,7 @@ public extension MeetingDriver {
         .unavailable("Cloud recording isn’t available in this meeting.")
     }
     func nativeVideoView(for participantID: String) -> NSView? { nil }
+    func isVideoReadyForCapture(for participantID: String) -> Bool { false }
     func setVisibleParticipants(_ participantIDs: [String]) {}
     func availableShareTargets(sessionID: UUID) async throws -> [ShareTarget] {
         throw MeetingError.unavailable("Choosing a screen to share isn’t available in this build.")

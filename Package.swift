@@ -24,7 +24,7 @@ let package = Package(
     targets: [
         .target(name: "YapCredentials"),
         .target(name: "YapOAuth"),
-        .target(name: "YapCalendar", dependencies: ["YapCredentials", "YapOAuth"]),
+        .target(name: "YapCalendar", dependencies: ["YapCredentials", "YapOAuth"], resources: [.copy("Resources/GoogleOAuth.plist")]),
         .target(name: "YapMeetings", dependencies: meetingDependencies),
         .target(name: "YapSystem"),
         .target(name: "YapUpdates", dependencies: [.product(name: "Sparkle", package: "Sparkle")]),

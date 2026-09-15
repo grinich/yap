@@ -10,6 +10,49 @@ import YapMeetings
 @Suite("Nonblocking calendar bootstrap", .serialized)
 @MainActor
 struct CalendarBootstrapTests {
+    @Test func connectWaitsForConfigurationAndStartsSignInWithoutSettings() async throws {
+        let gate = ConfigurationReadGate()
+        let fixture = BootstrapFixture(loader: { try gate.read() })
+        defer { fixture.cleanUp(); gate.release() }
+        let connect = Task { await fixture.model.connectGoogle() }
+        await gate.waitUntilStarted()
+        #expect(fixture.model.isConnecting)
+        #expect(!fixture.model.showSettings)
+        #expect(await fixture.configured.connections == 0)
+        // Repeated clicks must not start a second OAuth flow while loading.
+        await fixture.model.connectGoogle()
+        gate.release()
+        await connect.value
+        #expect(await fixture.configured.connections == 1)
+        #expect(await fixture.initial.connections == 0)
+        #expect(fixture.model.isCalendarConnected)
+        #expect(!fixture.model.isConnecting)
+        #expect(!fixture.model.showSettings)
+    }
+
+    @Test func connectWithMissingConfigurationShowsAnErrorWithoutOpeningSettings() async {
+        let fixture = BootstrapFixture(loader: { nil })
+        defer { fixture.cleanUp() }
+        await fixture.model.connectGoogle()
+        #expect(!fixture.model.showSettings)
+        #expect(fixture.model.error != nil)
+        #expect(!fixture.model.isConnecting)
+        #expect(await fixture.initial.connections == 0)
+    }
+
+    @Test func cancelledConfigurationLoadDoesNotStartSignIn() async {
+        let gate = ConfigurationReadGate()
+        let fixture = BootstrapFixture(loader: { try gate.read() })
+        defer { fixture.cleanUp(); gate.release() }
+        let connect = Task { await fixture.model.connectGoogle() }
+        await gate.waitUntilStarted()
+        fixture.model.cancelGoogleConfigurationLoad()
+        await connect.value
+        #expect(!fixture.model.isConnecting)
+        #expect(!fixture.model.showSettings)
+        #expect(await fixture.configured.connections == 0)
+    }
+
     @Test func configurationReadStartsAfterInitializationAndRunsOffMainThread() async throws {
         let gate = ConfigurationReadGate()
         let fixture = BootstrapFixture(loader: { try gate.read() })
@@ -76,29 +119,6 @@ struct CalendarBootstrapTests {
         await startup.value
 
         #expect(fixture.createdClientIDs.isEmpty)
-        #expect(!fixture.model.isCalendarConnected)
-        #expect(fixture.model.events.isEmpty)
-        #expect(await fixture.initial.disconnects == 1)
-        #expect(await fixture.configured.credentialsReads == 0)
-    }
-
-    @Test func importingAReplacementWinsOverTheOldConfigurationRead() async throws {
-        let gate = ConfigurationReadGate()
-        let fixture = BootstrapFixture(loader: { try gate.read() })
-        defer { fixture.cleanUp(); gate.release() }
-        let startup = Task { await fixture.model.start() }
-        await gate.waitUntilStarted()
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("YapBootstrap-\(UUID()).json")
-        defer { try? FileManager.default.removeItem(at: file) }
-        try Data(#"{"installed":{"client_id":"replacement.apps.googleusercontent.com"}}"#.utf8).write(to: file)
-
-        await fixture.model.importGoogleConfiguration(from: file)
-        gate.release()
-        await startup.value
-
-        #expect(fixture.model.googleConfigurationLoadState == .loaded)
-        #expect(fixture.createdClientIDs == ["replacement.apps.googleusercontent.com"])
-        #expect(fixture.model.googleConfigured)
         #expect(!fixture.model.isCalendarConnected)
         #expect(fixture.model.events.isEmpty)
         #expect(await fixture.initial.disconnects == 1)
@@ -174,14 +194,16 @@ struct CalendarBootstrapTests {
         #expect(fixture.model.isCalendarConnected)
     }
 
-    @Test func missingConfigurationFinishesAndOffersInitialSetup() async throws {
+    @Test func missingConfigurationCannotOfferDeveloperSetup() async throws {
         let fixture = BootstrapFixture(loader: { nil })
         defer { fixture.cleanUp() }
         await fixture.model.start()
         #expect(fixture.model.googleConfigurationLoadState == .loaded)
         #expect(!fixture.model.googleConfigured)
         #expect(!fixture.model.isCalendarConnected)
-        #expect(fixture.model.error == nil)
+        await fixture.model.connectGoogle()
+        #expect(fixture.model.error?.contains("Reinstall") == true)
+        #expect(fixture.model.error?.contains("import") == false)
     }
 }
 
@@ -243,7 +265,6 @@ private final class BootstrapFixture {
             meeting: MeetingCoordinator(driver: DemoMeetingDriver()),
             calendarClient: initial,
             reminders: YapReminderActions(requestAuthorization: { false }, synchronize: { _, _ in }, disable: {}),
-            saveGoogleConfiguration: { _ in },
             loadGoogleConfiguration: loader,
             makeConfiguredCalendarClient: { [weak self, configured] config in
                 self?.createdClientIDs.append(config.clientID)
@@ -257,6 +278,7 @@ private final class BootstrapFixture {
 
 private actor BootstrapCalendar: YapCalendarServing {
     nonisolated let isConfigured: Bool
+    var connections = 0
     var credentialsReads = 0
     var disconnects = 0
     init(isConfigured: Bool) { self.isConfigured = isConfigured }
@@ -265,7 +287,7 @@ private actor BootstrapCalendar: YapCalendarServing {
     func clearCachedEvents() async {}
     func disconnect() async { disconnects += 1 }
     func calendars() async -> [GoogleCalendar] { [GoogleCalendar(id: "personal", name: "Personal", isPrimary: true)] }
-    func connect(openURL: @escaping @MainActor @Sendable (URL) -> Void) async -> [GoogleCalendar] { await calendars() }
+    func connect(openURL: @escaping @MainActor @Sendable (URL) -> Void) async -> [GoogleCalendar] { connections += 1; return await calendars() }
     func events(in calendars: [GoogleCalendar], from: Date, to: Date) async -> [CalendarEvent] {
         [CalendarEvent(id: "live", title: "Upcoming", startDate: .now.addingTimeInterval(600), endDate: .now.addingTimeInterval(1800),
                        calendarID: "personal", calendarName: "Personal", meetingURLs: [URL(string: "https://zoom.us/j/12345678901")!])]

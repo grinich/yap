@@ -9,6 +9,7 @@ struct OneToOneMeetingTests {
     private func fixture() async throws -> (MeetingCoordinator, DemoMeetingDriver, UUID) {
         let driver = DemoMeetingDriver(participantCount: 1)
         let meeting = MeetingCoordinator(driver: driver)
+        meeting.showNonVideoParticipants = true
         await meeting.host(displayName: "Self")
         return (meeting, driver, try #require(meeting.sessionID))
     }

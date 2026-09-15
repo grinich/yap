@@ -1,50 +1,40 @@
 import Foundation
 import Testing
 import YapCalendar
+import YapMeetings
 @testable import YapAppUI
 
-@Suite("Bundled Google sign-in configuration")
+@Suite("Yap always includes its Google client")
 struct GoogleDefaultConfigurationTests {
-    private let bundled: [String: String] = [
-        "YapGoogleClientID": "yap.apps.googleusercontent.com",
-        "YapGoogleClientSecret": "desktop-client-secret"
-    ]
-
-    @Test func freshInstallCanSignInWithoutImportingCredentials() throws {
-        let configuration = try YapConfigurationStore.resolveGoogle(savedData: { nil }, bundledInfo: bundled)
-        #expect(configuration?.isValid == true)
-        #expect(configuration?.clientID == "yap.apps.googleusercontent.com")
-        #expect(configuration?.clientSecret == "desktop-client-secret")
+    @Test func sourceAndPackagedBuildsUseTheSameSharedGoogleApp() throws {
+        let configuration = try GoogleOAuthConfiguration.yap()
+        #expect(configuration.isValid)
+        #expect(configuration.clientID == "696553061357-u7j8v96hlg5qms17kc9rea8cjtb8ksoh.apps.googleusercontent.com")
+        #expect(configuration.clientSecret?.isEmpty == false)
     }
 
-    @Test func packagedBuildUsesYapClientInsteadOfOldDeveloperConfiguration() throws {
-        let saved = Data(#"{"installed":{"client_id":"custom.apps.googleusercontent.com","client_secret":"custom-secret"}}"#.utf8)
-        let configuration = try YapConfigurationStore.resolveGoogle(savedData: { saved }, bundledInfo: bundled)
-        #expect(configuration?.clientID == "yap.apps.googleusercontent.com")
-        #expect(configuration?.clientSecret == "desktop-client-secret")
+    @Test @MainActor func freshInstallationIsConfiguredWithoutDeveloperSetup() async throws {
+        let suite = "YapBundledGoogleTests.\(UUID())"
+        let preferences = try #require(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let model = YapModel(preview: false, preferences: preferences,
+            meeting: MeetingCoordinator(driver: DemoMeetingDriver()),
+            reminders: YapReminderActions(requestAuthorization: { false }, synchronize: { _, _ in }, disable: {}),
+            makeConfiguredCalendarClient: { _ in NoAccountCalendar() })
+        await model.loadGoogleConnection()
+        #expect(model.googleConfigured)
+        #expect(!model.isCalendarConnected)
+        #expect(model.error == nil)
     }
+}
 
-    @Test func bundledConfigurationDoesNotReadLockedKeychain() throws {
-        let configuration = try YapConfigurationStore.resolveGoogle(savedData: { throw GoogleCalendarError.keychain(-25308) }, bundledInfo: bundled)
-        #expect(configuration?.clientID == "yap.apps.googleusercontent.com")
-    }
-
-    @Test func sourceBuildReportsInvalidImportedConfiguration() {
-        #expect(throws: (any Error).self) {
-            try YapConfigurationStore.resolveGoogle(savedData: { Data("invalid".utf8) }, bundledInfo: [:])
-        }
-    }
-
-    @Test func sourceBuildCanStillUseDeveloperSetup() throws {
-        #expect(try YapConfigurationStore.resolveGoogle(savedData: { nil }, bundledInfo: [:]) == nil)
-        let data = Data(#"{"installed":{"client_id":"custom.apps.googleusercontent.com","client_secret":"custom-secret"}}"#.utf8)
-        let configuration = try YapConfigurationStore.resolveGoogle(savedData: { data }, bundledInfo: [:])
-        #expect(configuration?.clientID == "custom.apps.googleusercontent.com")
-    }
-
-    @Test func rejectsMalformedBundledClient() {
-        #expect(throws: GoogleCalendarError.notConfigured) {
-            try YapConfigurationStore.resolveGoogle(savedData: { nil }, bundledInfo: ["YapGoogleClientID": "invalid"])
-        }
-    }
+private struct NoAccountCalendar: YapCalendarServing {
+    let isConfigured = true
+    func hasCredentials() async -> Bool { false }
+    func cachedSnapshot() async -> CalendarSnapshot? { nil }
+    func clearCachedEvents() async {}
+    func disconnect() async {}
+    func calendars() async throws -> [GoogleCalendar] { [] }
+    func connect(openURL: @escaping @MainActor @Sendable (URL) -> Void) async throws -> [GoogleCalendar] { [] }
+    func events(in calendars: [GoogleCalendar], from: Date, to: Date) async throws -> [CalendarEvent] { [] }
 }

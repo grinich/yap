@@ -7,6 +7,11 @@ struct MeetingShareSourceLabelTests {
     private let windowB = ShareTarget(id: "42", title: "Test window B", kind: .window)
     private let display = ShareTarget(id: "42", title: "Test display", kind: .display)
 
+    @Test func confirmedAudioDoesNotUseWindowOrDisplayLabels() {
+        let result = MeetingShareSourceLabel.target(windowID: 0, displayID: 0, available: [windowA], computerAudio: true)
+        #expect(result == .computerAudio)
+    }
+
     @Test func missingSDKIdentifiersNeverReuseASelectedWindowLabel() {
         let result = MeetingShareSourceLabel.target(windowID: 0, displayID: 0, available: [windowA, windowB])
         #expect(result.title == "Shared screen")

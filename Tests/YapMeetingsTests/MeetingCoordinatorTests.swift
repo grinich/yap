@@ -4,11 +4,70 @@ import Testing
 
 @Suite("Meeting session safety") @MainActor
 struct MeetingCoordinatorTests {
+    @Test func unreadChatIgnoresOwnMessagesEditsAndDuplicatesAndResetsBetweenCalls() async throws {
+        let driver = DemoMeetingDriver(participantCount: 2)
+        let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
+        var alerts = 0
+        coordinator.onUnreadChatMessage = { alerts += 1 }
+        await coordinator.host(displayName: "Me")
+        let session = try #require(coordinator.sessionID)
+        coordinator.setChatBeingRead(true)
+        coordinator.setChatBeingRead(false)
+        alerts = 0
+        let message = MeetingChatMessage(senderName: "Alex", text: "Hi")
+        driver.onEvent?(session, .message(message))
+        driver.onEvent?(session, .message(message))
+        driver.onEvent?(session, .message(MeetingChatMessage(senderName: "Me", text: "Hello", isFromSelf: true)))
+        driver.onEvent?(session, .messageUpdated(MeetingChatMessage(id: message.id, senderName: "Alex", text: "Edited")))
+        #expect(coordinator.unreadChatMessageIDs == [message.id])
+        #expect(alerts == 1)
+        coordinator.setChatBeingRead(true)
+        #expect(coordinator.unreadChatMessageIDs.isEmpty)
+        driver.onEvent?(session, .message(MeetingChatMessage(senderName: "Alex", text: "Already reading")))
+        #expect(alerts == 1)
+        #expect(coordinator.unreadChatMessageIDs.isEmpty)
+        coordinator.setChatBeingRead(false)
+        let background = MeetingChatMessage(senderName: "Alex", text: "While away")
+        driver.onEvent?(session, .message(background))
+        #expect(alerts == 2)
+        driver.onEvent?(session, .messageRemoved(background.id))
+        #expect(coordinator.unreadChatMessageIDs.isEmpty)
+        await coordinator.leave()
+        #expect(coordinator.latestUnreadChatMessageID == nil)
+        driver.onEvent?(session, .message(message))
+        #expect(coordinator.unreadChatMessageIDs.isEmpty)
+    }
+
+    @Test func groupPhotoIncludesOnlyCameraOnParticipantsAcrossPagesAndRestoresGallery() async throws {
+        let driver = DemoMeetingDriver(participantCount: 120)
+        let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
+        await coordinator.host(displayName: "Me")
+        let session = try #require(coordinator.sessionID)
+        let people = (0..<120).map { MeetingParticipant(id: "p\($0)", name: "Person", isCameraEnabled: $0 % 2 == 0) }
+        driver.onEvent?(session, .participants(people))
+        let original = coordinator.visibleParticipants.map(\.id)
+        let snapshot = try coordinator.beginGroupPhoto(sessionID: session)
+        #expect(snapshot.count == 60)
+        #expect(snapshot.allSatisfy { $0.isCameraEnabled })
+        #expect(snapshot.contains { $0.id == "p118" })
+        #expect(coordinator.visibleParticipants.isEmpty)
+        try coordinator.selectGroupPhotoBatch(participantIDs: Array(snapshot.prefix(49)).map(\.id), sessionID: session)
+        #expect(coordinator.visibleParticipants.count == 49)
+        coordinator.endGroupPhoto(sessionID: session)
+        #expect(coordinator.visibleParticipants.map(\.id) == original)
+        await coordinator.leave()
+        #expect(throws: MeetingError.noMeeting) { try coordinator.beginGroupPhoto(sessionID: session) }
+        #expect(!coordinator.isTakingGroupPhoto)
+    }
+
     private let meetingURL = URL(string: "https://example.zoom.us/j/12345678901?pwd=fixture")!
 
     @Test func untitledCallsUseTheOtherPersonsCurrentNameOnlyWhenOneToOne() async throws {
         let driver = DemoMeetingDriver(participantCount: 2)
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.join(url: meetingURL, displayName: "Me")
         #expect(coordinator.meetingTitle.isEmpty)
         #expect(coordinator.displayTitle == "Avery Chen")
@@ -32,12 +91,14 @@ struct MeetingCoordinatorTests {
     @Test(arguments: ["Design review", "Zoom meeting", "Personal meeting"])
     func explicitTitlesAreKeptEvenForOneToOneCalls(_ title: String) async {
         let coordinator = MeetingCoordinator(driver: DemoMeetingDriver(participantCount: 2))
+        coordinator.showNonVideoParticipants = true
         await coordinator.join(url: meetingURL, displayName: "Me", title: title)
         #expect(coordinator.displayTitle == title)
     }
 
     @Test func liveServiceDoesNotPretendToConnect() async {
         let coordinator = MeetingCoordinator()
+        coordinator.showNonVideoParticipants = true
         await coordinator.join(url: meetingURL, displayName: "Test")
         #expect(coordinator.status == .failed)
         #expect(!coordinator.isDemo)
@@ -50,6 +111,7 @@ struct MeetingCoordinatorTests {
 
     @Test func hostControlsChatSharingAndLeave() async {
         let coordinator = MeetingCoordinator(driver: DemoMeetingDriver(participantCount: 3))
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "  Test Person  ", title: "Design review")
         #expect(coordinator.status == .inMeeting)
         #expect(coordinator.isHost)
@@ -79,6 +141,7 @@ struct MeetingCoordinatorTests {
 
     @Test func participantCannotEndMeetingForEveryone() async {
         let coordinator = MeetingCoordinator(driver: DemoMeetingDriver())
+        coordinator.showNonVideoParticipants = true
         await coordinator.join(url: meetingURL, displayName: "Guest")
         await coordinator.leave(endForEveryone: true)
         #expect(coordinator.status == .inMeeting)
@@ -89,6 +152,7 @@ struct MeetingCoordinatorTests {
 
     @Test func repeatedJoinDoesNotReplaceExistingCall() async {
         let coordinator = MeetingCoordinator(driver: DemoMeetingDriver())
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Host", title: "Existing")
         let sessionID = coordinator.sessionID
         await coordinator.join(url: meetingURL, displayName: "Guest", title: "New")
@@ -100,6 +164,7 @@ struct MeetingCoordinatorTests {
     @Test func staleCallbacksCannotReopenOrUnmuteAnotherCall() async {
         let driver = DemoMeetingDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Host")
         let staleID = coordinator.sessionID!
         await coordinator.leave()
@@ -116,6 +181,7 @@ struct MeetingCoordinatorTests {
     @Test func defaultPageShows100AndPaginatesLargerMockGridsWithoutClaimingLiveCapacity() async {
         let driver = DemoMeetingDriver(participantCount: 144)
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         #expect(coordinator.pageSize == 100)
         #expect(coordinator.participants.count == 144)
@@ -140,6 +206,7 @@ struct MeetingCoordinatorTests {
     @Test func showAllFollowsRosterChangesAndClearsTheOldPage() async throws {
         let driver = DemoMeetingDriver(participantCount: 144)
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         coordinator.setPage(1)
         coordinator.showAllParticipants()
@@ -171,6 +238,7 @@ struct MeetingCoordinatorTests {
     func selectingPageSizeRestoresPagingAfterShowAll(_ size: Int) async {
         let driver = DemoMeetingDriver(participantCount: 240)
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         coordinator.showAllParticipants()
         coordinator.setPageSize(size)
@@ -187,6 +255,7 @@ struct MeetingCoordinatorTests {
     @Test func showAllCanBeSelectedBeforeJoiningAndSurvivesSessionReset() async throws {
         let driver = DemoMeetingDriver(participantCount: 144)
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         coordinator.showAllParticipants()
         #expect(coordinator.pageSize == 1)
         await coordinator.host(displayName: "Test")
@@ -211,6 +280,7 @@ struct MeetingCoordinatorTests {
 
     @Test func queuedChatCannotSendAnOldDraftIntoAReplacementMeeting() async throws {
         let coordinator = MeetingCoordinator(driver: DemoMeetingDriver(participantCount: 2))
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let originalSession = try #require(coordinator.sessionID)
         await coordinator.leave()
@@ -231,6 +301,7 @@ struct MeetingCoordinatorTests {
 
     @Test func cancelledControlsDoNotActivateMediaOrSendContent() async {
         let coordinator = MeetingCoordinator(driver: DemoMeetingDriver(participantCount: 2))
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let originalMessages = coordinator.chatMessages
         let task = Task { @MainActor in
@@ -252,6 +323,7 @@ struct MeetingCoordinatorTests {
     @Test func controlsAreNeverOptimisticWhenDriverRejectsThem() async {
         let driver = RejectedControlsDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         await coordinator.setMicrophoneMuted(false)
         #expect(coordinator.isMicrophoneMuted)
@@ -266,11 +338,13 @@ struct MeetingCoordinatorTests {
                     "http://zoom.us/j/12345678901", "https://zoom.us@evil.example/j/12345678901",
                     "https://zoom.us/j/"] {
             let coordinator = MeetingCoordinator(driver: DemoMeetingDriver())
+        coordinator.showNonVideoParticipants = true
             await coordinator.join(url: URL(string: url)!, displayName: "Test")
             #expect(coordinator.status == .idle)
             #expect(coordinator.lastError == MeetingError.invalidLink.localizedDescription)
         }
         let coordinator = MeetingCoordinator(driver: DemoMeetingDriver())
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: " \n ")
         #expect(coordinator.sessionID == nil)
         #expect(coordinator.lastError == MeetingError.invalidName.localizedDescription)
@@ -279,6 +353,7 @@ struct MeetingCoordinatorTests {
     @Test func rejectsOversizedMessagesAndDeduplicatesCallbacks() async {
         let driver = DemoMeetingDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let originalCount = coordinator.chatMessages.count
         await coordinator.sendChat(text: " \n ")
@@ -300,6 +375,7 @@ struct MeetingCoordinatorTests {
     @Test func requestedHostingDoesNotGrantRoleBeforeDriverConfirmsIt() async {
         let driver = ControlledSessionDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         #expect(!coordinator.isHost)
         await coordinator.leave(endForEveryone: true)
@@ -313,6 +389,7 @@ struct MeetingCoordinatorTests {
     @Test func acceptedLeaveDoesNotPretendMediaHasStopped() async {
         let driver = ControlledSessionDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let id = coordinator.sessionID!
         await coordinator.leave()
@@ -334,6 +411,7 @@ struct MeetingCoordinatorTests {
     @Test func terminationWaitObservesDelayedTerminalCallback() async {
         let driver = ControlledSessionDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let id = coordinator.sessionID!
         await coordinator.leave()
@@ -347,6 +425,7 @@ struct MeetingCoordinatorTests {
     @Test func terminationWaitCancellationDoesNotClearSession() async {
         let driver = ControlledSessionDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         await coordinator.leave()
         let waiter = Task { await coordinator.waitForMeetingEnd(timeout: .seconds(1)) }
@@ -359,6 +438,7 @@ struct MeetingCoordinatorTests {
     @Test func terminationWaitDoesNotIgnoreAReplacementCall() async {
         let driver = ControlledSessionDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let oldID = coordinator.sessionID!
         await coordinator.leave()
@@ -373,6 +453,7 @@ struct MeetingCoordinatorTests {
     @Test func terminalFailureCleansStateAndAllowsRetry() async {
         let driver = ControlledSessionDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let id = coordinator.sessionID!
         driver.onEvent?(id, .participants([MeetingParticipant(id: "self", name: "Test", isSelf: true)]))
@@ -389,6 +470,7 @@ struct MeetingCoordinatorTests {
     @Test func cancellingPendingJoinRequestsTeardownAndRejectsLateSuccess() async {
         let driver = SuspendedConnectDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         let join = Task { await coordinator.host(displayName: "Test") }
         await driver.waitForConnect()
         let id = coordinator.sessionID!
@@ -404,9 +486,40 @@ struct MeetingCoordinatorTests {
         #expect(coordinator.sessionID == nil)
     }
 
+    @Test func toolbarToggleReturnsToTheLastSharedScreenAndReleasesTheRenderer() async {
+        let driver = MeetingExtrasDriver()
+        let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
+        await coordinator.host(displayName: "Test")
+        let id = coordinator.sessionID!
+        let first = ReceivedMeetingShare(id: "11", ownerID: "1", ownerName: "First")
+        let second = ReceivedMeetingShare(id: "22", ownerID: "2", ownerName: "Second")
+        driver.onEvent?(id, .receivedShares([first, second]))
+        coordinator.selectReceivedShare(second.id)
+        coordinator.toggleSharedContent()
+        #expect(coordinator.selectedReceivedShare == nil)
+        #expect(driver.selectedShare == nil)
+        driver.onEvent?(id, .receivedShares([first, second]))
+        #expect(coordinator.selectedReceivedShare == nil)
+        coordinator.toggleSharedContent()
+        #expect(coordinator.selectedReceivedShare == second)
+        #expect(driver.selectedShare == second.id)
+        coordinator.toggleSharedContent()
+        driver.onEvent?(id, .receivedShares([first]))
+        coordinator.toggleSharedContent()
+        #expect(coordinator.selectedReceivedShare == first)
+        driver.onEvent?(id, .receivedShares([]))
+        coordinator.toggleSharedContent()
+        #expect(coordinator.selectedReceivedShare == nil)
+        await coordinator.leave()
+        coordinator.toggleSharedContent()
+        #expect(driver.selectedShare == nil)
+    }
+
     @Test func receivedShareSelectionTracksSourcesAndReleasesOnLeave() async {
         let driver = MeetingExtrasDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let id = coordinator.sessionID!
         let first = ReceivedMeetingShare(id: "11", ownerID: "1", ownerName: "First")
@@ -438,6 +551,7 @@ struct MeetingCoordinatorTests {
     @Test func admissionRequiresConfirmedHostAndRemainsPendingUntilCallback() async {
         let driver = MeetingExtrasDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let id = coordinator.sessionID!
         let waiting = WaitingRoomParticipant(id: "7", name: "Guest")
@@ -457,6 +571,7 @@ struct MeetingCoordinatorTests {
     @Test func liveTargetEnumerationDoesNotReturnDemoOrEndedSessionResults() async {
         let driver = MeetingExtrasDriver()
         let coordinator = MeetingCoordinator(driver: driver)
+        coordinator.showNonVideoParticipants = true
         await coordinator.host(displayName: "Test")
         let targets = await coordinator.loadAvailableShareTargets()
         #expect(targets.map(\.id) == ["42"])

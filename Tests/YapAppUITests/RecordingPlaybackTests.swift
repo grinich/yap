@@ -200,7 +200,10 @@ struct RecordingPlaybackTests {
         #expect(model.player.currentTime().seconds < 0.75)
     }
 
-    @Test func nativeSpeedChangesSynchronizeWithoutStaleCallbacksOverwritingANewerPick() async throws {
+    // Exercise preroll delivery repeatedly: a late autoplay rate previously
+    // resumed native Pause in roughly one of every 50 runs.
+    @Test(arguments: 0..<50)
+    func nativeSpeedChangesSynchronizeWithoutStaleCallbacksOverwritingANewerPick(_ iteration: Int) async throws {
         let fixture = try await RecordingPlaybackFixture.make()
         defer { fixture.cleanUp() }
         let model = fixture.makeModel()
@@ -219,6 +222,12 @@ struct RecordingPlaybackTests {
         #expect(model.playbackSpeed == 2)
         #expect(model.player.defaultRate == 2)
         #expect(model.player.rate == 0)
+
+        // A new native Play owns transport even if Pause callbacks are queued.
+        model.player.pause()
+        model.player.play()
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(model.player.rate == 2)
     }
 
     @Test(arguments: [true, false])

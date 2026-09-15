@@ -28,12 +28,6 @@ struct ReceivedShareSurface: View {
                     .yapIconHover()
                     .help("Choose shared content").accessibilityLabel("Choose shared content")
                 }
-                Button { meeting.selectReceivedShare(nil) } label: {
-                    Image(systemName: "person.2")
-                        .frame(width: 32, height: 32).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).yapIconHover()
-                .help("Show people").accessibilityLabel("Show people instead of shared content")
             }
             .padding(12)
             NativeReceivedShareContainer(meeting: meeting, sourceID: share.id, ownerName: share.ownerName)

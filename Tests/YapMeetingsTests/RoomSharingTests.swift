@@ -30,6 +30,36 @@ struct RoomSharingTests {
         #expect(meeting.roomShareStage == .sharing)
     }
 
+    @Test(arguments: [true, false])
+    func terminalRoomFailureRetainsRecoveryContext(_ explicitFailure: Bool) async throws {
+        let driver = RoomDriver()
+        let meeting = MeetingCoordinator(driver: driver)
+        await meeting.shareToRoom(displayName: "Michael")
+        let id = try #require(meeting.sessionID)
+        driver.onEvent?(id, explicitFailure ? .failure("Pairing rejected (code 6).") : .status(.failed))
+        #expect(meeting.failedRoomShare)
+        #expect(!meeting.isRoomShare)
+        #expect(!meeting.status.isActive)
+        #expect(meeting.sessionID == nil)
+        #expect(meeting.lastError != nil)
+        #expect(driver.shares.isEmpty)
+        meeting.dismissError()
+        #expect(!meeting.failedRoomShare)
+        await meeting.join(url: URL(string: "https://zoom.us/j/12345678901")!, displayName: "Michael")
+        driver.onEvent?(try #require(meeting.sessionID), .failure("Normal meeting failure"))
+        #expect(!meeting.failedRoomShare)
+    }
+
+    @Test func thrownRoomFailureRetainsRecoveryContext() async {
+        let driver = RoomDriver()
+        driver.connectionFailure = true
+        let meeting = MeetingCoordinator(driver: driver)
+        await meeting.shareToRoom(displayName: "Michael")
+        #expect(meeting.failedRoomShare)
+        #expect(meeting.status == .failed)
+        #expect(driver.shares.isEmpty)
+    }
+
     @Test func cancellationWaitsForTerminalCallbackAndRejectsLatePairing() async throws {
         let driver = RoomDriver()
         let meeting = MeetingCoordinator(driver: driver)
@@ -89,10 +119,14 @@ struct RoomSharingTests {
     var request: MeetingRequest?
     var codes: [String] = []
     var shares: [ShareTarget] = []
+    var connectionFailure = false
     var connects = 0
     var mediaChanges = 0
     var endedForEveryone: Bool?
-    func connect(_ request: MeetingRequest, sessionID: UUID) async throws { self.request = request; connects += 1 }
+    func connect(_ request: MeetingRequest, sessionID: UUID) async throws {
+        self.request = request; connects += 1
+        if connectionFailure { throw MeetingError.noMeeting }
+    }
     func leave(sessionID: UUID, endForEveryone: Bool) async throws { endedForEveryone = endForEveryone }
     func setMicrophoneMuted(_ muted: Bool, sessionID: UUID) async throws { mediaChanges += 1 }
     func setCameraEnabled(_ enabled: Bool, sessionID: UUID) async throws { mediaChanges += 1 }

@@ -75,7 +75,7 @@ public enum GoogleCalendarError: Error, LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .notConfigured: "Add a Google desktop OAuth client in Settings to connect your calendar."
+        case .notConfigured: "Google Calendar sign-in is unavailable in this copy of Yap. Reinstall the latest Yap build and try again."
         case .notConnected: "Connect your Google Calendar to see upcoming meetings."
         case .signInExpired: "Your Google connection expired. Connect your calendar again."
         case .authorizationDenied: "Google Calendar access wasn’t granted."

@@ -27,6 +27,7 @@ struct YapApplication: App {
         .windowToolbarStyle(.unified)
         .commands {
             YapCommands(model: model)
+            YapPreviewCommands(model: model)
             YapUpdateCommands(updater: updater, meetingActive: model.activeCall)
         }
 

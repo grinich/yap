@@ -1,5 +1,11 @@
 # GitHub releases and automatic updates
 
+## Public early preview: v0.1.6
+
+**Yap 0.1.6 (build 7)** includes the menu-bar schedule, Zoom camera effects, native device menus, Raise Hand, advanced chat and file transfers, chat notifications, batched group photos, computer-audio sharing, calendar-aware meeting headers, and invitation/onboarding/layout fixes. [Release notes and limitations](ReleaseNotes/v0.1.6.md) · [Downloads](https://github.com/grinich/yap/releases/tag/v0.1.6).
+
+Local validation passed 772 Swift tests and running-app checks of the new controls, schedule, and chat fixtures. The release workflow additionally runs the native Zoom bridge suites against the locked SDK before signing and notarizing new app/DMG bytes. Camera effects and communication features still depend on provider capabilities and permissions; nearby room pairing, sent-message editing, and per-message reactions are not advertised as working. This release does not establish Zoom or Google approval, or live interoperability for every new chat feature.
+
 ## Public early preview: v0.1.5
 
 **Yap 0.1.5 (build 6)** is the new public release, explicitly authorized for publication before Zoom review finishes. It adds draggable, resizable picture-in-picture with call controls, matching video-layout menus, meeting shortcut hints, and a polished Google Calendar completion page and foreground handoff. It retains the reduced arm64 runtime and bundled Google desktop client. [Downloads](https://github.com/grinich/yap/releases/tag/v0.1.5) · [Release notes and account limitations](ReleaseNotes/v0.1.5.md). The release pipeline runs actual-SDK tests, signs and notarizes new app/DMG bytes, and generates the signed update feed. Google is in production but unverified and Zoom remains in Functional review; neither approval is implied by publication.

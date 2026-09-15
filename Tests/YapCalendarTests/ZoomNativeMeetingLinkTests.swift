@@ -4,6 +4,12 @@ import Testing
 
 @Suite("Native Zoom meeting invitations")
 struct ZoomNativeMeetingLinkTests {
+    @Test(arguments: ["zoommtg", "zoomus"])
+    func joinPathDoesNotRequireRedundantAction(_ scheme: String) {
+        let link = "\(scheme)://example.zoom.us/join?confno=12345678901&pwd=opaque.1&zc=0&stype=99&browser=chrome"
+        #expect(ZoomMeetingLinkParser.normalizedJoinURL(link)?.absoluteString == "https://example.zoom.us/j/12345678901?pwd=opaque.1")
+    }
+
     @Test(arguments: ["zoommtg", "zoomus", "ZOOMMTG"])
     func normalizesJoinAndPreservesOpaquePasscode(_ scheme: String) {
         let passcode = "abc%2Bdef+ghi%2fjkl%3D%26another%3Dvalue%252B"
@@ -34,7 +40,7 @@ struct ZoomNativeMeetingLinkTests {
     @Test(arguments: [
         "zoommtg://zoom.us/start?action=join&confno=123456789", "zoomus://zoom.us/signin?token=secret",
         "zoommtg://zoom.us/join?action=start&confno=123456789", "zoommtg://zoom.us/join?action=host&confno=123456789",
-        "zoommtg://zoom.us/join?action=auth&confno=123456789", "zoommtg://zoom.us/join?confno=123456789",
+        "zoommtg://zoom.us/join?action=auth&confno=123456789",
         "zoommtg://zoom.us/j/123456789?action=start", "zoommtg://zoom.us/s/123456789", "zoommtg://zoom.us/my/person",
         "zoommtg://zoom.us/j/123456789?confno=123456789", "zoommtg://zoom.us/j/123456789?confno=987654321"
     ])

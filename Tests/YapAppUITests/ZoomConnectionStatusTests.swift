@@ -5,6 +5,34 @@ import YapMeetings
 
 @Suite("Zoom saved connection status") @MainActor
 struct ZoomConnectionStatusTests {
+    @Test func savedTokensAreNotPresentedAsAValidatedConnection() async {
+        let model = ZoomConnectionModel(client: ZoomAccountClient(store: ZoomStatusFixtureStore()), openURL: { _ in })
+        await model.loadStatus()
+        #expect(model.hasSavedConnection)
+        #expect(model.statusLabel() == "Sign-in saved")
+        #expect(model.statusLabel(authenticationError: ZoomAccountError.notConnected.localizedDescription) == "Sign-in needs attention")
+        #expect(model.statusLabel(authenticationError: ZoomAccountError.missingRecordingScope.localizedDescription) == "Sign-in needs attention")
+        #expect(model.statusLabel(authenticationError: ZoomAccountError.network.localizedDescription) == "Sign-in saved")
+    }
+
+    @Test func recordingAuthenticationFailureReconcilesAPreviouslySavedConnection() async throws {
+        let store = ZoomStatusFixtureStore()
+        let client = ZoomAccountClient(store: store, transport: ZoomHTTPTransport { request in
+            (Data(), HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!)
+        })
+        let model = ZoomConnectionModel(client: client, openURL: { _ in })
+        await model.loadStatus()
+        #expect(model.hasSavedConnection)
+        await #expect(throws: ZoomAccountError.notConnected) {
+            _ = try await client.recordings(from: Date(), to: Date())
+        }
+        // The initial saved-state snapshot must not override the observed API failure.
+        #expect(model.statusLabel(authenticationError: ZoomAccountError.notConnected.localizedDescription) == "Sign-in needs attention")
+        await model.loadStatus()
+        #expect(!model.hasSavedConnection)
+        #expect(model.statusLabel() == "Not connected")
+    }
+
     @Test func firstReadIsLoadingAndCannotReplaceUnknownCredentials() async throws {
         let store = ZoomStatusFixtureStore(pausedReads: [1])
         let model = ZoomConnectionModel(client: ZoomAccountClient(store: store), openURL: { _ in })

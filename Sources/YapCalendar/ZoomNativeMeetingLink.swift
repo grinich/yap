@@ -26,7 +26,9 @@ extension ZoomMeetingLinkParser {
 
         let meetingNumber: String
         if parts.path == "/join" {
-            guard parameters["action"]?.value == "join",
+            // The /join path already identifies the operation. Browser/client links
+            // may omit the redundant action field; reject only explicit conflicting actions.
+            guard parameters["action"] == nil || parameters["action"]?.value == "join",
                   let number = parameters["confno"], number.encodedValue == number.value else { return nil }
             meetingNumber = number.value
         } else {

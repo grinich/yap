@@ -6,6 +6,13 @@ static void Check(BOOL condition, NSString *message) {
 
 int main(void) {
     @autoreleasepool {
+        Check(WHZoomLocalShareUpdateForStatus(ZoomSDKShareStatus_SelfStartAudioShare, 0, 0) == WHZoomLocalShareUpdateActive,
+              @"audio sharing activates controls without waiting for a window or owner ID");
+        Check(WHZoomLocalShareUpdateForStatus(ZoomSDKShareStatus_SelfStopAudioShare, 0, 0) == WHZoomLocalShareUpdateIdle,
+              @"audio stopped clears controls");
+        Check(WHZoomLocalShareUpdateForStatus(ZoomSDKShareStatus_OtherStartAudioShare, 17, 42) == WHZoomLocalShareUpdateUnchanged &&
+              WHZoomLocalShareUpdateForStatus(ZoomSDKShareStatus_OtherStopAudioShare, 17, 42) == WHZoomLocalShareUpdateUnchanged,
+              @"remote computer audio must not change the local Stop control");
         Check(WHZoomLocalShareUpdateForStatus(ZoomSDKShareStatus_SelfBegin, 0, 42) == WHZoomLocalShareUpdateActive,
               @"SelfBegin activates Stop/Switch controls even before owner metadata arrives");
         Check(WHZoomLocalShareUpdateForStatus(ZoomSDKShareStatus_SelfBegin, 17, 42) == WHZoomLocalShareUpdateActive,

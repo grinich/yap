@@ -94,11 +94,6 @@ struct AgendaRulesTests {
         #expect(YapDeepLink.meetingURL(from: URL(string: "yap://join?url=https%3A%2F%2Fzoom.us%2Fj%2F12345678901&url=https%3A%2F%2Fzoom.us%2Fj%2F12345678902")!) == nil)
     }
 
-    @Test func googleImportRejectsWebClients() {
-        #expect(throws: (any Error).self) { try YapConfigurationStore.parseGoogle(Data(#"{"web":{"client_id":"test.apps.googleusercontent.com"}}"#.utf8)) }
-        #expect(throws: (any Error).self) { try YapConfigurationStore.parseGoogle(Data(#"{"installed":{"client_id":"untrusted"}}"#.utf8)) }
-    }
-
     @Test func openAppLinkCannotCarryAnOAuthCodeOrMeetingAction() {
         #expect(YapDeepLink.isOpenAppURL(URL(string: "yap://open")!))
         for value in ["yap://open?code=private", "yap://open#token", "yap://open/other", "yap://user@open", "yap://open:80", "https://open", "yap://join"] {

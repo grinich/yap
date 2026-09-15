@@ -13,6 +13,10 @@ struct MeetingChatView: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var colorScheme
     @State private var hoveredMessage: UUID?
+    @State private var messagesWithOpenMenus: Set<UUID> = []
+    @State private var menuReplySlots: Set<UUID> = []
+    @State private var trackedMessageMenus: Set<ObjectIdentifier> = []
+    @FocusState private var focusedMessageAction: MessageActionFocus?
     @State private var expandedThreads: Set<UUID> = []
     @State private var scrollPolicy = MeetingChatScrollPolicy()
     @State private var scrollTarget: MeetingChatThread.ScrollTarget?
@@ -26,6 +30,13 @@ struct MeetingChatView: View {
     @State private var linkURL = ""
     @State private var localError: String?
     @State private var pendingDelete: MeetingChatMessage?
+
+    private enum MessageActionFocus: Hashable {
+        case reply(UUID), more(UUID)
+        var messageID: UUID {
+            switch self { case .reply(let id), .more(let id): id }
+        }
+    }
 
     private var effectiveRecipient: MeetingChatRecipient {
         presentation.replyingTo?.replyRecipient ?? presentation.chatRecipient
@@ -108,7 +119,7 @@ struct MeetingChatView: View {
                 }
                 .onChange(of: meeting.sessionID, initial: true) { _, sessionID in
                     presentation.synchronize(sessionID: sessionID)
-                    expandedThreads.removeAll(); hoveredMessage = nil; pendingDelete = nil
+                    expandedThreads.removeAll(); resetMessageHover(); pendingDelete = nil
                     searchQuery = ""; showsSearch = false
                     scrollPolicy.reopen(sessionID: sessionID)
                     scrollToLatest()
@@ -194,6 +205,27 @@ struct MeetingChatView: View {
             .padding(.horizontal, 12).padding(.vertical, isCompact ? 8 : 12)
         }
         .onAppear { presentation.chatFocusRequest = UUID() }
+        .onDisappear { resetMessageHover() }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { notification in
+            guard let menu = notification.object as? NSMenu else { return }
+            let candidates = Set([hoveredMessage, focusedMessageAction?.messageID].compactMap { $0 })
+            guard !candidates.isEmpty || !messagesWithOpenMenus.isEmpty else { return }
+            // Keyboard focus and the pointer can belong to different rows.
+            // Retain both anchors until the native menu hierarchy has closed.
+            messagesWithOpenMenus.formUnion(candidates)
+            menuReplySlots.formUnion(meeting.chatMessages.filter {
+                messagesWithOpenMenus.contains($0.id) && canReply($0)
+            }.map(\.id))
+            trackedMessageMenus.insert(ObjectIdentifier(menu))
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { notification in
+            guard let menu = notification.object as? NSMenu else { return }
+            trackedMessageMenus.remove(ObjectIdentifier(menu))
+            if trackedMessageMenus.isEmpty {
+                messagesWithOpenMenus.removeAll()
+                menuReplySlots.removeAll()
+            }
+        }
         .onChange(of: searchQuery) { _, _ in
             if !searchQuery.isEmpty { expandedThreads.formUnion(MeetingChatThread.group(meeting.chatMessages).map(\.id)) }
         }
@@ -231,7 +263,10 @@ struct MeetingChatView: View {
     }
 
     private func messageRow(_ message: MeetingChatMessage) -> some View {
-        HStack(alignment: .top, spacing: 0) {
+        let showsActions = hoveredMessage == message.id || messagesWithOpenMenus.contains(message.id) ||
+            focusedMessageAction?.messageID == message.id
+        let reservesReply = canReply(message) || menuReplySlots.contains(message.id)
+        return HStack(alignment: .top, spacing: 0) {
             if message.isFromSelf { Spacer(minLength: 18) }
             VStack(alignment: message.isFromSelf ? .trailing : .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -243,7 +278,7 @@ struct MeetingChatView: View {
                         .font(.system(size: 10)).foregroundStyle(.tertiary)
                         .fixedSize()
                 }
-                .padding(message.isFromSelf ? .leading : .trailing, canReply(message) ? 66 : 40)
+                .padding(message.isFromSelf ? .leading : .trailing, reservesReply ? 66 : 40)
                 if message.recipient.kind != .everyone {
                     Label(message.recipient.label, systemImage: message.recipient.kind == .participant ? "lock.fill" : "person.2")
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
@@ -270,36 +305,50 @@ struct MeetingChatView: View {
             if !message.isFromSelf { Spacer(minLength: 18) }
         }
         .frame(maxWidth: .infinity, alignment: message.isFromSelf ? .trailing : .leading)
+        // The strip used to protrude above the region that kept it visible.
+        // Reserve that space permanently so entering a button never leaves its row.
+        .padding(.top, 6)
+        .overlay(alignment: message.isFromSelf ? .topLeading : .topTrailing) {
+            HStack(spacing: 2) {
+                if reservesReply {
+                    Button("Reply", systemImage: "bubble.left.and.bubble.right") { beginReply(message) }
+                        .labelStyle(.iconOnly).help(message.canReply ? "Reply in thread" : "Reply to \(message.replyRecipient?.label ?? "recipient")")
+                        .frame(width: 24, height: 24)
+                        .disabled(!canReply(message) || !meeting.isConnected || presentation.isSending)
+                        .focused($focusedMessageAction, equals: .reply(message.id))
+                }
+                Menu {
+                    Button("Copy") { copy(message) }
+                    Button("Quote") { quote(message) }
+                    if message.isFromSelf && message.canDelete {
+                        Divider()
+                        Button("Delete message", role: .destructive) { pendingDelete = message }
+                    }
+                } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("More message actions")
+                .focused($focusedMessageAction, equals: .more(message.id))
+            }
+            .buttonStyle(.borderless).padding(4)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.primary.opacity(0.18)).allowsHitTesting(false))
+            // Keep native buttons and open-menu anchors mounted across hover changes.
+            .opacity(showsActions ? 1 : 0)
+            .allowsHitTesting(showsActions)
+            .disabled(!showsActions)
+            .accessibilityHidden(!showsActions)
+            .animation(nil, value: showsActions)
+        }
+        .contentShape(Rectangle())
+        .background(YapHoverRegion { inside in
+            hoveredMessage = inside ? message.id : (hoveredMessage == message.id ? nil : hoveredMessage)
+        })
+        .onDisappear {
+            if hoveredMessage == message.id { hoveredMessage = nil }
+            if focusedMessageAction?.messageID == message.id { focusedMessageAction = nil }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("meeting-chat-message-\(message.id)")
-        .contentShape(Rectangle())
-        .onHover { hoveredMessage = $0 ? message.id : (hoveredMessage == message.id ? nil : hoveredMessage) }
-        .overlay(alignment: message.isFromSelf ? .topLeading : .topTrailing) {
-            if hoveredMessage == message.id {
-                HStack(spacing: 2) {
-                    if canReply(message) {
-                        Button("Reply", systemImage: "bubble.left.and.bubble.right") { beginReply(message) }
-                            .labelStyle(.iconOnly).help(message.canReply ? "Reply in thread" : "Reply to \(message.replyRecipient?.label ?? "recipient")")
-                            .frame(width: 24, height: 24)
-                            .disabled(!meeting.isConnected || presentation.isSending)
-                    }
-                    Menu {
-                        Button("Copy") { copy(message) }
-                        Button("Quote") { quote(message) }
-                        if message.isFromSelf && message.canDelete {
-                            Divider()
-                            Button("Delete message", role: .destructive) { pendingDelete = message }
-                        }
-                    } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("More message actions")
-                }
-                .buttonStyle(.borderless).padding(4)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.primary.opacity(0.18)))
-                .offset(y: -6)
-            }
-        }
         .contextMenu {
             if canReply(message) { Button("Reply") { beginReply(message) }.disabled(!meeting.isConnected || presentation.isSending) }
             Button("Copy") { copy(message) }
@@ -308,6 +357,14 @@ struct MeetingChatView: View {
         }
         .accessibilityAction(named: "Copy message") { copy(message) }
         .accessibilityAction(named: "Quote message") { quote(message) }
+    }
+
+    private func resetMessageHover() {
+        hoveredMessage = nil
+        messagesWithOpenMenus.removeAll()
+        menuReplySlots.removeAll()
+        trackedMessageMenus.removeAll()
+        focusedMessageAction = nil
     }
 
     private func textActions(for message: MeetingChatMessage) -> [MeetingChatMessageText.Action] {

@@ -145,6 +145,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     public weak var model: YapModel?
     private var openMainWindow: (() -> Void)?
     private var routingTask: Task<Void, Never>?
+    private var terminationTask: Task<Void, Never>?
     private var isObservingActions = false
     private var menuBarController: YapMenuBarController?
     private let incomingURLs = YapIncomingURLRouter()
@@ -322,6 +323,8 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     public func applicationWillTerminate(_ notification: Notification) {
+        routingTask?.cancel(); routingTask = nil
+        model?.shutdownForTermination()
         model?.recordings.stopPlayback()
         model?.recordings.closePlayerWindows()
         model?.recordings.chat.clear()
@@ -329,7 +332,15 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
         menuBarController?.stop()
     }
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, model.activeCall else { return .terminateNow }
+        guard terminationTask == nil else { return .terminateLater }
+        guard let model else { return .terminateNow }
+        guard model.activeCall else {
+            guard model.shutdownForTermination() else {
+                model.error = "Zoom is still closing its camera and audio connection. Yap is still open; try quitting again in a moment."
+                return .terminateCancel
+            }
+            return .terminateNow
+        }
         if model.askBeforeLeavingMeeting {
             let alert = NSAlert()
             alert.messageText = "Leave the meeting and quit Yap?"
@@ -338,11 +349,14 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Stay in meeting")
             guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
         }
-        Task {
+        terminationTask = Task { [weak self] in
             await model.leaveMeeting()
             let ended = await model.meeting.waitForMeetingEnd()
+            let readyToQuit = ended && model.shutdownForTermination()
             if !ended { model.error = "Zoom hasn’t confirmed that the meeting ended. Yap is still open; try leaving again." }
-            sender.reply(toApplicationShouldTerminate: ended)
+            else if !readyToQuit { model.error = "Zoom is still closing its camera and audio connection. Yap is still open; try quitting again in a moment." }
+            self?.terminationTask = nil
+            sender.reply(toApplicationShouldTerminate: readyToQuit)
         }
         return .terminateLater
     }

@@ -187,6 +187,12 @@ struct TodayView: View {
                             windowHeader
                             ScrollView {
                                 VStack(alignment: .leading, spacing: compact ? 18 : 28) {
+                                    if model.isCalendarConnected, let error = model.calendarConnectionError {
+                                        Label(error, systemImage: "exclamationmark.circle")
+                                            .font(.callout).foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .accessibilityIdentifier("calendarConnectionError")
+                                    }
                                     if let next = upcoming.first {
                                         nextMeetingCard(next, now: context.date, compact: compact)
                                         let items = Array(upcoming.dropFirst().prefix(8))
@@ -411,6 +417,12 @@ struct TodayView: View {
                         }.padding(.horizontal, compact ? 4 : 10).padding(.vertical, 6)
                     }
                     .buttonStyle(.glassProminent).buttonBorderShape(.capsule).disabled(model.isConnecting)
+                    if let error = model.calendarConnectionError {
+                        Label(error, systemImage: "exclamationmark.circle")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("calendarConnectionError")
+                    }
                     Text("Read-only access. You choose which calendars appear.").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 0)

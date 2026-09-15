@@ -108,8 +108,14 @@ struct GoogleOAuthTests {
                 try GoogleDesktopOAuth.callbackCode(target: target, expectedState: "expected")
             }
         }
-        #expect(throws: GoogleCalendarError.authorizationDenied) {
+        #expect(throws: GoogleCalendarError.authorizationCancelled) {
             try GoogleDesktopOAuth.callbackCode(target: "/?error=access_denied&state=expected", expectedState: "expected")
+        }
+        #expect(throws: GoogleCalendarError.authorizationDenied) {
+            try GoogleDesktopOAuth.callbackCode(target: "/?error=server_error&state=expected", expectedState: "expected")
+        }
+        #expect(throws: GoogleCalendarError.invalidCallback) {
+            try GoogleDesktopOAuth.callbackCode(target: "/?error=access_denied&state=wrong", expectedState: "expected")
         }
     }
 
@@ -148,6 +154,32 @@ struct GoogleOAuthTests {
         let items = await observed.authorizationQuery
         #expect(items.first(where: { $0.name == "code_challenge_method" })?.value == "S256")
         #expect(items.first(where: { $0.name == "scope" })?.value == GoogleOAuthConfiguration.scopes.joined(separator: " "))
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["YAP_TEST_LOOPBACK"] == "1"))
+    func browserCancellationFinishesWithNoNativeFailureAndKeepsTheBrowserConfirmation() async throws {
+        let observed = OAuthBrowserProbe()
+        await #expect(throws: GoogleCalendarError.authorizationCancelled) {
+            try await GoogleDesktopOAuth.authorize(configuration: .init(clientID: "local-test.apps.googleusercontent.com"), timeout: .seconds(5)) { url in
+                Task { await observed.simulateBrowserCallback(url, error: "access_denied") }
+            }
+        }
+        #expect(await observed.waitForStatus() == 200)
+        #expect(await observed.callbackBody.contains("Sign-in cancelled"))
+        #expect(await observed.callbackBody.contains("href=\"yap://open\""))
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["YAP_TEST_LOOPBACK"] == "1"))
+    func providerFailureIsNotMisreportedAsCancellation() async throws {
+        let observed = OAuthBrowserProbe()
+        await #expect(throws: GoogleCalendarError.authorizationDenied) {
+            try await GoogleDesktopOAuth.authorize(configuration: .init(clientID: "local-test.apps.googleusercontent.com"), timeout: .seconds(5)) { url in
+                Task { await observed.simulateBrowserCallback(url, error: "server_error") }
+            }
+        }
+        #expect(await observed.waitForStatus() == 200)
+        #expect(await observed.callbackBody.contains("Connection not completed"))
+        #expect(await !observed.callbackBody.contains("Sign-in cancelled"))
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["YAP_TEST_LOOPBACK"] == "1"))
@@ -341,13 +373,14 @@ private actor OAuthBrowserProbe {
         return await withCheckedContinuation { completion = $0 }
     }
 
-    func simulateBrowserCallback(_ authorizationURL: URL) async {
+    func simulateBrowserCallback(_ authorizationURL: URL, error: String? = nil) async {
         let items = URLComponents(url: authorizationURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
         authorizationQuery = items
         guard let redirect = items.first(where: { $0.name == "redirect_uri" })?.value,
               let state = items.first(where: { $0.name == "state" })?.value,
               var callback = URLComponents(string: redirect) else { return }
-        callback.queryItems = [URLQueryItem(name: "code", value: "local-test-code"), URLQueryItem(name: "state", value: state)]
+        let response = error.map { URLQueryItem(name: "error", value: $0) } ?? URLQueryItem(name: "code", value: "local-test-code")
+        callback.queryItems = [response, URLQueryItem(name: "state", value: state)]
         guard let url = callback.url else { return }
         do {
             let (data, response) = try await URLSession.shared.data(from: url)

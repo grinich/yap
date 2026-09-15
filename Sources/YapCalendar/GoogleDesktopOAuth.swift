@@ -73,6 +73,7 @@ enum GoogleDesktopOAuth {
         let errors = parameters.filter { $0.name == "error" }
         if !errors.isEmpty {
             guard errors.count == 1, codes.isEmpty, errors[0].value?.isEmpty == false else { throw GoogleCalendarError.invalidCallback }
+            if errors[0].value == "access_denied" { throw GoogleCalendarError.authorizationCancelled }
             throw GoogleCalendarError.authorizationDenied
         }
         guard codes.count == 1, let code = codes[0].value, !code.isEmpty, code.utf8.count <= 8_192,
@@ -193,8 +194,11 @@ private actor OAuthLoopbackListener {
                 let code = try GoogleDesktopOAuth.callbackCode(target: String(requestParts[1]), expectedState: expectedState)
                 await respond(connection, status: "200 OK", outcome: .received)
                 finish(.success(code))
-            } catch GoogleCalendarError.authorizationDenied {
+            } catch GoogleCalendarError.authorizationCancelled {
                 await respond(connection, status: "200 OK", outcome: .denied)
+                finish(.failure(GoogleCalendarError.authorizationCancelled))
+            } catch GoogleCalendarError.authorizationDenied {
+                await respond(connection, status: "200 OK", outcome: .invalid)
                 finish(.failure(GoogleCalendarError.authorizationDenied))
             }
         } catch {

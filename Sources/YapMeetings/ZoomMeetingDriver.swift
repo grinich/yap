@@ -40,10 +40,12 @@ public final class ZoomMeetingDriver: MeetingDriver, CameraEffectsDriver, Meetin
     private var cameraPreviewGeneration = UUID()
     private var cameraEnableGeneration = UUID()
     private var cameraEffectsOpen = false
+    private var isShuttingDown = false
 
     public init(accountClient: ZoomAccountClient) { self.accountClient = accountClient }
 
     public func connect(_ request: MeetingRequest, sessionID: UUID) async throws {
+        guard !isShuttingDown else { throw CancellationError() }
         guard self.sessionID == nil,
               Self.activeOwner == nil || Self.activeOwner === self else { throw MeetingError.alreadyInMeeting }
         let link = try request.url.map(ZoomMeetingLink.init)
@@ -99,6 +101,31 @@ public final class ZoomMeetingDriver: MeetingDriver, CameraEffectsDriver, Meetin
             self.sessionID = nil; Self.activeOwner = nil
             onEvent?(sessionID, .status(.idle))
         }
+    }
+
+    @discardableResult public func shutdown() -> Bool {
+        // Active calls must leave through their normal SDK callback first.
+        guard sessionID == nil else { return false }
+        guard !isShuttingDown else { return true }
+        // The SDK can still be busy after the UI considers the call idle.
+        // A refusal must retain the owner and callbacks so leaving can finish.
+        guard bridge?.shutdown() ?? true else { return false }
+        isShuttingDown = true
+        cameraEffectsOpen = false
+        cameraEffectsGeneration = UUID(); cameraPreviewGeneration = UUID()
+        cameraEffectsOperation = UUID(); cameraEnableGeneration = UUID()
+        mediaGeneration = UUID()
+        cameraPreparation?.cancel(); cameraPreparation = nil
+        // Native shutdown already detached before uninitializing. Keep Swift
+        // state terminal when cancelled preparation continuations resume later.
+        bridge?.eventHandler = nil
+        bridge?.cameraEffectsChanged = nil
+        bridge?.mediaDevicesChanged = nil
+        bridge = nil
+        shareTargets = []; chatIDs = [:]; preparedHostMeetingNumber = nil
+        lastMediaState = MeetingMediaState()
+        if Self.activeOwner === self { Self.activeOwner = nil }
+        return true
     }
 
     public func setMicrophoneMuted(_ muted: Bool, sessionID: UUID) async throws {
@@ -339,6 +366,7 @@ public final class ZoomMeetingDriver: MeetingDriver, CameraEffectsDriver, Meetin
 
     public func prepareCameraEffects() async throws -> CameraEffectsStatus {
         try Task.checkCancellation()
+        guard !isShuttingDown else { throw CancellationError() }
         guard Self.activeOwner == nil || Self.activeOwner === self else {
             throw MeetingError.unavailable("Another Yap meeting is using the camera settings. Open Camera settings in that meeting.")
         }

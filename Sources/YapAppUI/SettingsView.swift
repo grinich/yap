@@ -53,6 +53,12 @@ public struct YapSettingsView: View {
                         Button("Cancel sign-in") { Task { await model.disconnectGoogle() } }
                     }
                 }
+                if let error = model.calendarConnectionError {
+                    Label(error, systemImage: "exclamationmark.circle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("calendarConnectionError")
+                }
             } header: { Text("Your calendar") }
             ZoomConnectionView(model: model, connection: model.zoomConnection)
         }.formStyle(.grouped)

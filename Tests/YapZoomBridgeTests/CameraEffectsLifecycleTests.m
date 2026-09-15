@@ -430,12 +430,81 @@ int main(int argc, const char *argv[]) {
               @"closing in-meeting settings never stops a helper, mutes video, leaves, or uninitializes the meeting");
         [previewBridge setValue:nil forKey:@"sessionID"]; [previewBridge setValue:@YES forKey:@"cameraSettingsOnly"];
         [previewBridge closeCameraEffects];
+
+        // Process termination can arrive during browser auth or while the menu
+        // bar has a settings-only SDK owner. Cleanup must finish synchronously.
+        NSUInteger initializations = fixtureSDK.initializations;
+        uninitializations = fixtureSDK.uninitializations;
+        WHZoomSDKBridge *unused = [WHZoomSDKBridge new];
+        Check([unused shutdown] && [unused shutdown], @"unused and repeated shutdown both confirm completion");
+        Check(fixtureSDK.initializations == initializations && fixtureSDK.uninitializations == uninitializations,
+              @"terminating an unused bridge never initializes or uninitializes Zoom");
+
+        fixtureSDK.meeting.status = ZoomSDKMeetingStatus_Idle;
+        WHZoomSDKBridge *pendingQuit = [WHZoomSDKBridge new];
+        __block NSUInteger quitCompletions = 0;
+        Check([pendingQuit prepareCameraEffectsWithJWT:@"pending-quit-fixture" completion:^(NSInteger code, NSString *message) {
+            quitCompletions++; Check(code != 0, @"termination cancels outstanding authorization");
+        }] == 0, @"pending quit starts settings-only authorization");
+        pendingQuit.eventHandler = ^(NSString *session, NSString *event, NSData *data) { Check(NO, @"quit cannot present meeting events"); };
+        pendingQuit.cameraEffectsChanged = ^(NSData *data) { Check(NO, @"quit cannot update camera UI"); };
+        pendingQuit.mediaDevicesChanged = ^(NSData *data) { Check(NO, @"quit cannot update media UI"); };
+        [pendingQuit shutdown]; [pendingQuit shutdown];
+        [pendingQuit onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
+        DrainMainQueue();
+        Check(quitCompletions == 1 && fixtureSDK.uninitializations == uninitializations + 1 &&
+              !pendingQuit.cameraEffectsReady && fixtureSDK.auth.delegate == nil,
+              @"quit uninitializes pending authorization once and ignores late auth callbacks");
+        initializations = fixtureSDK.initializations;
+        Check([pendingQuit prepareCameraEffectsWithJWT:@"late-fixture" completion:^(NSInteger code, NSString *message) {
+            Check(NO, @"a rejected request cannot complete authorization");
+        }] != 0 && [pendingQuit beginRoomShareWithJWT:@"late-fixture" sessionID:@"late"] != 0 &&
+              fixtureSDK.initializations == initializations,
+              @"a terminated bridge cannot initialize again through settings or meeting entry points");
+
+        CameraGateBridge *readyQuit = [CameraGateBridge new]; readyQuit.operations = [NSMutableArray array];
+        Check([readyQuit prepareCameraEffectsWithJWT:@"ready-quit-fixture" completion:^(NSInteger code, NSString *message) {
+            Check(code == 0, @"ready quit fixture authorizes settings");
+        }] == 0, @"a new owner can initialize after the old owner terminated");
+        [readyQuit onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
+        helper.onStop = nil; fixtureRendererReady = YES;
+        WHZoomRenderHost *quitHost = (id)[readyQuit startCameraEffectsPreview];
+        Check(quitHost != nil, @"ready quit has a deferred camera preview");
+        void (^quitMount)(BOOL) = [quitHost.reconcileRenderer copy];
+        NSUInteger startsBeforeQuit = helper.starts;
+        quitMount(YES);
+        uninitializations = fixtureSDK.uninitializations;
+        [readyQuit shutdown];
+        quitMount(YES); [pendingQuit onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
+        DrainMainQueue();
+        Check(helper.starts == startsBeforeQuit && fixtureSDK.uninitializations == uninitializations + 1 &&
+              !readyQuit.cameraEffectsReady && [readyQuit valueForKey:@"cameraPreviewHost"] == nil &&
+              fixtureSDK.settings.video.delegate == nil && fixtureSDK.settings.background.delegate == nil,
+              @"quit detaches settings and cancels deferred preview before SDK teardown");
+
+        CameraGateBridge *meetingQuit = [CameraGateBridge new]; meetingQuit.operations = [NSMutableArray array];
+        Check([meetingQuit prepareCameraEffectsWithJWT:@"active-quit-fixture" completion:^(NSInteger code, NSString *message) {
+            Check(code == 0, @"active quit fixture authorizes");
+        }] == 0, @"active quit fixture acquires the SDK");
+        [meetingQuit onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
+        [meetingQuit setValue:@NO forKey:@"cameraSettingsOnly"];
+        [meetingQuit setValue:@"active-quit" forKey:@"sessionID"];
+        fixtureSDK.meeting.status = ZoomSDKMeetingStatus_InMeeting;
+        uninitializations = fixtureSDK.uninitializations;
+        Check(![meetingQuit shutdown], @"the caller is told that active meeting cleanup was refused");
+        Check(fixtureSDK.uninitializations == uninitializations && meetingQuit.cameraEffectsReady,
+              @"terminal cleanup refuses to tear down an active meeting");
+        fixtureSDK.meeting.status = ZoomSDKMeetingStatus_Ended;
+        Check([meetingQuit shutdown] && [meetingQuit shutdown], @"ended meeting cleanup confirms completion");
+        Check(fixtureSDK.uninitializations == uninitializations + 1 && !meetingQuit.cameraEffectsReady && fixtureSDK.meeting.leaves == 0,
+              @"confirmed meeting end allows exactly one synchronous teardown without an extra leave");
+
         class_replaceMethod(previewMetaClass, @selector(alloc), originalPreviewAllocator, allocatorTypes);
         method_setImplementation(authorization, originalAuthorization);
         method_setImplementation(readiness, originalReadiness);
 
         method_setImplementation(shared, original);
-        puts("PASS: inert auth/cancellation, effect readback, photo identity, and deferred preview lifecycle with stale-callback rejection");
+        puts("PASS: inert auth/cancellation, effect readback, photo identity, deferred preview, and synchronous terminal shutdown");
     }
     return 0;
 }

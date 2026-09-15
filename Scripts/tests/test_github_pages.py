@@ -13,7 +13,10 @@ class GitHubPagesTests(unittest.TestCase):
         self.assertIn('.nojekyll', files)
         self.assertNotIn('_headers', files)
         home = files['index.html'].decode()
-        self.assertIn('name="google-site-verification"', home)
+        tokens = (ROOT / 'Resources/GoogleSiteVerification.txt').read_text().splitlines()
+        self.assertEqual(home.count('name="google-site-verification"'), len(tokens))
+        for token in tokens:
+            self.assertIn(f'<meta name="google-site-verification" content="{token}">', home)
         self.assertIn('href="https://yap.enterprises/privacy/"', home)
         self.assertIn('src="https://yap.enterprises/assets/meeting-gallery.png"', home)
         for name, content in files.items():

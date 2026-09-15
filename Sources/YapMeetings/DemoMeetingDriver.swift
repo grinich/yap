@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Synthetic participants and messages for interface tests. No audio, camera,
@@ -7,7 +8,7 @@ public final class DemoMeetingDriver: MeetingDriver, MeetingMediaDriver {
     public let isDemo = true
     public let capabilities = MeetingCapabilities(
         canJoin: true, canHost: true, canChat: true, canShare: true,
-        supportsNativeVideo: false, confirmedLiveVideoLimit: nil)
+        supportsNativeVideo: false, confirmedLiveVideoLimit: nil, canReceiveShare: true)
     public var onEvent: (@MainActor (UUID, MeetingDriverEvent) -> Void)?
     public private(set) var participantCount: Int
     public private(set) var visibleParticipantIDs: [String] = []
@@ -20,6 +21,9 @@ public final class DemoMeetingDriver: MeetingDriver, MeetingMediaDriver {
     private var attachments: [String: MeetingChatAttachment] = [:]
     private var fixtureTransfers: [String: Task<Void, Never>] = [:]
     private var fixtureMediaTest: Task<Void, Never>?
+    private var fixtureReceivedShares: [ReceivedMeetingShare] = []
+    private var fixtureShareViews: [String: DemoReceivedShareView] = [:]
+    private var selectedFixtureShareID: String?
     public var rejectNextControl = false
     public var onMediaDevicesChanged: (@MainActor (MeetingMediaState) -> Void)?
     private var mediaState = MeetingMediaState(isReady: true,
@@ -53,6 +57,7 @@ public final class DemoMeetingDriver: MeetingDriver, MeetingMediaDriver {
     public func leave(sessionID: UUID, endForEveryone: Bool) async throws {
         try requireSession(sessionID)
         if endForEveryone && request?.isHost != true { throw MeetingError.hostRequired }
+        stopFixtureScreenShares()
         self.sessionID = nil
         request = nil
         participants = []
@@ -260,6 +265,44 @@ public final class DemoMeetingDriver: MeetingDriver, MeetingMediaDriver {
     public func stopShare(sessionID: UUID) async throws {
         try requireSession(sessionID)
         onEvent?(sessionID, .sharing(.idle))
+    }
+
+    /// Supplies two local vector documents to the normal received-share UI.
+    /// They are never captured from a display or transmitted to a meeting.
+    public func receiveFixtureScreenShares() {
+        guard let sessionID else { return }
+        let presenter = participants.first(where: { !$0.isSelf })
+        fixtureReceivedShares = DemoReceivedShareDocument.allCases.map {
+            ReceivedMeetingShare(id: $0.sourceID, ownerID: presenter?.id ?? "demo-presenter",
+                ownerName: presenter?.name ?? "Preview presenter", title: $0.title)
+        }
+        onEvent?(sessionID, .receivedShares(fixtureReceivedShares))
+    }
+
+    public func stopFixtureScreenShares() {
+        for view in fixtureShareViews.values { view.removeFromSuperview() }
+        fixtureShareViews = [:]
+        fixtureReceivedShares = []
+        selectedFixtureShareID = nil
+        if let sessionID { onEvent?(sessionID, .receivedShares([])) }
+    }
+
+    public func setSelectedReceivedShare(_ sourceID: String?) {
+        let selection = fixtureReceivedShares.contains { $0.id == sourceID } ? sourceID : nil
+        if selectedFixtureShareID != selection, let selectedFixtureShareID {
+            fixtureShareViews[selectedFixtureShareID]?.removeFromSuperview()
+        }
+        selectedFixtureShareID = selection
+    }
+
+    public func nativeShareView(for sourceID: String) -> NSView? {
+        guard sessionID != nil, selectedFixtureShareID == sourceID,
+              fixtureReceivedShares.contains(where: { $0.id == sourceID }),
+              let document = DemoReceivedShareDocument.allCases.first(where: { $0.sourceID == sourceID }) else { return nil }
+        if let view = fixtureShareViews[sourceID] { return view }
+        let view = DemoReceivedShareView(document: document)
+        fixtureShareViews[sourceID] = view
+        return view
     }
 
     public func startCloudRecording(sessionID: UUID) async throws { try setRecording(.recording, sessionID: sessionID) }

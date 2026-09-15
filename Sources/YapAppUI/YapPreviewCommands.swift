@@ -20,6 +20,11 @@ public struct YapPreviewCommands: Commands {
                     }
                 }
                 Divider()
+                Button("Receive sample screen shares") { model.showReceivedShareFixture() }
+                    .disabled(!model.meeting.isConnected)
+                Button("Stop sample screen shares") { model.stopReceivedShareFixture() }
+                    .disabled(model.meeting.receivedShares.isEmpty)
+                Divider()
                 Button("Receive chat message") { model.meeting.demoDriver?.receiveFixtureMessage() }
                     .disabled(!model.meeting.isConnected)
                 Button("Receive chat thread") { model.meeting.demoDriver?.receiveFixtureThread() }

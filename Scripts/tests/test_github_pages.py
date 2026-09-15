@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('github_pages', ROOT / 'Scripts/build-github-pages.py')
@@ -30,3 +31,28 @@ class GitHubPagesTests(unittest.TestCase):
         files = pages.build_files()
         for source, target in pages.site.ASSETS.items():
             self.assertEqual(files[target], (ROOT / source).read_bytes())
+
+    def test_google_receipts_are_static_and_only_offer_a_fixed_app_link(self):
+        files = pages.build_files()
+        for outcome in ('received', 'cancelled', 'error'):
+            with self.subTest(outcome=outcome):
+                text = files[f'connect/google/{outcome}/index.html'].decode()
+                parsed = pages.site.PageLinks()
+                parsed.feed(text)  # Rejects scripts, forms, frames and event handlers.
+                self.assertEqual(parsed.h1s, 1)
+                self.assertEqual(parsed.links.count('yap://open'), 1)
+                self.assertIn('name="referrer" content="no-referrer"', text)
+                self.assertIn('name="robots" content="noindex, nofollow"', text)
+                self.assertIn("default-src 'none'", text)
+                self.assertIn("base-uri 'none'; form-action 'none'", text)
+                for link in parsed.links:
+                    if link != 'yap://open':
+                        url = urlsplit(link)
+                        self.assertEqual(url.scheme, 'https')
+                        self.assertEqual(url.netloc, 'yap.enterprises')
+                        self.assertTrue(url.path.startswith('/assets/'))
+                self.assertNotIn(f'/connect/google/{outcome}/', files['sitemap.xml'].decode())
+        received = files['connect/google/received/index.html'].decode()
+        self.assertIn('Sign-in received', received)
+        self.assertIn('finish connecting', received)
+        self.assertNotIn('successfully connected', received)

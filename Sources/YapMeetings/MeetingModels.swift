@@ -64,6 +64,8 @@ public struct MeetingParticipant: Identifiable, Sendable, Equatable {
     public var isMuted: Bool
     public var isCameraEnabled: Bool
     public var isSpeaking: Bool
+    public var isConferenceRoom: Bool
+    public var isHandRaised: Bool
     public let avatarSeed: Int
     public var avatar: MeetingAvatar?
     public var videoSize: MeetingVideoSize?
@@ -72,13 +74,15 @@ public struct MeetingParticipant: Identifiable, Sendable, Equatable {
     public init(id: String, name: String, isSelf: Bool = false, isHost: Bool = false,
                 isMuted: Bool = true, isCameraEnabled: Bool = false,
                 isSpeaking: Bool = false, avatarSeed: Int = 0, avatar: MeetingAvatar? = nil,
-                videoSize: MeetingVideoSize? = nil) {
+                videoSize: MeetingVideoSize? = nil, isConferenceRoom: Bool = false, isHandRaised: Bool = false) {
         self.id = id
         self.name = name
         self.isSelf = isSelf
         self.isHost = isHost
         self.isMuted = isMuted
         self.isCameraEnabled = isCameraEnabled
+        self.isConferenceRoom = isConferenceRoom
+        self.isHandRaised = isHandRaised
         self.isSpeaking = isSpeaking
         self.avatarSeed = avatarSeed
         self.avatar = avatar
@@ -92,6 +96,14 @@ public struct MeetingParticipant: Identifiable, Sendable, Equatable {
 }
 
 public struct MeetingChatMessage: Identifiable, Sendable, Equatable {
+    public let senderID: String?
+    public let recipient: MeetingChatRecipient
+    public let runs: [MeetingChatTextRun]
+    public let canDelete: Bool
+    public let sdkID: String?
+    public let threadID: String?
+    public let isReply: Bool
+    public let canReply: Bool
     public let id: UUID
     public let senderName: String
     public let text: String
@@ -99,7 +111,10 @@ public struct MeetingChatMessage: Identifiable, Sendable, Equatable {
     public let isFromSelf: Bool
 
     public init(id: UUID = UUID(), senderName: String, text: String,
-                date: Date = Date(), isFromSelf: Bool = false) {
+                date: Date = Date(), isFromSelf: Bool = false, sdkID: String? = nil, threadID: String? = nil, isReply: Bool = false, canReply: Bool = false,
+                senderID: String? = nil, recipient: MeetingChatRecipient = .everyone, runs: [MeetingChatTextRun] = [], canDelete: Bool = false) {
+        self.senderID = senderID; self.recipient = recipient; self.runs = runs; self.canDelete = canDelete
+        self.sdkID = sdkID; self.threadID = threadID; self.isReply = isReply; self.canReply = canReply
         self.id = id
         self.senderName = senderName
         self.text = text
@@ -143,10 +158,12 @@ public struct MeetingIndicator: Identifiable, Sendable, Equatable {
 }
 
 public struct ShareTarget: Identifiable, Sendable, Equatable {
-    public enum Kind: String, Sendable { case window, display, demo }
+    public enum Kind: String, Sendable { case window, display, computerAudio, demo }
     public let id: String
     public let title: String
     public let kind: Kind
+
+    public static let computerAudio = ShareTarget(id: "computer-audio", title: "Computer audio", kind: .computerAudio)
 
     public init(id: String, title: String, kind: Kind) {
         self.id = id
@@ -216,6 +233,10 @@ public struct MeetingCapabilities: Sendable, Equatable {
 }
 
 /// Request values stay in memory. Meeting links and passcodes must not enter logs.
+public enum RoomShareStage: String, Sendable {
+    case searching, needsCode, invalidCode, choosingContent, sharing
+}
+
 public struct MeetingRequest: Sendable, Equatable {
     public let url: URL?
     public let displayName: String
@@ -223,25 +244,32 @@ public struct MeetingRequest: Sendable, Equatable {
     public let isHost: Bool
     public let microphoneMuted: Bool
     public let cameraEnabled: Bool
+    public let isRoomShare: Bool
+    public let scheduledInterval: DateInterval?
 
     public init(url: URL?, displayName: String, title: String, isHost: Bool,
-                microphoneMuted: Bool = true, cameraEnabled: Bool = false) {
+                microphoneMuted: Bool = true, cameraEnabled: Bool = false, isRoomShare: Bool = false, scheduledInterval: DateInterval? = nil) {
         self.url = url
         self.displayName = displayName
         self.title = title
         self.isHost = isHost
         self.microphoneMuted = microphoneMuted
         self.cameraEnabled = cameraEnabled
+        self.scheduledInterval = scheduledInterval
+        self.isRoomShare = isRoomShare
     }
 }
 
 public enum MeetingDriverEvent: Sendable {
+    case roomShare(RoomShareStage)
     case status(MeetingStatus)
     case participants([MeetingParticipant])
     case message(MeetingChatMessage)
     case messageUpdated(MeetingChatMessage)
     case messageRemoved(UUID)
     case chatLegalNotice(MeetingChatLegalNotice?)
+    case chatPolicy(MeetingChatPolicy)
+    case chatAttachment(MeetingChatAttachment)
     case meetingIndicators([MeetingIndicator])
     case microphoneMuted(Bool)
     case cameraEnabled(Bool)

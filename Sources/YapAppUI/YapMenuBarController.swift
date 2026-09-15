@@ -3,6 +3,8 @@ import Observation
 import YapCalendar
 import YapSystem
 
+let yapShowScheduleMenu = Notification.Name("com.grinich.yap.show-schedule-menu")
+
 enum YapMenuBarPrimaryAction: Equatable {
     case openYap, joinMeeting, returnToMeeting, stopSharing
     var title: String {
@@ -15,9 +17,7 @@ enum YapMenuBarPrimaryAction: Equatable {
     }
 }
 
-/// The status button invokes this same route when the main window is closed.
-/// Calendar refresh, ambiguous invitations, and media defaults remain the
-/// existing model/coordinator's responsibility.
+/// Explicit meeting actions share the agenda's refresh, ambiguity, and media-default rules.
 @MainActor @Observable
 final class YapMenuBarActionHandler {
     private let model: YapModel
@@ -69,11 +69,13 @@ final class YapMenuBarActionHandler {
         return primaryAction == .openYap || model.activeCall || !isPerforming
     }
 
-    func performPrimaryAction(expectedAction: YapMenuBarPrimaryAction? = nil, expectedMeetingID: String? = nil) async {
+    func performPrimaryAction(expectedAction: YapMenuBarPrimaryAction? = nil, expectedMeetingID: String? = nil,
+                              expectedSessionID: UUID? = nil) async {
         guard !Task.isCancelled else { return }
         // A queued Stop click must never become Join if the session ends before
         // its task runs. Likewise, an old Join click cannot become Stop sharing.
         if let expectedAction, expectedAction != primaryAction { return }
+        if let expectedSessionID, expectedSessionID != model.meeting.sessionID { return }
         if primaryAction == .stopSharing {
             guard canPerformPrimaryAction else { return }
             isPerforming = true
@@ -93,6 +95,27 @@ final class YapMenuBarActionHandler {
         await model.joinNextCalendarMeeting(expectedEventID: requestedEventID)
     }
 
+    func joinScheduleEvent(id: String) async {
+        guard !Task.isCancelled, !model.activeCall, !isPerforming else { return }
+        isPerforming = true
+        defer { isPerforming = false }
+        openMainWindow()
+        // The model refreshes and finds this exact occurrence again; a stale
+        // menu cannot redirect the click to a different event or account.
+        await model.joinNextCalendarMeeting(expectedEventID: id)
+    }
+
+    func openSettings() {
+        openMainWindow()
+        model.showSettings = true
+    }
+
+    func connectCalendar() async {
+        guard !Task.isCancelled, !model.isConnecting else { return }
+        openMainWindow()
+        await model.connectGoogle()
+    }
+
     func openYap() { openMainWindow() }
 
     func joinWithLink() {
@@ -103,15 +126,13 @@ final class YapMenuBarActionHandler {
 
     var sharingChatIsVisible: Bool? {
         guard model.meeting.sharing.isSharing else { return nil }
-        return model.sharingPresentation.isPresenting ? model.sharingPresentation.chatVisible : model.sidebar == .chat
+        return model.sidebar == .chat
     }
 
     func setSharingChatVisible(_ visible: Bool, expectedSessionID: UUID? = nil) {
         guard model.meeting.sharing.isSharing else { return }
         if let expectedSessionID, expectedSessionID != model.meeting.sessionID { return }
-        if model.sharingPresentation.isPresenting {
-            model.sharingPresentation.chatVisible = visible
-        } else if visible {
+        if visible {
             model.sidebar = .chat
         } else if model.sidebar == .chat {
             model.sidebar = nil
@@ -139,6 +160,8 @@ final class YapMenuBarController: NSObject {
     private let pill = YapMenuBarPill(frame: .zero)
     private var actionTask: Task<Void, Never>?
     private var eligibilityTimer: Timer?
+    private var calendarRefreshError: String?
+    private var failedRefreshSnapshot: Date?
     private var stopped = false
 
     init(model: YapModel, toggleMainWindow: (() -> Void)? = nil, openMainWindow: @escaping () -> Void) {
@@ -149,6 +172,7 @@ final class YapMenuBarController: NSObject {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
         statusItem.autosaveName = "YapJoinMeeting"
+        NotificationCenter.default.addObserver(self, selector: #selector(showScheduleFromCommand), name: yapShowScheduleMenu, object: nil)
         if let button = statusItem.button {
             button.title = ""
             button.target = self
@@ -156,7 +180,7 @@ final class YapMenuBarController: NSObject {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.setAccessibilityRole(.button)
             button.setAccessibilityCustomActions([
-                NSAccessibilityCustomAction(name: "Show options", target: self, selector: #selector(showAccessibleMenu))
+                NSAccessibilityCustomAction(name: "Show schedule", target: self, selector: #selector(showAccessibleMenu))
             ])
             pill.frame = button.bounds
             pill.autoresizingMask = [.width, .height]
@@ -168,6 +192,7 @@ final class YapMenuBarController: NSObject {
     func stop() {
         guard !stopped else { return }
         stopped = true
+        NotificationCenter.default.removeObserver(self, name: yapShowScheduleMenu, object: nil)
         actionTask?.cancel()
         actionTask = nil
         eligibilityTimer?.invalidate()
@@ -179,17 +204,22 @@ final class YapMenuBarController: NSObject {
         guard !stopped else { return }
         withObservationTracking {
             let action = actions.primaryAction
-            let title = actions.primaryActionTitle
+            let summary = MenuBarSchedule(events: model.events).summary
+            let title: String
+            if action == .stopSharing || action == .returnToMeeting { title = actions.primaryActionTitle }
+            else if let summary {
+                title = "\(MenuBarSchedule.compactTitle(summary.event.title, limit: 25)) · \(summary.isCurrent ? "Now" : summary.relativeTime.lowercased())"
+            } else { title = "Yap" }
             let tooltip: String
-            if action == .stopSharing { tooltip = "Stop sharing your screen · Right-click for more options" }
-            else if action == .returnToMeeting { tooltip = "Return to your Yap meeting" }
-            else if action == .joinMeeting { tooltip = title + " · Right-click for more options" }
-            else { tooltip = "Show or hide Yap · Right-click to join with a link" }
+            if action == .stopSharing { tooltip = "Stop sharing your screen · Right-click for your schedule and meeting controls" }
+            else if action == .returnToMeeting { tooltip = "Show your schedule and meeting controls" }
+            else if let summary { tooltip = "\(summary.event.title) · \(summary.relativeTime) · Click for your schedule" }
+            else { tooltip = "Show your schedule" }
             let recordingStatus = MeetingCloudRecordingControlsState(meeting: model.meeting).statusLabel
             let fullTooltip = recordingStatus.map { tooltip + " · " + $0 } ?? tooltip
             pill.title = title
             pill.isDestructive = action == .stopSharing
-            pill.isEnabled = actions.canPerformPrimaryAction
+            pill.isEnabled = action != .stopSharing || actions.canPerformPrimaryAction
             statusItem.length = pill.preferredWidth
             statusItem.button?.isEnabled = pill.isEnabled
             statusItem.button?.toolTip = fullTooltip
@@ -206,7 +236,9 @@ final class YapMenuBarController: NSObject {
     private func scheduleEligibilityRefresh() {
         eligibilityTimer?.invalidate()
         eligibilityTimer = nil
-        guard let boundary = actions.nextEligibilityChange else { return }
+        // Refresh countdowns even when no model mutation occurs, including midnight.
+        let nextMinute = Date(timeIntervalSince1970: (floor(Date.now.timeIntervalSince1970 / 60) + 1) * 60)
+        let boundary = min(actions.nextEligibilityChange ?? nextMinute, nextMinute)
         let timer = Timer(fire: boundary, interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.actions.refreshEligibility() }
         }
@@ -220,24 +252,54 @@ final class YapMenuBarController: NSObject {
             showContextMenu()
             return
         }
-        // Repeated clicks during calendar refresh cannot start duplicate joins.
-        guard actionTask == nil else {
-            if actions.primaryAction != .stopSharing { openMainWindow() }
+        // Opening the schedule is read-only. Screen sharing retains its immediate stop button.
+        guard actions.primaryAction == .stopSharing else {
+            showContextMenu()
             return
         }
+        guard actionTask == nil else { return }
         let requestedAction = actions.primaryAction
         let requestedMeetingID = actions.displayedMeetingID
+        let requestedSessionID = model.meeting.sessionID
         actionTask = Task { [weak self] in
             guard let self else { return }
             defer { self.actionTask = nil }
-            await self.actions.performPrimaryAction(expectedAction: requestedAction, expectedMeetingID: requestedMeetingID)
+            await self.actions.performPrimaryAction(expectedAction: requestedAction, expectedMeetingID: requestedMeetingID,
+                                                    expectedSessionID: requestedSessionID)
+        }
+    }
+
+    @objc private func showScheduleFromCommand() {
+        // End application-menu tracking before opening the status-item menu.
+        RunLoop.main.perform(inModes: [.default]) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.stopped else { return }
+                self.showContextMenu()
+            }
         }
     }
 
     private func showContextMenu() {
         guard let button = statusItem.button else { return }
-        let menu = NSMenu()
-        menu.autoenablesItems = false
+        if lastSuccessfulRefreshChanged { calendarRefreshError = nil }
+        let schedule = MenuBarSchedule(events: model.events)
+        let builder = MenuBarScheduleMenu(schedule: schedule, calendars: model.calendars,
+            state: calendarState, isRefreshing: model.isRefreshing, refreshError: calendarRefreshError,
+            allowsJoining: !model.activeCall && !actions.isPerforming) { [weak self] request in
+                self?.performScheduleRequest(request)
+            }
+        let menu = builder.menu
+        menu.addItem(.separator())
+        if model.meeting.sharing.isSharing, let sessionID = model.meeting.sessionID {
+            let stop = NSMenuItem(title: "Stop sharing", action: #selector(stopSharingFromMenu(_:)), keyEquivalent: "")
+            stop.target = self
+            stop.representedObject = sessionID
+            stop.isEnabled = actions.canPerformPrimaryAction
+            stop.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(paletteColors: [.systemRed]))
+            menu.insertItem(stop, at: 0)
+            menu.insertItem(.separator(), at: 1)
+        }
         if let visible = actions.sharingChatIsVisible, let sessionID = model.meeting.sessionID {
             let chat = NSMenuItem(title: visible ? "Hide Chat" : "Show Chat", action: #selector(setSharingChatVisibility), keyEquivalent: "")
             chat.target = self
@@ -256,11 +318,73 @@ final class YapMenuBarController: NSObject {
         join.target = self
         join.isEnabled = !model.activeCall && !actions.isPerforming
         menu.addItem(join)
+        let refresh = NSMenuItem(title: model.isRefreshing ? "Refreshing calendar…" : "Refresh calendar", action: #selector(refreshCalendar), keyEquivalent: "r")
+        refresh.target = self
+        refresh.isEnabled = model.isCalendarConnected && !model.isPreview && !model.isRefreshing
+        refresh.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+        if let date = model.lastRefreshed { refresh.toolTip = "Last updated \(date.formatted(date: .abbreviated, time: .shortened))" }
+        menu.addItem(refresh)
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Yap", action: #selector(quitYap), keyEquivalent: "")
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+        let quit = NSMenuItem(title: "Quit Yap", action: #selector(quitYap), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+        _ = withExtendedLifetime(builder) {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+        }
+    }
+
+    private var lastSuccessfulRefreshChanged: Bool {
+        calendarRefreshError != nil && model.lastRefreshed != failedRefreshSnapshot
+    }
+
+    private var calendarState: MenuBarScheduleState {
+        if model.isPreview { return .ready }
+        if model.googleConfigurationLoadState == .pending || model.googleConfigurationLoadState == .loading || model.isConnecting { return .loading }
+        if model.googleConfigurationLoadState == .failed { return .unavailable }
+        if !model.isCalendarConnected { return .disconnected }
+        if model.selectedCalendarIDs.isEmpty { return .noCalendars }
+        if model.events.isEmpty && model.isRefreshing { return .loading }
+        return .ready
+    }
+
+    private func performScheduleRequest(_ request: MenuBarScheduleRequest) {
+        switch request {
+        case .join(let eventID):
+            guard actionTask == nil else { return }
+            actionTask = Task { [weak self] in
+                guard let self else { return }
+                defer { self.actionTask = nil }
+                await self.actions.joinScheduleEvent(id: eventID)
+            }
+        case .openCalendar(let url): NSWorkspace.shared.open(url)
+        case .connectCalendar:
+            Task { [weak self] in await self?.actions.connectCalendar() }
+        case .settings: openSettings()
+        }
+    }
+
+    @objc private func stopSharingFromMenu(_ sender: NSMenuItem) {
+        guard let sessionID = sender.representedObject as? UUID, actionTask == nil else { return }
+        actionTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.actionTask = nil }
+            await self.actions.performPrimaryAction(expectedAction: .stopSharing, expectedSessionID: sessionID)
+        }
+    }
+
+    @objc private func refreshCalendar() {
+        guard model.isCalendarConnected, !model.isRefreshing else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            if await self.model.refresh() { self.calendarRefreshError = nil }
+            else {
+                self.calendarRefreshError = "Your saved schedule may be out of date. Try refreshing again."
+                self.failedRefreshSnapshot = self.model.lastRefreshed
+            }
+        }
     }
 
     private func addCloudRecordingItems(to menu: NSMenu) {
@@ -305,6 +429,9 @@ final class YapMenuBarController: NSObject {
     }
     @objc private func joinWithLink() {
         DispatchQueue.main.async { [weak self] in self?.actions.joinWithLink() }
+    }
+    @objc private func openSettings() {
+        DispatchQueue.main.async { [weak self] in self?.actions.openSettings() }
     }
     @objc private func quitYap() { NSApplication.shared.terminate(nil) }
 }

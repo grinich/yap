@@ -6,6 +6,29 @@
 #import "WHZoomVideoDetachGrace.h"
 #import "WHZoomCloudRecordingPolicy.h"
 #import "WHZoomShareStatus.h"
+#import "WHPhotoShutterAudio.h"
+#import "WHZoomChatSupport.h"
+#import <AVFoundation/AVFoundation.h>
+
+// Zoom owns one SDK per process, including pre-meeting camera settings.
+static __weak WHZoomSDKBridge *WHZoomNativeOwner;
+
+// A fresh observer per authorization/test lets queued SDK callbacks retain
+// their original generation instead of acting on a later meeting or test.
+@interface WHZoomMediaObserver : NSObject <ZoomSDKSettingAudioDeviceDelegate, ZoomSDKSettingTestAudioDelegate>
+@property(nonatomic, copy) void (^deviceChanged)(BOOL microphone, ZoomSDKDeviceStatus status, BOOL selectionChanged);
+@property(nonatomic, copy) void (^microphoneChanged)(ZoomSDKTestMicStatus status, BOOL afterStart);
+@property(nonatomic, copy) void (^speakerChanged)(BOOL running, BOOL afterStart);
+@property(atomic) BOOL testStartConfirmed;
+@end
+@implementation WHZoomMediaObserver
+- (void)onMicDeviceStatusChanged:(ZoomSDKDeviceStatus)status { if (self.deviceChanged) self.deviceChanged(YES, status, NO); }
+- (void)onSpeakerDeviceStatusChanged:(ZoomSDKDeviceStatus)status { if (self.deviceChanged) self.deviceChanged(NO, status, NO); }
+- (void)onSelectedMicDeviceChanged { if (self.deviceChanged) self.deviceChanged(YES, Device_List_Update, YES); }
+- (void)onSelectedSpeakerDeviceChanged { if (self.deviceChanged) self.deviceChanged(NO, Device_List_Update, YES); }
+- (void)onMicTestStatusChanged:(ZoomSDKTestMicStatus)status { if (self.microphoneChanged) self.microphoneChanged(status, self.testStartConfirmed); }
+- (void)onSpeakerTestStatusChanged:(BOOL)running { if (self.speakerChanged) self.speakerChanged(running, self.testStartConfirmed); }
+@end
 
 static BOOL WHZoomStatusIsTerminal(ZoomSDKMeetingStatus status) {
     return status == ZoomSDKMeetingStatus_Idle || status == ZoomSDKMeetingStatus_Ended || status == ZoomSDKMeetingStatus_Failed;
@@ -16,6 +39,12 @@ static os_log_t WHZoomConnectionLog(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{ log = os_log_create("app.yap.zoom", "connection"); });
     return log;
+}
+
+static void WHZoomLogMediaTest(BOOL microphone, NSInteger phase, NSInteger status, NSInteger result) {
+    // Numeric lifecycle diagnostics contain no device identifiers or names.
+    os_log_info(WHZoomConnectionLog(), "media-test kind=%{public}d phase=%{public}ld status=%{public}ld result=%{public}ld",
+                microphone ? 0 : 1, (long)phase, (long)status, (long)result);
 }
 
 static NSString *WHZoomErrorName(ZoomSDKError error) {
@@ -38,7 +67,51 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     ZoomSDKMeetingActionControllerDelegate, ZoomSDKMeetingChatControllerDelegate,
     ZoomSDKASControllerDelegate, ZoomSDKWaitingRoomDelegate, ZoomSDKVideoContainerDelegate,
     ZoomSDKReminderControllerDelegate, ZoomSDKMeetingIndicatorControllerDelegate,
-    ZoomSDKMeetingRecordDelegate>
+    ZoomSDKMeetingRecordDelegate, ZoomSDKDirectShareHelperDelegate,
+    ZoomSDKVirtualBackgroundSettingDelegate, ZoomSDKSettingVideoDelegate>
+@property(nonatomic) BOOL cameraSettingsOnly;
+@property(nonatomic) BOOL cameraEffectsReady;
+@property(nonatomic, copy) NSString *cameraEffectsError;
+@property(nonatomic) BOOL cameraEffectsAwaitingConfirmation;
+@property(nonatomic, copy) void (^cameraPreparationCompletion)(NSInteger, NSString *);
+@property(nonatomic, strong) NSUUID *cameraPreparationToken;
+@property(nonatomic, copy) NSString *preferredCameraBackground;
+@property(nonatomic, copy) NSString *preferredCameraImagePath;
+@property(nonatomic) BOOL preferredCameraAutoFraming;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *cameraImageAliases;
+@property(nonatomic, copy) NSString *confirmedCameraImagePath;
+@property(nonatomic, strong) ZoomSDKSettingTestVideoDeviceHelper *cameraPreviewHelper;
+@property(nonatomic, strong) WHZoomRenderHost *cameraPreviewHost;
+@property(nonatomic) BOOL cameraPreviewStarted;
+@property(nonatomic) BOOL cameraPreviewStartScheduled;
+@property(nonatomic) BOOL cameraPreviewBound;
+@property(nonatomic) NSUInteger cameraPreviewRevision;
+@property(nonatomic, copy) NSString *cameraPreviewError;
+@property(nonatomic, strong) NSUUID *mediaGeneration;
+@property(nonatomic, strong) WHZoomMediaObserver *mediaDeviceObserver;
+@property(nonatomic, strong) WHZoomMediaObserver *mediaMicrophoneObserver;
+@property(nonatomic, strong) WHZoomMediaObserver *mediaSpeakerObserver;
+@property(nonatomic, strong) ZoomSDKSettingTestMicrophoneDeviceHelper *mediaMicrophoneHelper;
+@property(nonatomic, strong) ZoomSDKSettingTestSpeakerDeviceHelper *mediaSpeakerHelper;
+@property(nonatomic, strong) NSUUID *mediaMicrophoneTestToken;
+@property(nonatomic, strong) NSUUID *mediaSpeakerTestToken;
+@property(nonatomic, copy) NSString *mediaMicrophoneTestState;
+@property(nonatomic, copy) NSString *mediaMicrophoneTestDeviceID;
+@property(nonatomic, copy) NSString *mediaSpeakerTestDeviceID;
+@property(nonatomic, copy) NSString *mediaDevicesError;
+@property(nonatomic) BOOL mediaMicrophoneStopFailed;
+@property(nonatomic) BOOL mediaSpeakerStopFailed;
+@property(nonatomic) BOOL mediaMicrophoneNeedsRecordingStop;
+@property(nonatomic, strong) WHPhotoShutterAudio *photoShutter;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, ZoomSDKFileSender *> *chatFileSenders;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, ZoomSDKFileReceiver *> *chatFileReceivers;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *chatFileMetadata;
+@property(nonatomic, copy) NSDictionary *lastChatPolicy;
+@property(nonatomic) BOOL roomShare;
+@property(nonatomic) BOOL directShareRunning;
+@property(nonatomic, strong) ZoomSDKDirectShareHelper *directShareHelper;
+@property(nonatomic, strong) ZoomSDKDirectShareHandler *directShareCodeHandler;
+@property(nonatomic, strong) ZoomSDKDirectShareSpecifyContentHandler *directShareContentHandler;
 @property(nonatomic, copy) NSString *sessionID;
 @property(nonatomic, strong) ZoomSDKMeetingService *meeting;
 @property(nonatomic, strong) ZoomSDKJoinMeetingElements *joinParameters;
@@ -59,6 +132,8 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 @property(nonatomic, copy) NSString *terminationMessage;
 @property(nonatomic) BOOL updatingVisibleParticipants;
 @property(nonatomic) BOOL localShareActive;
+@property(nonatomic) BOOL sharingComputerAudio;
+@property(nonatomic) BOOL requestedComputerAudio;
 @property(nonatomic) BOOL awaitingShareSource;
 @property(nonatomic) NSUInteger shareSourceRevision;
 @property(nonatomic) uint32_t requestedShareWindowID;
@@ -66,6 +141,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, ZoomSDKNormalVideoElement *> *videos;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, WHZoomRenderHost *> *videoHosts;
 @property(nonatomic, strong) NSMutableSet<NSString *> *subscribedVideos;
+@property(nonatomic, strong) NSMutableSet<NSString *> *videosReportingLiveData;
 @property(nonatomic, strong) NSMutableSet<NSNumber *> *requestedAvatars;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *avatarRevisions;
 @property(nonatomic, strong) NSNumber *profilePicturesHidden;
@@ -92,14 +168,800 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     if ((self = [super init])) {
         _videos = [NSMutableDictionary dictionary]; _videoHosts = [NSMutableDictionary dictionary];
         _subscribedVideos = [NSMutableSet set];
+        _videosReportingLiveData = [NSMutableSet set];
         _requestedAvatars = [NSMutableSet set]; _avatarRevisions = [NSMutableDictionary dictionary];
         _participantVideoSizes = [NSMutableDictionary dictionary];
         _videoDetachGrace = [WHZoomVideoDetachGrace new];
         _videoRetryAttempts = [NSMutableDictionary dictionary];
         _videoRetryTokens = [NSMutableDictionary dictionary]; _videoRetryExhausted = [NSMutableSet set];
         _indicators = [NSMutableDictionary dictionary]; _alerts = [NSMutableArray array];
+        _preferredCameraBackground = @"none";
+        _cameraImageAliases = [NSMutableDictionary dictionary];
     }
     return self;
+}
+
+- (void)setPreferredCameraBackground:(NSString *)background imagePath:(NSString *)path autoFraming:(BOOL)autoFraming {
+    self.preferredCameraBackground = background;
+    self.preferredCameraImagePath = path;
+    self.preferredCameraAutoFraming = autoFraming;
+}
+
+- (BOOL)mediaControlsReady {
+    return WHZoomNativeOwner == self && self.initialized && self.cameraEffectsReady && self.mediaGeneration && !self.ending;
+}
+
+- (NSArray *)mediaDeviceItems:(NSArray *)devices {
+    NSMutableArray *items = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    for (SDKDeviceInfo *device in devices) {
+        NSString *identifier = [device getDeviceID];
+        if (!identifier.length || [seen containsObject:identifier]) continue;
+        [seen addObject:identifier];
+        [items addObject:@{@"id":identifier, @"name":[device getDeviceName] ?: @"Device", @"selected":[NSNumber numberWithBool:[device isSelectedDevice]]}];
+    }
+    return items;
+}
+
+- (SDKDeviceInfo *)selectedMediaDevice:(NSArray *)devices {
+    for (SDKDeviceInfo *device in devices) if ([device isSelectedDevice] && [device getDeviceID].length) return device;
+    return nil;
+}
+
+- (NSData *)meetingMediaSnapshot {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    BOOL ready = [self mediaControlsReady];
+    ZoomSDKSettingService *settings = ready ? [[ZoomSDK sharedSDK] getSettingService] : nil;
+    ZoomSDKAudioSetting *audio = [settings getAudioSetting];
+    NSArray *microphones = [audio getAudioDeviceList:YES];
+    NSArray *speakers = [audio getAudioDeviceList:NO];
+    BOOL hasMic = [self selectedMediaDevice:microphones] != nil;
+    BOOL hasSpeaker = [self selectedMediaDevice:speakers] != nil;
+    BOOL automatic = audio && [audio isAutoAdjustMicOn];
+    float micVolume = hasMic ? [audio getAudioDeviceVolume:YES] : NAN;
+    float speakerVolume = hasSpeaker ? [audio getAudioDeviceVolume:NO] : NAN;
+    NSDictionary *snapshot = @{
+        @"isReady":[NSNumber numberWithBool:ready], @"isInMeeting":[NSNumber numberWithBool:ready && self.sessionID && self.hasEnteredMeeting],
+        @"microphones":[self mediaDeviceItems:microphones], @"speakers":[self mediaDeviceItems:speakers],
+        @"cameras":[self mediaDeviceItems:[[settings getVideoSetting] getCameraList]],
+        @"microphoneVolume":isfinite(micVolume) && micVolume >= 0 && micVolume <= 100 ? @(lroundf(micVolume)) : NSNull.null,
+        @"speakerVolume":isfinite(speakerVolume) && speakerVolume >= 0 && speakerVolume <= 100 ? @(lroundf(speakerVolume)) : NSNull.null,
+        @"error":self.mediaDevicesError ?: NSNull.null,
+        @"automaticMicrophoneVolume":[NSNumber numberWithBool:automatic],
+        @"canSetMicrophoneVolume":[NSNumber numberWithBool:hasMic && !automatic], @"canSetSpeakerVolume":[NSNumber numberWithBool:hasSpeaker],
+        @"microphoneTest":ready && self.mediaMicrophoneTestToken ? (self.mediaMicrophoneTestState ?: @"idle") : @"idle",
+        @"speakerTestRunning":[NSNumber numberWithBool:ready && self.mediaSpeakerTestToken != nil]
+    };
+    return [NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
+}
+
+- (void)emitMediaDevices {
+    NSData *data = [self meetingMediaSnapshot];
+    if (self.mediaDevicesChanged) self.mediaDevicesChanged(data);
+    if (self.sessionID && WHZoomNativeOwner == self && self.eventHandler)
+        self.eventHandler(self.sessionID, @"mediaDevices", data);
+}
+
+- (NSInteger)stopMediaTestKind:(NSString *)kind {
+    BOOL microphone = [kind isEqualToString:@"microphone"];
+    ZoomSDKSettingTestMicrophoneDeviceHelper *mic = microphone ? self.mediaMicrophoneHelper : nil;
+    ZoomSDKSettingTestSpeakerDeviceHelper *speaker = microphone ? nil : self.mediaSpeakerHelper;
+    BOOL wasRecording = microphone && self.mediaMicrophoneNeedsRecordingStop;
+    NSString *testDeviceID = microphone ? self.mediaMicrophoneTestDeviceID : self.mediaSpeakerTestDeviceID;
+    NSUUID *generation = self.mediaGeneration;
+    if (microphone) {
+        self.mediaMicrophoneTestToken = nil; self.mediaMicrophoneTestState = @"idle";
+        self.mediaMicrophoneTestDeviceID = nil;
+        self.mediaMicrophoneStopFailed = NO; self.mediaMicrophoneNeedsRecordingStop = NO;
+        mic.delegate = nil;
+        self.mediaMicrophoneHelper = nil; self.mediaMicrophoneObserver = nil;
+    } else {
+        self.mediaSpeakerTestToken = nil;
+        self.mediaSpeakerTestDeviceID = nil;
+        speaker.delegate = nil;
+        self.mediaSpeakerHelper = nil; self.mediaSpeakerObserver = nil;
+        self.mediaSpeakerStopFailed = NO;
+    }
+    if (!mic && !speaker) return ZoomSDKError_Success;
+    if (WHZoomNativeOwner != self) return ZoomSDKError_WrongUsage;
+    ZoomSDKError result = ZoomSDKError_Success;
+    BOOL recordingStopFailed = NO;
+    if (mic) {
+        if (wasRecording || [mic getTestMicStatus] == testMic_Recording) result = [mic stopRecrodingMic];
+        recordingStopFailed = result != ZoomSDKError_Success;
+        ZoomSDKError stopped = [mic stopPlayRecordedMic];
+        if (result == ZoomSDKError_Success) result = stopped;
+    }
+    if (speaker) result = [speaker SpeakerStopPlaying];
+    WHZoomLogMediaTest(microphone, 7, mic ? [mic getTestMicStatus] : speaker.isSpeakerInTesting, result);
+    if (result != ZoomSDKError_Success && WHZoomNativeOwner == self && self.mediaGeneration == generation) {
+        // Failed stop is still an owned, active test. Keep a retryable handle,
+        // but never restore the observer/token from the cancelled operation.
+        if (mic && !self.mediaMicrophoneHelper && !self.mediaMicrophoneTestToken) {
+            self.mediaMicrophoneHelper = mic; self.mediaMicrophoneTestToken = [NSUUID UUID];
+            self.mediaMicrophoneTestDeviceID = testDeviceID;
+            self.mediaMicrophoneTestState = @"stoppingFailed"; self.mediaMicrophoneStopFailed = YES;
+            self.mediaMicrophoneNeedsRecordingStop = recordingStopFailed;
+        }
+        if (speaker && !self.mediaSpeakerHelper && !self.mediaSpeakerTestToken) {
+            self.mediaSpeakerHelper = speaker; self.mediaSpeakerTestToken = [NSUUID UUID]; self.mediaSpeakerStopFailed = YES;
+            self.mediaSpeakerTestDeviceID = testDeviceID;
+        }
+        self.mediaDevicesError = @"Zoom hasn’t confirmed that the audio test stopped. Try Stop again before changing devices or starting another test.";
+    }
+    return result;
+}
+
+- (NSInteger)stopMediaTestsForTransition {
+    NSInteger microphone = [self stopMediaTestKind:@"microphone"];
+    NSInteger speaker = [self stopMediaTestKind:@"speaker"];
+    return microphone != ZoomSDKError_Success ? microphone : speaker;
+}
+
+- (void)stopMediaTests {
+    NSInteger result = [self stopMediaTestsForTransition];
+    if (result == ZoomSDKError_Success) self.mediaDevicesError = nil;
+    [self emitMediaDevices];
+}
+
+- (NSInteger)mediaControlResult:(NSInteger)result message:(NSString *)message {
+    self.mediaDevicesError = result == ZoomSDKError_Success ? nil : message;
+    [self emitMediaDevices]; return result;
+}
+
+- (void)installMediaDeviceObserver {
+    self.mediaGeneration = [NSUUID UUID];
+    NSUUID *generation = self.mediaGeneration;
+    __weak typeof(self) weakSelf = self;
+    WHZoomMediaObserver *observer = [WHZoomMediaObserver new];
+    observer.deviceChanged = ^(BOOL microphone, ZoomSDKDeviceStatus status, BOOL selectionChanged) {
+        [weakSelf onMain:^{
+            typeof(self) self = weakSelf;
+            if (![self mediaControlsReady] || self.mediaGeneration != generation) return;
+            NSString *testDevice = microphone ? self.mediaMicrophoneTestDeviceID : self.mediaSpeakerTestDeviceID;
+            ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
+            NSString *selected = [[self selectedMediaDevice:[audio getAudioDeviceList:microphone]] getDeviceID];
+            BOOL failed = status == Device_Error_Unknown || status == Device_Error_Found || status == No_Device;
+            BOOL changed = testDevice.length && ![testDevice isEqualToString:selected];
+            BOOL shouldStop = testDevice.length && (failed || changed);
+            WHZoomLogMediaTest(microphone, selectionChanged ? 10 : 9, status, shouldStop);
+            // Muted/no-input notifications describe audio state, not device
+            // removal. A list refresh also need not change the active device.
+            if (shouldStop) [self stopMediaTestKind:microphone ? @"microphone" : @"speaker"];
+            [self emitMediaDevices];
+        }];
+    };
+    self.mediaDeviceObserver = observer;
+    [[[[ZoomSDK sharedSDK] getSettingService] getAudioSetting] setDelegate:observer];
+    [self emitMediaDevices];
+}
+
+- (NSInteger)selectMediaDevice:(NSString *)deviceID kind:(NSString *)kind {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    self.mediaDevicesError = nil;
+    if (![self mediaControlsReady]) return ZoomSDKError_WrongUsage;
+    BOOL camera = [kind isEqualToString:@"camera"], microphone = [kind isEqualToString:@"microphone"];
+    if (!camera && !microphone && ![kind isEqualToString:@"speaker"]) return ZoomSDKError_InvalidParameter;
+    if (self.mediaMicrophoneStopFailed || self.mediaSpeakerStopFailed) {
+        NSInteger stopped = [self stopMediaTestsForTransition];
+        if (stopped != ZoomSDKError_Success) return [self mediaControlResult:stopped message:@"Stop the audio test before changing devices. Zoom hasn’t confirmed that it stopped yet."];
+    }
+    ZoomSDKSettingService *settings = [[ZoomSDK sharedSDK] getSettingService];
+    ZoomSDKAudioSetting *audio = [settings getAudioSetting];
+    ZoomSDKVideoSetting *video = [settings getVideoSetting];
+    NSArray *devices = camera ? [video getCameraList] : [audio getAudioDeviceList:microphone];
+    SDKDeviceInfo *selected = nil;
+    for (SDKDeviceInfo *device in devices) if (deviceID.length && [[device getDeviceID] isEqualToString:deviceID]) { selected = device; break; }
+    if (!selected) return ZoomSDKError_InvalidParameter;
+    if ([selected isSelectedDevice]) return ZoomSDKError_Success;
+    BOOL resumeCamera = camera && self.sessionID && self.hasEnteredMeeting && [[[self.meeting getMeetingActionController] getMyself] isVideoOn];
+    if (camera) {
+        [self stopCameraEffectsPreview];
+        if (resumeCamera) {
+            NSInteger muted = [self setCameraEnabled:NO];
+            if (muted != ZoomSDKError_Success) return muted;
+            if ([[[self.meeting getMeetingActionController] getMyself] isVideoOn])
+                return [self mediaControlResult:ZoomSDKError_ServiceFailed message:@"Zoom hasn’t confirmed that your camera is off yet. Try selecting the camera again."];
+        }
+    } else {
+        NSInteger stopped = [self stopMediaTestKind:kind];
+        if (stopped != ZoomSDKError_Success) return stopped;
+    }
+    ZoomSDKError result = camera ? [video selectCamera:deviceID] : [audio selectAudioDevice:microphone DeviceID:deviceID DeviceName:[selected getDeviceName] ?: @""];
+    if (result == ZoomSDKError_Success) {
+        NSArray *current = camera ? [video getCameraList] : [audio getAudioDeviceList:microphone];
+        if (![[[self selectedMediaDevice:current] getDeviceID] isEqualToString:deviceID]) result = ZoomSDKError_ServiceFailed;
+    }
+    if (camera && result == ZoomSDKError_Success) {
+        result = (ZoomSDKError)(resumeCamera ? [self setCameraEnabled:YES] :
+            [self applyCameraBackground:self.preferredCameraBackground imagePath:self.preferredCameraImagePath autoFraming:self.preferredCameraAutoFraming]);
+    }
+    [self mediaControlResult:result message:camera && self.cameraEffectsError.length ? self.cameraEffectsError : @"Zoom couldn’t switch to that device. Check its connection and try again."];
+    if (camera && self.sessionID && self.hasEnteredMeeting) [self refreshParticipants];
+    return result;
+}
+
+- (NSInteger)setMediaVolume:(NSInteger)volume kind:(NSString *)kind {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    self.mediaDevicesError = nil;
+    if (![self mediaControlsReady]) return ZoomSDKError_WrongUsage;
+    BOOL microphone = [kind isEqualToString:@"microphone"];
+    if ((!microphone && ![kind isEqualToString:@"speaker"]) || volume < 0 || volume > 100) return ZoomSDKError_InvalidParameter;
+    ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
+    if (![self selectedMediaDevice:[audio getAudioDeviceList:microphone]]) return ZoomSDKError_ServiceFailed;
+    if (microphone && [audio isAutoAdjustMicOn]) return ZoomSDKError_WrongUsage;
+    ZoomSDKError result = [audio setAudioDeviceVolume:microphone Volume:(float)volume];
+    float actual = [audio getAudioDeviceVolume:microphone];
+    if (result == ZoomSDKError_Success && (!isfinite(actual) || fabsf(actual - volume) > 1.0f)) result = ZoomSDKError_ServiceFailed;
+    return [self mediaControlResult:result message:@"Zoom couldn’t change this device’s volume. Adjust it on the device or in System Settings."];
+}
+
+- (NSInteger)setMicrophoneAutoGain:(BOOL)enabled {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    self.mediaDevicesError = nil;
+    if (![self mediaControlsReady]) return ZoomSDKError_WrongUsage;
+    ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
+    if (!audio) return ZoomSDKError_ServiceFailed;
+    ZoomSDKError result = [audio enableAutoAdjustMic:enabled];
+    if (result == ZoomSDKError_Success && [audio isAutoAdjustMicOn] != enabled) result = ZoomSDKError_ServiceFailed;
+    return [self mediaControlResult:result message:@"Zoom couldn’t change automatic microphone volume. Try again after reconnecting your microphone."];
+}
+
+- (void)playMediaMicrophoneRecording:(NSUUID *)token {
+    if (![self mediaControlsReady] || self.mediaMicrophoneTestToken != token || [self.mediaMicrophoneTestState isEqualToString:@"playing"]) return;
+    self.mediaMicrophoneTestState = @"playing";
+    self.mediaMicrophoneNeedsRecordingStop = NO;
+    ZoomSDKSettingTestMicrophoneDeviceHelper *helper = self.mediaMicrophoneHelper;
+    WHZoomMediaObserver *observer = self.mediaMicrophoneObserver;
+    NSUUID *generation = self.mediaGeneration;
+    NSString *deviceID = self.mediaMicrophoneTestDeviceID;
+    observer.testStartConfirmed = NO;
+    ZoomSDKError result = [helper playRecordedMic];
+    if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaMicrophoneTestToken != token || self.mediaMicrophoneHelper != helper) {
+        [self stopCancelledMediaStart:helper microphone:YES generation:generation deviceID:deviceID];
+        return;
+    }
+    ZoomSDKTestMicStatus actual = [helper getTestMicStatus];
+    if (result == ZoomSDKError_Success && actual != testMic_Playing) result = ZoomSDKError_ServiceFailed;
+    WHZoomLogMediaTest(YES, 6, actual, result);
+    observer.testStartConfirmed = result == ZoomSDKError_Success;
+    if (result != ZoomSDKError_Success) {
+        [self stopMediaTestKind:@"microphone"];
+        self.mediaDevicesError = @"Zoom couldn’t play the microphone test. Try again with another microphone.";
+        [self emit:@"controlError" object:@"Zoom couldn’t play the microphone test. Try again with another microphone."];
+    }
+    else {
+        __weak typeof(self) weakSelf = self;
+        NSUUID *generation = self.mediaGeneration;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            typeof(self) self = weakSelf;
+            if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaMicrophoneTestToken != token) return;
+            [self stopMediaTestKind:@"microphone"]; [self emitMediaDevices];
+        });
+    }
+    [self emitMediaDevices];
+}
+
+- (void)finishMediaMicrophoneRecording:(NSUUID *)token {
+    if (![self mediaControlsReady] || self.mediaMicrophoneTestToken != token || ![self.mediaMicrophoneTestState isEqualToString:@"recording"]) return;
+    ZoomSDKError result = [self.mediaMicrophoneHelper stopRecrodingMic];
+    WHZoomLogMediaTest(YES, 5, [self.mediaMicrophoneHelper getTestMicStatus], result);
+    if (result == ZoomSDKError_Success) [self playMediaMicrophoneRecording:token];
+    else { [self stopMediaTestKind:@"microphone"]; [self mediaControlResult:result message:@"Zoom couldn’t finish the microphone recording. Try the test again."]; }
+}
+
+- (void)stopCancelledMediaStart:(id)helper microphone:(BOOL)microphone generation:(NSUUID *)generation deviceID:(NSString *)deviceID {
+    // Stop can reenter an SDK Start that has not finished yet. If that Start
+    // subsequently opens the device, recover only its still-owned helper;
+    // never touch a new test or an SDK generation that has already closed.
+    if (WHZoomNativeOwner != self || !self.initialized || self.mediaGeneration != generation) return;
+    if (microphone) {
+        if (self.mediaMicrophoneHelper || self.mediaMicrophoneTestToken) return;
+        self.mediaMicrophoneHelper = helper; self.mediaMicrophoneTestToken = [NSUUID UUID];
+        self.mediaMicrophoneNeedsRecordingStop = [helper getTestMicStatus] == testMic_Recording;
+        self.mediaMicrophoneTestState = @"recording"; self.mediaMicrophoneTestDeviceID = deviceID;
+    } else {
+        if (self.mediaSpeakerHelper || self.mediaSpeakerTestToken) return;
+        self.mediaSpeakerHelper = helper; self.mediaSpeakerTestToken = [NSUUID UUID];
+        self.mediaSpeakerTestDeviceID = deviceID;
+    }
+    [helper setDelegate:nil];
+    [self stopMediaTestKind:microphone ? @"microphone" : @"speaker"];
+    [self emitMediaDevices];
+}
+
+- (NSInteger)setMediaTest:(NSString *)kind running:(BOOL)running {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    self.mediaDevicesError = nil;
+    BOOL microphone = [kind isEqualToString:@"microphone"];
+    if (!microphone && ![kind isEqualToString:@"speaker"]) return ZoomSDKError_InvalidParameter;
+    if (![self mediaControlsReady]) return ZoomSDKError_WrongUsage;
+    if (!running) { NSInteger result = [self stopMediaTestKind:kind]; return [self mediaControlResult:result message:@"Zoom couldn’t stop the device test. Close audio settings and try again."]; }
+    if (self.mediaMicrophoneStopFailed || self.mediaSpeakerStopFailed) {
+        NSInteger stopped = [self stopMediaTestsForTransition];
+        if (stopped != ZoomSDKError_Success) return [self mediaControlResult:stopped message:@"Zoom hasn’t confirmed that the previous audio test stopped. Try Stop again."];
+    }
+    if (microphone ? self.mediaMicrophoneTestToken != nil : self.mediaSpeakerTestToken != nil) return ZoomSDKError_Success;
+    if (microphone && [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] != AVAuthorizationStatusAuthorized)
+        return [self mediaControlResult:ZoomSDKError_NoPermission message:@"Allow Yap microphone access in System Settings before testing the microphone."];
+    ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
+    SDKDeviceInfo *device = [self selectedMediaDevice:[audio getAudioDeviceList:microphone]];
+    if (!device) return ZoomSDKError_ServiceFailed;
+    NSString *deviceID = [[device getDeviceID] copy];
+    // Avoid competing test playback while recording a new microphone sample.
+    NSInteger stopped = [self stopMediaTestsForTransition];
+    if (stopped != ZoomSDKError_Success) return [self mediaControlResult:stopped message:@"Zoom couldn’t stop the previous audio test. Close audio settings before trying again."];
+    NSUUID *token = [NSUUID UUID], *generation = self.mediaGeneration;
+    __weak typeof(self) weakSelf = self;
+    WHZoomMediaObserver *observer = [WHZoomMediaObserver new];
+    ZoomSDKError result;
+    if (microphone) {
+        ZoomSDKSettingTestMicrophoneDeviceHelper *helper = [audio getSettingMicrophoneTestHelper];
+        if (!helper) return ZoomSDKError_ServiceFailed;
+        self.mediaMicrophoneHelper = helper; self.mediaMicrophoneTestToken = token;
+        self.mediaMicrophoneTestDeviceID = [device getDeviceID];
+        self.mediaMicrophoneNeedsRecordingStop = YES;
+        self.mediaMicrophoneTestState = @"recording"; self.mediaMicrophoneObserver = observer;
+        observer.microphoneChanged = ^(ZoomSDKTestMicStatus status, BOOL afterStart) {
+            [weakSelf onMain:^{
+                typeof(self) self = weakSelf;
+                if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaMicrophoneTestToken != token) return;
+                WHZoomLogMediaTest(YES, afterStart ? 4 : 3, status, 0);
+                // SDK Start resets its old test and emits stopped/idle before
+                // recording. Keep those callbacks in their original phase,
+                // even when they reach the main queue after Start returns.
+                if (!afterStart) return;
+                if (status == testMic_RecrodingStopped) [self playMediaMicrophoneRecording:token];
+                else if (status == testMic_Playing) self.mediaMicrophoneTestState = @"playing";
+                else if (status == testMic_Normal) {
+                    self.mediaMicrophoneTestToken = nil;
+                    self.mediaMicrophoneTestDeviceID = nil;
+                    self.mediaMicrophoneHelper.delegate = nil;
+                    self.mediaMicrophoneHelper = nil; self.mediaMicrophoneObserver = nil;
+                    self.mediaMicrophoneTestState = @"idle";
+                    self.mediaMicrophoneNeedsRecordingStop = NO; self.mediaMicrophoneStopFailed = NO;
+                }
+                [self emitMediaDevices];
+            }];
+        };
+        WHZoomLogMediaTest(YES, 0, [helper getTestMicStatus], 0);
+        helper.delegate = observer;
+        WHZoomLogMediaTest(YES, 1, [helper getTestMicStatus], 0);
+        if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaMicrophoneHelper != helper || self.mediaMicrophoneTestToken != token) return ZoomSDKError_WrongUsage;
+        result = [helper startRecordingMic:deviceID];
+        if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaMicrophoneHelper != helper || self.mediaMicrophoneTestToken != token) {
+            [self stopCancelledMediaStart:helper microphone:YES generation:generation deviceID:deviceID];
+            return ZoomSDKError_WrongUsage;
+        }
+        ZoomSDKTestMicStatus actual = [helper getTestMicStatus];
+        self.mediaMicrophoneNeedsRecordingStop = actual == testMic_Recording;
+        // The public SDK wrapper can return success even when its internal
+        // recording start failed. Its state getter must confirm recording.
+        if (result == ZoomSDKError_Success && actual != testMic_Recording) result = ZoomSDKError_ServiceFailed;
+        WHZoomLogMediaTest(YES, 2, actual, result);
+        observer.testStartConfirmed = result == ZoomSDKError_Success;
+        if (result == ZoomSDKError_Success) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [weakSelf finishMediaMicrophoneRecording:token];
+        });
+    } else {
+        ZoomSDKSettingTestSpeakerDeviceHelper *helper = [audio getSettingSpeakerTestHelper];
+        if (!helper) return ZoomSDKError_ServiceFailed;
+        self.mediaSpeakerHelper = helper; self.mediaSpeakerTestToken = token; self.mediaSpeakerObserver = observer;
+        self.mediaSpeakerTestDeviceID = [device getDeviceID];
+        observer.speakerChanged = ^(BOOL testing, BOOL afterStart) {
+            [weakSelf onMain:^{
+                typeof(self) self = weakSelf;
+                if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaSpeakerTestToken != token) return;
+                WHZoomLogMediaTest(NO, afterStart ? 4 : 3, testing, 0);
+                if (!afterStart) return;
+                if (!testing) {
+                    self.mediaSpeakerTestToken = nil;
+                    self.mediaSpeakerTestDeviceID = nil;
+                    self.mediaSpeakerHelper.delegate = nil;
+                    self.mediaSpeakerHelper = nil; self.mediaSpeakerObserver = nil;
+                    self.mediaSpeakerStopFailed = NO;
+                }
+                [self emitMediaDevices];
+            }];
+        };
+        WHZoomLogMediaTest(NO, 0, helper.isSpeakerInTesting, 0);
+        helper.delegate = observer;
+        WHZoomLogMediaTest(NO, 1, helper.isSpeakerInTesting, 0);
+        if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaSpeakerHelper != helper || self.mediaSpeakerTestToken != token) return ZoomSDKError_WrongUsage;
+        result = [helper SpeakerStartPlaying:deviceID];
+        if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaSpeakerHelper != helper || self.mediaSpeakerTestToken != token) {
+            [self stopCancelledMediaStart:helper microphone:NO generation:generation deviceID:deviceID];
+            return ZoomSDKError_WrongUsage;
+        }
+        if (result == ZoomSDKError_Success && !helper.isSpeakerInTesting) result = ZoomSDKError_ServiceFailed;
+        WHZoomLogMediaTest(NO, 2, helper.isSpeakerInTesting, result);
+        observer.testStartConfirmed = result == ZoomSDKError_Success;
+        if (result == ZoomSDKError_Success) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            typeof(self) self = weakSelf;
+            if (![self mediaControlsReady] || self.mediaGeneration != generation || self.mediaSpeakerTestToken != token) return;
+            [self stopMediaTestKind:@"speaker"]; [self emitMediaDevices];
+        });
+    }
+    if (result != ZoomSDKError_Success) [self stopMediaTestKind:kind];
+    return [self mediaControlResult:result message:microphone ? @"Zoom couldn’t start the microphone test. Check microphone access and its connection." : @"Zoom couldn’t start the speaker test. Check the speaker connection."];
+}
+
+- (NSInteger)setHandRaised:(BOOL)raised {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if (WHZoomNativeOwner != self || !self.sessionID || !self.hasEnteredMeeting || self.ending || [self.meeting getMeetingStatus] != ZoomSDKMeetingStatus_InMeeting) return ZoomSDKError_WrongUsage;
+    ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
+    ZoomSDKUserInfo *myself = [action getMyself];
+    if (!myself || ![myself getUserID]) return ZoomSDKError_WrongUsage;
+    ZoomSDKError result = [action raiseHand:raised UserID:[myself getUserID]];
+    [self refreshParticipants]; return result;
+}
+
+- (NSInteger)prepareCameraEffectsWithJWT:(NSString *)jwt completion:(void (^)(NSInteger, NSString *))completion {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if (WHZoomNativeOwner && WHZoomNativeOwner != self) return ZoomSDKError_WrongUsage;
+    if (self.cameraEffectsReady && !self.ending) { completion(0, nil); return 0; }
+    if (self.initialized || self.sessionID || self.cameraPreparationCompletion) return ZoomSDKError_WrongUsage;
+    self.cameraSettingsOnly = YES;
+    self.cameraPreparationCompletion = completion;
+    self.cameraPreparationToken = [NSUUID UUID];
+    NSUUID *token = self.cameraPreparationToken;
+    ZoomSDKInitParams *params = [ZoomSDKInitParams new];
+    params.needCustomizedUI = YES; params.enableLog = NO; params.zoomDomain = @"zoom.us";
+    ZoomSDKError result = [[ZoomSDK sharedSDK] initSDKWithParams:params];
+    if (result != ZoomSDKError_Success) {
+        self.cameraPreparationCompletion = nil; self.cameraPreparationToken = nil; self.cameraSettingsOnly = NO;
+        return result;
+    }
+    self.initialized = YES; WHZoomNativeOwner = self;
+    ZoomSDKAuthService *auth = [[ZoomSDK sharedSDK] getAuthService];
+    auth.delegate = self;
+    ZoomSDKAuthContext *context = [ZoomSDKAuthContext new]; context.jwtToken = jwt;
+    result = [auth sdkAuth:context];
+    if (result != ZoomSDKError_Success) {
+        self.cameraPreparationCompletion = nil; [self closeCameraEffects]; return result;
+    }
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        typeof(self) self = weakSelf;
+        if (!self || !self.cameraSettingsOnly || self.cameraPreparationToken != token) return;
+        void (^callback)(NSInteger, NSString *) = self.cameraPreparationCompletion;
+        self.cameraPreparationCompletion = nil;
+        [self closeCameraEffects];
+        if (callback) callback(ZoomSDKError_ServiceFailed, @"Zoom camera settings timed out. Check your connection and try again.");
+    });
+    return ZoomSDKError_Success;
+}
+
+- (NSString *)cameraBackgroundKind:(ZoomSDKVirtualBGImageInfo *)item {
+    if (!item || [item isVideo] || [item isAllowDelete]) return nil;
+    for (NSString *value in @[[item getImageName] ?: @"", [item getImageFilePath] ?: @""]) {
+        NSString *name = value.uppercaseString;
+        if ([name isEqualToString:@"NONE"] || [name isEqualToString:@"NEWUI_SETTINGS_NONE"]) return @"none";
+        if ([name isEqualToString:@"BLUR"]) return @"blur";
+    }
+    return nil;
+}
+
+- (ZoomSDKVirtualBGImageInfo *)cameraBackgroundItem:(NSString *)kind path:(NSString *)path {
+    NSString *standardPath = path.stringByStandardizingPath;
+    NSString *alias = self.cameraImageAliases[standardPath ?: @""];
+    NSArray *items = [[[[ZoomSDK sharedSDK] getSettingService] getVirtualBGSetting] getBGItemList];
+    for (ZoomSDKVirtualBGImageInfo *item in items) {
+        if ([kind isEqualToString:[self cameraBackgroundKind:item]]) return item;
+        if (![kind isEqualToString:@"image"] || [item isVideo]) continue;
+        NSString *itemPath = [item getImageFilePath].stringByStandardizingPath;
+        if (itemPath.length && ([itemPath isEqualToString:standardPath] || [itemPath isEqualToString:alias])) return item;
+    }
+    // Zoom may copy an imported image. Recover its identity after SDK/app restart
+    // using the bytes, never an ambiguous filename shared by different photos.
+    if ([kind isEqualToString:@"image"] && standardPath.length) {
+        NSData *source = [NSData dataWithContentsOfFile:standardPath options:NSDataReadingMappedIfSafe error:nil];
+        if (source.length) for (ZoomSDKVirtualBGImageInfo *item in items) {
+            if ([item isVideo] || [self cameraBackgroundKind:item] || ![item getImageFilePath].length) continue;
+            NSString *itemPath = [item getImageFilePath].stringByStandardizingPath;
+            NSData *imported = [NSData dataWithContentsOfFile:itemPath options:NSDataReadingMappedIfSafe error:nil];
+            if ([source isEqualToData:imported]) { self.cameraImageAliases[standardPath] = itemPath; return item; }
+        }
+    }
+    return nil;
+}
+
+- (NSDictionary *)cameraEffectsState {
+    BOOL ready = self.cameraEffectsReady && WHZoomNativeOwner == self && !self.ending;
+    ZoomSDKSettingService *settings = ready ? [[ZoomSDK sharedSDK] getSettingService] : nil;
+    ZoomSDKVirtualBackgroundSetting *background = [settings getVirtualBGSetting];
+    ZoomSDKVideoSetting *video = [settings getVideoSetting];
+    BOOL smart = background && [background isSupportVirtualBG] && [background isDeviceSupportSmartVirtualBG];
+    BOOL inMeeting = self.sessionID && !self.cameraSettingsOnly && [self.meeting getMeetingStatus] == ZoomSDKMeetingStatus_InMeeting;
+    NSMutableDictionary *value = [@{@"supportsBlur":@(smart && [self cameraBackgroundItem:@"blur" path:nil] != nil),
+        @"supportsImageBackgrounds":@(smart), @"canAddImages":@(smart && [background isAllowAddNewVBItem]),
+        @"isInMeeting":@(inMeeting), @"isCameraOn":@(inMeeting && [[[self.meeting getMeetingActionController] getMyself] isVideoOn]),
+        @"isPreviewing":@(self.cameraPreviewHost != nil)} mutableCopy];
+    if (self.cameraPreviewError.length) value[@"previewError"] = self.cameraPreviewError;
+    if (!video) return value;
+    NSString *kind = nil, *imagePath = nil;
+    for (ZoomSDKVirtualBGImageInfo *item in [background getBGItemList]) if ([item isSelected]) {
+        kind = [self cameraBackgroundKind:item];
+        if (!kind && ![item isVideo] && [item getImageFilePath].length) {
+            kind = @"image"; imagePath = [item getImageFilePath].stringByStandardizingPath;
+            NSString *confirmed = self.confirmedCameraImagePath;
+            if (confirmed.length && ([confirmed isEqualToString:imagePath] || [self.cameraImageAliases[confirmed] isEqualToString:imagePath])) {
+                imagePath = confirmed;
+            } else for (NSString *original in [self.cameraImageAliases.allKeys sortedArrayUsingSelector:@selector(compare:)]) if ([self.cameraImageAliases[original] isEqualToString:imagePath]) {
+                imagePath = original; break;
+            }
+        }
+        break;
+    }
+    if (!kind && (!background || ![background isSupportVirtualBG]) && [background getBGItemList].count == 0) kind = @"none";
+    if (kind) {
+        NSMutableDictionary *applied = [@{@"background":kind,
+            @"autoFraming":@([video isVideoAutoFramingEnabled] && [video getVideoAutoFramingMode] == ZoomSDKAutoFramingMode_Face_Recognition)} mutableCopy];
+        if (imagePath) applied[@"imagePath"] = imagePath;
+        value[@"applied"] = applied;
+    }
+    return value;
+}
+
+- (NSData *)cameraEffectsSnapshot {
+    return [NSJSONSerialization dataWithJSONObject:[self cameraEffectsState] options:0 error:nil] ?: [NSData data];
+}
+
+- (void)emitCameraEffects {
+    [self onMain:^{
+        if (WHZoomNativeOwner != self || !self.cameraEffectsReady || self.ending) return;
+        if (self.cameraEffectsChanged) self.cameraEffectsChanged([self cameraEffectsSnapshot]);
+    }];
+}
+
+- (NSInteger)failCameraEffect:(NSString *)message code:(NSInteger)code {
+    self.cameraEffectsError = message;
+    [self emitCameraEffects];
+    return code ?: ZoomSDKError_Failed;
+}
+
+- (NSInteger)applyCameraBackground:(NSString *)kind imagePath:(NSString *)path autoFraming:(BOOL)autoFraming {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    self.cameraEffectsError = nil; self.cameraEffectsAwaitingConfirmation = NO;
+    if (!self.cameraEffectsReady || WHZoomNativeOwner != self || self.ending) {
+        return [self failCameraEffect:@"Camera settings are not ready. Reopen Camera settings and try again." code:ZoomSDKError_WrongUsage];
+    }
+    if (![@[@"none", @"blur", @"image"] containsObject:kind]) return ZoomSDKError_InvalidParameter;
+    ZoomSDKSettingService *settings = [[ZoomSDK sharedSDK] getSettingService];
+    ZoomSDKVirtualBackgroundSetting *background = [settings getVirtualBGSetting];
+    ZoomSDKVideoSetting *video = [settings getVideoSetting];
+    if (!video) return [self failCameraEffect:@"Zoom’s camera settings are unavailable. Try again after reconnecting." code:ZoomSDKError_ServiceFailed];
+    BOOL needsBackground = ![kind isEqualToString:@"none"];
+    if (needsBackground && (!background || ![background isSupportVirtualBG] || ![background isDeviceSupportSmartVirtualBG])) {
+        return [self failCameraEffect:@"Zoom can’t use this background without a green screen on this camera or computer. Choose None or try a different camera." code:ZoomSDKError_UnSupportedFeature];
+    }
+    ZoomSDKVirtualBGImageInfo *item = [self cameraBackgroundItem:kind path:path];
+    if ([kind isEqualToString:@"image"] && !item) {
+        if (!path.length || ![[NSFileManager defaultManager] isReadableFileAtPath:path]) {
+            return [self failCameraEffect:@"The background photo is no longer available. Choose the photo again in Camera settings." code:ZoomSDKError_InvalidParameter];
+        }
+        if (![background isAllowAddNewVBItem]) return [self failCameraEffect:@"Your Zoom account doesn’t allow adding background photos. Choose None or Blur, or contact your Zoom administrator." code:ZoomSDKError_NoPermission];
+        NSMutableSet *oldPaths = [NSMutableSet set];
+        for (ZoomSDKVirtualBGImageInfo *existing in [background getBGItemList]) if ([existing getImageFilePath]) [oldPaths addObject:[existing getImageFilePath]];
+        ZoomSDKError added = [background addBGImage:path];
+        if (added != ZoomSDKError_Success) return [self failCameraEffect:@"Zoom couldn’t add this photo. Choose a JPEG or PNG image and try again." code:added];
+        item = [self cameraBackgroundItem:kind path:path];
+        if (!item) {
+            NSMutableArray *newItems = [NSMutableArray array];
+            for (ZoomSDKVirtualBGImageInfo *candidate in [background getBGItemList]) if (![candidate isVideo] && [candidate getImageFilePath].length && ![oldPaths containsObject:[candidate getImageFilePath]]) [newItems addObject:candidate];
+            if (newItems.count == 1) item = newItems.firstObject;
+        }
+        if (item && [item getImageFilePath].length) self.cameraImageAliases[path.stringByStandardizingPath] = [item getImageFilePath].stringByStandardizingPath;
+    }
+    if (!item && (needsBackground || [background isSupportVirtualBG] || [background getBGItemList].count > 0)) return [self failCameraEffect:@"Zoom hasn’t made that background available yet. Reopen Camera settings and try again." code:ZoomSDKError_ServiceFailed];
+
+    // Never disable the current background while preparing a replacement.
+    ZoomSDKError result = ZoomSDKError_Success;
+    if (needsBackground && [background isUsingGreenScreenOn]) {
+        result = [background setUsingGreenScreen:NO];
+        if (result != ZoomSDKError_Success) return [self failCameraEffect:@"Zoom couldn’t switch to a background without a green screen. Try again in Camera settings." code:result];
+    }
+    if (autoFraming && (![video isVideoAutoFramingEnabled] || [video getVideoAutoFramingMode] != ZoomSDKAutoFramingMode_Face_Recognition)) {
+        ZoomSDKAutoFramingParameter *parameters = [ZoomSDKAutoFramingParameter new];
+        parameters.ratio = 1.2; parameters.failStrategy = ZoomSDKFaceRecognitionFailStrategy_Remain;
+        result = [video enableVideoAutoFraming:ZoomSDKAutoFramingMode_Face_Recognition setting:parameters];
+    } else if (!autoFraming && [video isVideoAutoFramingEnabled]) result = [video disableVideoAutoFraming];
+    if (result != ZoomSDKError_Success) {
+        return [self failCameraEffect:@"Zoom couldn’t apply automatic framing. Turn Automatic framing off in Camera settings or try again." code:result];
+    }
+    if (item && ![item isSelected]) result = [background useBGItem:item];
+    ZoomSDKVirtualBGImageInfo *selected = [self cameraBackgroundItem:kind path:path];
+    [self logConnection:"camera-background-selection" code:result status:[selected isSelected]
+                 reason:[kind isEqualToString:@"image"] ? 2 : ([kind isEqualToString:@"blur"] ? 1 : 0)];
+    if (result != ZoomSDKError_Success) {
+        return [self failCameraEffect:@"Zoom couldn’t select that background. Try again in Camera settings before turning on your camera." code:result];
+    }
+    return [self confirmCameraBackground:kind imagePath:path autoFraming:autoFraming];
+}
+
+- (NSInteger)confirmCameraBackground:(NSString *)kind imagePath:(NSString *)path autoFraming:(BOOL)autoFraming {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    self.cameraEffectsError = nil; self.cameraEffectsAwaitingConfirmation = NO;
+    if (!self.cameraEffectsReady || WHZoomNativeOwner != self || self.ending) {
+        return [self failCameraEffect:@"Camera settings are not ready. Reopen Camera settings and try again." code:ZoomSDKError_WrongUsage];
+    }
+    if (![@[@"none", @"blur", @"image"] containsObject:kind]) return ZoomSDKError_InvalidParameter;
+    ZoomSDKSettingService *settings = [[ZoomSDK sharedSDK] getSettingService];
+    ZoomSDKVirtualBackgroundSetting *background = [settings getVirtualBGSetting];
+    ZoomSDKVideoSetting *video = [settings getVideoSetting];
+    if (!video) return [self failCameraEffect:@"Zoom’s camera settings are unavailable. Try again after reconnecting." code:ZoomSDKError_ServiceFailed];
+    BOOL needsBackground = ![kind isEqualToString:@"none"];
+    if (needsBackground && (!background || ![background isSupportVirtualBG] || ![background isDeviceSupportSmartVirtualBG])) {
+        return [self failCameraEffect:@"Zoom can’t use this background without a green screen on this camera or computer. Choose None or try a different camera." code:ZoomSDKError_UnSupportedFeature];
+    }
+    ZoomSDKVirtualBGImageInfo *selected = [self cameraBackgroundItem:kind path:path];
+    BOOL backgroundConfirmed = [selected isSelected] || (!needsBackground && ![background isSupportVirtualBG] && [background getBGItemList].count == 0);
+    BOOL framingConfirmed = [video isVideoAutoFramingEnabled] == autoFraming && (!autoFraming || [video getVideoAutoFramingMode] == ZoomSDKAutoFramingMode_Face_Recognition);
+    if (!backgroundConfirmed || !framingConfirmed || (needsBackground && [background isUsingGreenScreenOn])) {
+        self.cameraEffectsAwaitingConfirmation = YES;
+        return [self failCameraEffect:@"Zoom hasn’t confirmed the requested camera effects yet. Try again before turning on your camera." code:ZoomSDKError_ServiceFailed];
+    }
+    self.confirmedCameraImagePath = [kind isEqualToString:@"image"] ? path.stringByStandardizingPath : nil;
+    [self emitCameraEffects];
+    return ZoomSDKError_Success;
+}
+
+- (NSView *)startCameraEffectsPreview {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if (self.cameraPreviewHost) return self.cameraPreviewHost;
+    self.cameraPreviewError = nil;
+    if (!self.cameraSettingsOnly || self.sessionID) {
+        [self failCameraEffect:@"Use your meeting self-view to check camera effects. Local preview is available before joining a meeting." code:ZoomSDKError_WrongUsage]; return nil;
+    }
+    if (!self.cameraEffectsReady || WHZoomNativeOwner != self || self.ending ||
+        [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo] != AVAuthorizationStatusAuthorized) {
+        [self failCameraEffect:@"Allow Yap camera access in System Settings, then try Preview again." code:ZoomSDKError_NoPermission]; return nil;
+    }
+    ZoomSDKVideoSetting *videoSettings = [[[ZoomSDK sharedSDK] getSettingService] getVideoSetting];
+    NSArray *devices = [videoSettings getCameraList];
+    SDKDeviceInfo *selected = nil;
+    for (SDKDeviceInfo *device in devices) if ([device isSelectedDevice] && [device getDeviceID].length) { selected = device; break; }
+    [self logConnection:"camera-preview-devices" code:0 status:devices.count reason:selected != nil];
+    if (!selected) {
+        SDKDeviceInfo *fallback = nil;
+        for (SDKDeviceInfo *device in devices) if ([device getDeviceID].length) { fallback = device; break; }
+        if (!fallback) { [self failCameraEffect:@"No camera is available. Connect a camera and try Preview again." code:ZoomSDKError_ServiceFailed]; return nil; }
+        ZoomSDKError selectedResult = [videoSettings selectCamera:[fallback getDeviceID]];
+        if (selectedResult != ZoomSDKError_Success) { [self failCameraEffect:@"Zoom couldn’t select an available camera. Reconnect the camera and try again." code:selectedResult]; return nil; }
+    }
+    if ([self applyCameraBackground:self.preferredCameraBackground imagePath:self.preferredCameraImagePath autoFraming:self.preferredCameraAutoFraming] != 0) return nil;
+    return [self createStandaloneCameraPreview:videoSettings];
+}
+
+- (NSView *)createStandaloneCameraPreview:(ZoomSDKVideoSetting *)videoSettings {
+    // Zoom's standalone Settings sample uses the device-test helper. The
+    // meeting preview element is documented for the connecting meeting UI.
+    ZoomSDKSettingTestVideoDeviceHelper *helper = [videoSettings getSettingVideoTestHelper];
+    if (!helper) { [self failCameraEffect:@"Zoom’s camera preview is unavailable. Reopen Camera settings and try again." code:ZoomSDKError_ServiceFailed]; return nil; }
+    WHZoomRenderHost *host = [[WHZoomRenderHost alloc] initWithFrame:NSMakeRect(0, 0, 640, 360)];
+    self.cameraPreviewHost = host; self.cameraPreviewHelper = helper;
+    self.cameraPreviewStarted = NO; self.cameraPreviewStartScheduled = NO; self.cameraPreviewBound = NO;
+    NSUInteger revision = ++self.cameraPreviewRevision;
+    __weak typeof(self) weakSelf = self;
+    __weak WHZoomRenderHost *weakHost = host;
+    __weak ZoomSDKSettingTestVideoDeviceHelper *weakHelper = helper;
+    host.resizeRenderer = ^(NSRect rect) {
+        typeof(self) self = weakSelf;
+        if (!self || WHZoomNativeOwner != self || self.cameraPreviewHelper != weakHelper || self.cameraPreviewRevision != revision) return;
+        if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo] != AVAuthorizationStatusAuthorized) {
+            [self failCameraPreview:@"Camera permission is unavailable. Allow Yap camera access in System Settings and try again."]; return;
+        }
+        // Native view appearance can itself activate the SDK preview. Even a
+        // canceled/partially failed binding must therefore receive StopPreview.
+        self.cameraPreviewBound = YES;
+        ZoomSDKError result = [weakHelper SetVideoParentView:weakHost VideoContainerRect:rect];
+        [self logConnection:"camera-preview-settings-parent" code:result status:self.cameraPreviewStarted reason:0];
+        if (result != ZoomSDKError_Success) [self failCameraPreview:@"Zoom couldn’t display a local preview. Reopen Camera settings and try again."];
+    };
+    host.reconcileRenderer = ^(BOOL ready) {
+        typeof(self) self = weakSelf;
+        if (!ready || !self || WHZoomNativeOwner != self || self.cameraPreviewHelper != weakHelper || self.cameraPreviewRevision != revision || self.cameraPreviewStarted || self.cameraPreviewStartScheduled) return;
+        // Parent binding adds Zoom's own view/controller tree. Let AppKit
+        // attach that tree before requesting capture, as the SDK sample does.
+        self.cameraPreviewStartScheduled = YES;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            typeof(self) self = weakSelf;
+            if (!self || WHZoomNativeOwner != self || self.cameraPreviewHelper != weakHelper || self.cameraPreviewHost != weakHost || self.cameraPreviewRevision != revision) return;
+            self.cameraPreviewStartScheduled = NO;
+            [weakHost layoutSubtreeIfNeeded];
+            if (!weakHost.isReadyForRenderer || self.cameraPreviewStarted) return;
+            if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo] != AVAuthorizationStatusAuthorized) {
+                [self failCameraPreview:@"Camera permission is unavailable. Allow Yap camera access in System Settings and try again."]; return;
+            }
+            [self logCameraPreviewGeometry:weakHost];
+            self.cameraPreviewStarted = YES;
+            ZoomSDKError result = [weakHelper StartPreview];
+            [self logConnection:"camera-preview-settings-start" code:result status:0 reason:0];
+            if (result == ZoomSDKError_WrongUsage) {
+                // The SDK's viewDidAppear can start preview before this call.
+                // Normalize via public APIs, never treat WrongUsage as success.
+                ZoomSDKError stopped = [weakHelper StopPreview];
+                [self logConnection:"camera-preview-settings-restart" code:stopped status:0 reason:0];
+                if (WHZoomNativeOwner != self || self.cameraPreviewHelper != weakHelper || self.cameraPreviewHost != weakHost || self.cameraPreviewRevision != revision) return;
+                if (stopped == ZoomSDKError_Success) {
+                    result = [weakHelper StartPreview];
+                    [self logConnection:"camera-preview-settings-start" code:result status:1 reason:0];
+                }
+            }
+            if (result != ZoomSDKError_Success) [self failCameraPreview:@"Zoom couldn’t start a local preview. Close other camera previews and try again."];
+        });
+    };
+    [host scheduleRendererUpdate];
+    [self emitCameraEffects]; return host;
+}
+
+- (void)logCameraPreviewGeometry:(NSView *)host {
+    NSMutableArray<NSView *> *views = [NSMutableArray arrayWithObject:host];
+    for (NSUInteger index = 0; index < views.count && index < 24; index++) {
+        NSView *view = views[index];
+        NSRect visible = NSIntersectionRect(view.bounds, view.visibleRect);
+        os_log_info(WHZoomConnectionLog(), "camera-preview-surface class=%{public}@ width=%.0f height=%.0f visibleWidth=%.0f visibleHeight=%.0f hidden=%d layer=%d windowVisible=%d windowOccluded=%d",
+            NSStringFromClass(view.class), view.bounds.size.width, view.bounds.size.height,
+            visible.size.width, visible.size.height, view.hiddenOrHasHiddenAncestor,
+            view.wantsLayer, view.window.visible, (view.window.occlusionState & NSWindowOcclusionStateVisible) == 0);
+        [views addObjectsFromArray:view.subviews];
+    }
+}
+
+- (void)failCameraPreview:(NSString *)message {
+    [self stopCameraEffectsPreview];
+    self.cameraPreviewError = message;
+    [self emitCameraEffects];
+}
+
+- (void)stopCameraEffectsPreview {
+    self.cameraPreviewError = nil;
+    ZoomSDKSettingTestVideoDeviceHelper *helper = self.cameraPreviewHelper;
+    WHZoomRenderHost *host = self.cameraPreviewHost;
+    BOOL mayBeRunning = self.cameraPreviewStarted || self.cameraPreviewBound;
+    self.cameraPreviewHelper = nil;
+    self.cameraPreviewStarted = NO; self.cameraPreviewStartScheduled = NO; self.cameraPreviewBound = NO; self.cameraPreviewRevision += 1;
+    self.cameraPreviewHost.resizeRenderer = nil; self.cameraPreviewHost.reconcileRenderer = nil;
+    self.cameraPreviewHost = nil;
+    if (helper && WHZoomNativeOwner == self) {
+        if (mayBeRunning) {
+            ZoomSDKError result = [helper StopPreview];
+            [self logConnection:"camera-preview-settings-stop" code:result status:0 reason:0];
+        }
+        for (NSView *view in host.subviews.copy) [view removeFromSuperview];
+    }
+    [self emitCameraEffects];
+}
+
+- (void)closeCameraEffects {
+    [self stopMediaTests];
+    [self stopCameraEffectsPreview];
+    if (!self.cameraSettingsOnly) return; // Never touch a real meeting's lifecycle or camera.
+    void (^callback)(NSInteger, NSString *) = self.cameraPreparationCompletion;
+    self.cameraPreparationCompletion = nil; self.cameraPreparationToken = nil;
+    [self resetNative]; self.cameraSettingsOnly = NO;
+    if (callback) callback(ZoomSDKError_WrongUsage, @"Camera settings were closed.");
+}
+
+- (void)onSelectedVBImageChanged { [self emitCameraEffects]; }
+- (void)onVBImageDidDownloaded:(NSString *)path { [self emitCameraEffects]; }
+- (void)onCameraStatusChanged:(ZoomSDKDeviceStatus)status {
+    NSUUID *mediaGeneration = self.mediaGeneration;
+    [self onMain:^{
+        if (WHZoomNativeOwner != self || !self.initialized || self.mediaGeneration != mediaGeneration) return;
+        [self logConnection:"camera-device-status" code:status status:self.cameraPreviewStarted reason:0];
+        if (self.cameraPreviewHost && (status == Device_Error_Unknown || status == Device_Error_Found || status == No_Device)) {
+            [self failCameraPreview:@"Zoom can’t read the camera. Check its connection and privacy shutter, close other camera apps, and try again."];
+        } else [self emitCameraEffects];
+        [self emitMediaDevices];
+    }];
+}
+- (void)onSelectedCameraChanged:(NSString *)deviceID {
+    NSUUID *generation = self.mediaGeneration;
+    [self onMain:^{
+        if (![self mediaControlsReady] || self.mediaGeneration != generation) return;
+        [self emitCameraEffects]; [self emitMediaDevices];
+    }];
 }
 
 - (void)onMain:(dispatch_block_t)operation {
@@ -162,6 +1024,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (BOOL)canSafelyResetNative {
+    if (self.directShareRunning) return NO;
     if (!self.meeting) return !self.joinRequested;
     return self.terminalStatusObserved || WHZoomStatusIsTerminal([self.meeting getMeetingStatus]);
 }
@@ -188,9 +1051,15 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 
 - (void)requestLeaveWithMessage:(NSString *)message endMeeting:(BOOL)end {
     if (!self.sessionID) return;
+    [self stopMediaTests];
     if (message && !self.terminationMessage) self.terminationMessage = message;
     self.ending = YES;
     [self cancelConnectionWatchdog];
+    if (self.directShareRunning && !self.leaveWatchdogArmed) {
+        if (self.directShareCodeHandler) [self.directShareCodeHandler cancel];
+        else if (self.directShareContentHandler) [self.directShareContentHandler cancel];
+        else [self.directShareHelper stopDirectShare];
+    }
     if ([self canSafelyResetNative]) { [self terminateWithMessage:self.terminationMessage]; return; }
     [self emit:@"status" object:@"leaving"];
     if (message) [self emit:@"controlError" object:[message stringByAppendingString:@" Yap is asking Zoom to disconnect before closing this meeting."]];
@@ -206,20 +1075,27 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     [self checkLeaveCompletion:revision session:session];
 }
 
+- (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID {
+    if (self.sessionID) return ZoomSDKError_WrongUsage;
+    self.roomShare = YES;
+    return [self beginWithJWT:jwt zak:@"" meetingNumber:0 vanityID:nil passcode:nil registrantToken:nil
+                 displayName:@"" host:NO sessionID:sessionID];
+}
+
 - (NSInteger)beginWithJWT:(NSString *)jwt zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
                 vanityID:(NSString *)vanityID passcode:(NSString *)passcode
          registrantToken:(NSString *)registrantToken displayName:(NSString *)displayName
                     host:(BOOL)host sessionID:(NSString *)sessionID {
     NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
-    if (self.sessionID) return ZoomSDKError_WrongUsage;
+    if (self.sessionID || self.initialized || (WHZoomNativeOwner && WHZoomNativeOwner != self)) return ZoomSDKError_WrongUsage;
     self.sessionID = sessionID; self.ending = NO; self.joinRequested = NO; self.hosting = host;
     self.hasEnteredMeeting = NO; self.terminalStatusObserved = NO; self.terminationMessage = nil;
     ZoomSDKInitParams *params = [ZoomSDKInitParams new];
-    params.needCustomizedUI = YES; params.enableLog = NO; params.zoomDomain = @"zoom.us";
+    params.needCustomizedUI = !self.roomShare; params.enableLog = NO; params.zoomDomain = @"zoom.us";
     ZoomSDKError result = [[ZoomSDK sharedSDK] initSDKWithParams:params];
     [self logConnection:"init-return" code:result status:0 reason:0];
     if (result != ZoomSDKError_Success) { self.sessionID = nil; return result; }
-    self.initialized = YES;
+    self.initialized = YES; WHZoomNativeOwner = self;
     [[ZoomSDK sharedSDK] getReminderHelper].delegate = self;
     if (host) {
         ZoomSDKStartMeetingUseZakElements *context = [ZoomSDKStartMeetingUseZakElements new];
@@ -253,6 +1129,29 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 
 - (void)onZoomSDKAuthReturn:(ZoomSDKAuthError)result {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ [self onZoomSDKAuthReturn:result]; }); return; }
+    if (WHZoomNativeOwner != self || !self.initialized) return;
+    if (self.cameraSettingsOnly) {
+        if (!self.cameraPreparationCompletion || !self.cameraPreparationToken) return;
+        void (^callback)(NSInteger, NSString *) = self.cameraPreparationCompletion;
+        self.cameraPreparationCompletion = nil; self.cameraPreparationToken = nil;
+        if (result != ZoomSDKAuthError_Success) {
+            // Exit the delegate stack before uninitializing an authentication attempt.
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (WHZoomNativeOwner == self && self.cameraSettingsOnly) [self closeCameraEffects];
+                callback(result, @"Zoom couldn’t prepare Camera settings. Check your Zoom sign-in and try again.");
+            });
+            return;
+        }
+        self.meeting = [[ZoomSDK sharedSDK] getMeetingService];
+        self.cameraEffectsReady = self.meeting != nil;
+        [self.meeting getVideoContainer].delegate = self;
+        [[[[ZoomSDK sharedSDK] getSettingService] getVirtualBGSetting] setDelegate:self];
+        [[[[ZoomSDK sharedSDK] getSettingService] getVideoSetting] setDelegate:self];
+        [self installMediaDeviceObserver];
+        callback(self.cameraEffectsReady ? 0 : ZoomSDKError_ServiceFailed,
+            self.cameraEffectsReady ? nil : @"Zoom’s camera settings are unavailable. Please try again.");
+        return; // Settings authorization must never reach the meeting join path.
+    }
     if (!self.sessionID || self.ending || self.joinRequested) return;
     [self logConnection:"auth-result" code:result status:0 reason:0];
     if (result != ZoomSDKAuthError_Success) {
@@ -261,6 +1160,11 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     }
     self.meeting = [[ZoomSDK sharedSDK] getMeetingService];
     if (!self.meeting) { [self terminateWithMessage:@"Zoom’s meeting service could not start."]; return; }
+    self.cameraEffectsReady = YES;
+    [[[[ZoomSDK sharedSDK] getSettingService] getVirtualBGSetting] setDelegate:self];
+    [[[[ZoomSDK sharedSDK] getSettingService] getVideoSetting] setDelegate:self];
+    [self installMediaDeviceObserver];
+    [self stopMediaTests];
     // SDK services are guaranteed usable only after authorization succeeds.
     // Refuse to join if Zoom cannot confirm muted-on-entry, before any media starts.
     ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
@@ -271,6 +1175,13 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     [audio enableAutoJoinVoip:NO];
     [audio enablePushToTalk:NO];
     ZoomSDKVideoSetting *video = [[[ZoomSDK sharedSDK] getSettingService] getVideoSetting];
+    if (!video || [video disableVideoJoinMeeting:YES] != ZoomSDKError_Success || ![video isMuteMyVideoWhenJoinMeetingOn]) {
+        [self terminateWithMessage:@"Zoom could not confirm that your camera will stay off while joining. Please try again."];
+        return;
+    }
+    ZoomSDKPremeetingService *cameraPremeeting = [[ZoomSDK sharedSDK] getPremeetingService];
+    [cameraPremeeting enableForceAutoStartMyVideoWhenJoinMeeting:NO];
+    [cameraPremeeting enableForceAutoStopMyVideoWhenJoinMeeting:YES];
     // Yap supplies one accessible participant label and microphone indicator.
     // Configure Zoom's combined native name/mute decoration before creating views.
     ZoomSDKError labelResult = video ? [video displayUserNameOnVideo:NO] : ZoomSDKError_ServiceFailed;
@@ -292,6 +1203,38 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     [self.meeting getVideoContainer].delegate = self;
     [self.meeting getMeetingIndicatorController].delegate = self;
     [self.meeting getRecordController].delegate = self;
+    if (self.roomShare) {
+        self.joinParameters = nil;
+        // Direct Share's documented default-UI flow must ask what to share.
+        // Never inherit Zoom's automatic whole-desktop sharing preference.
+        if (!sharing || [sharing setShareOptionwWhenShareInDirectShare:ZoomSDKSettingShareScreenShareOption_AllOption] != ZoomSDKError_Success) {
+            [self terminateWithMessage:@"Zoom could not prepare the screen-sharing picker. Nothing has been shared."];
+            return;
+        }
+        ZoomSDKPremeetingService *premeeting = [[ZoomSDK sharedSDK] getPremeetingService];
+        [premeeting enableForceAutoStopMyVideoWhenJoinMeeting:YES];
+        [premeeting disableAutoShowSelectJoinAudioDlgWhenJoinMeeting:YES];
+        self.directShareHelper = [premeeting getDirectShareHelper];
+        ZoomSDKError availability = self.directShareHelper ? [self.directShareHelper canDirectShare] : ZoomSDKError_ServiceFailed;
+        [self logConnection:"direct-share-eligibility" code:availability
+                     status:[[[ZoomSDK sharedSDK] getAuthService] getAccountInfo] != nil reason:0];
+        if (availability != ZoomSDKError_Success) {
+            NSString *message = availability == ZoomSDKError_NoPermission
+                ? @"Zoom’s meeting SDK rejected room pairing before discovery started (NoPermission, code 6). Open Zoom Workplace to pair with the room, or join its meeting in Yap and choose Share."
+                : [NSString stringWithFormat:@"Yap couldn’t start Zoom Room pairing (SDK code %ld). No room search has started, and nothing has been shared. Please try again.", (long)availability];
+            [self terminateWithMessage:message];
+            return;
+        }
+        self.directShareHelper.delegate = self;
+        self.joinRequested = YES;
+        self.directShareRunning = YES;
+        ZoomSDKError result = [self.directShareHelper startDirectShare];
+        if (result != ZoomSDKError_Success) {
+            self.directShareRunning = NO;
+            [self terminateWithMessage:[NSString stringWithFormat:@"Zoom couldn’t start room sharing (SDK code %ld). Nothing has been shared. Please try again.", (long)result]];
+        }
+        return;
+    }
     BOOL isHost = self.hostParameters != nil;
     ZoomSDKMeetingStatus initialState = [self.meeting getMeetingStatus];
     BOOL sdkLoggedIn = [[[ZoomSDK sharedSDK] getAuthService] getAccountInfo] != nil;
@@ -312,6 +1255,62 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         [self onMeetingStatusChange:returnedState meetingError:ZoomSDKMeetingError_Success EndReason:EndMeetingReason_None];
     }
 }
+- (NSInteger)submitRoomSharingCode:(NSString *)code {
+    if (!self.roomShare || self.ending || !self.directShareCodeHandler) return ZoomSDKError_WrongUsage;
+    ZoomSDKDirectShareHandler *handler = self.directShareCodeHandler;
+    self.directShareCodeHandler = nil;
+    BOOL numeric = code.length > 0 && [code rangeOfCharacterFromSet:[[NSCharacterSet decimalDigitCharacterSet] invertedSet]].location == NSNotFound;
+    ZoomSDKError result = numeric ? [handler inputMeetingNumber:code] : [handler inputSharingKey:code];
+    if (result != ZoomSDKError_Success && !self.directShareCodeHandler) self.directShareCodeHandler = handler;
+    return result;
+}
+
+- (void)onDirectShareStatusReceived:(DirectShareStatus)status DirectShareReceived:(ZoomSDKDirectShareHandler *)handler {
+    [self onMain:^{
+        if (!self.sessionID || !self.roomShare) return;
+        if (status == DirectShareStatus_Ended) {
+            self.directShareRunning = NO;
+            self.directShareCodeHandler = nil;
+            self.directShareContentHandler = nil;
+            [self terminateWithMessage:self.terminationMessage];
+            return;
+        }
+        if (self.ending) return;
+        self.directShareCodeHandler = nil;
+        switch (status) {
+            case DirectShareStatus_NeedMeetingIDOrSharingKey:
+            case DirectShareStatus_NeedInputNewPairingCode:
+                self.directShareCodeHandler = handler;
+                [self emit:@"roomShare" object:@"needsCode"];
+                break;
+            case DirectShareStatus_WrongMeetingIDOrSharingKey:
+                self.directShareCodeHandler = handler;
+                [self emit:@"roomShare" object:@"invalidCode"];
+                break;
+            case DirectShareStatus_Connecting:
+                [self emit:@"roomShare" object:@"searching"];
+                break;
+            case DirectShareStatus_InProgress:
+                self.directShareContentHandler = nil;
+                [self emit:@"roomShare" object:@"sharing"];
+                break;
+            case DirectShareStatus_NetworkError:
+                [self requestLeaveWithMessage:@"Zoom couldn’t connect to the room. Check that your Mac and the Zoom Room are on the same network, then try again." endMeeting:NO];
+                break;
+            default: break;
+        }
+    }];
+}
+
+- (void)onDirectShareSpecifyContent:(ZoomSDKDirectShareSpecifyContentHandler *)handler {
+    [self onMain:^{
+        if (!self.sessionID || !self.roomShare || self.ending) return;
+        self.directShareCodeHandler = nil;
+        self.directShareContentHandler = handler;
+        [self emit:@"roomShare" object:@"choosingContent"];
+    }];
+}
+
 - (void)onZoomAuthIdentityExpired {
     [self emit:@"controlError" object:@"Zoom’s app authentication expired. Reconnect before your next meeting."];
 }
@@ -342,11 +1341,28 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (void)resetNative {
+    [self stopMediaTests];
+    if (self.initialized && WHZoomNativeOwner == self)
+        [[[[ZoomSDK sharedSDK] getSettingService] getAudioSetting] setDelegate:nil];
+    self.mediaGeneration = nil; self.mediaDeviceObserver = nil; self.mediaDevicesError = nil;
+    [self stopCameraEffectsPreview];
+    self.cameraEffectsReady = NO;
+    [self emitMediaDevices];
+    self.cameraEffectsAwaitingConfirmation = NO;
+    self.cameraPreparationToken = nil;
+    [self.photoShutter invalidate]; self.photoShutter = nil;
+    self.directShareHelper.delegate = nil;
+    self.directShareHelper = nil;
+    self.directShareCodeHandler = nil;
+    self.directShareContentHandler = nil;
+    self.directShareRunning = NO;
+    self.roomShare = NO;
     [self.requestedAvatars removeAllObjects]; [self.avatarRevisions removeAllObjects];
     self.profilePicturesHidden = nil;
     self.cloudRecordingStartRequest = nil; self.cloudRecordingRequesterID = 0;
     self.lastCloudRecordingPayload = nil;
-    self.localShareActive = NO; self.awaitingShareSource = NO; self.shareSourceRevision += 1;
+    self.chatFileSenders = nil; self.chatFileReceivers = nil; self.chatFileMetadata = nil; self.lastChatPolicy = nil;
+    self.localShareActive = NO; self.sharingComputerAudio = NO; self.requestedComputerAudio = NO; self.awaitingShareSource = NO; self.shareSourceRevision += 1;
     self.requestedShareWindowID = 0; self.requestedShareDisplayID = 0;
     [self.videoStatisticsTimer invalidate]; self.videoStatisticsTimer = nil;
     [self.videoSizeTimer invalidate]; self.videoSizeTimer = nil;
@@ -366,12 +1382,21 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     [self.meeting getVideoContainer].delegate = nil;
     [self.meeting getMeetingIndicatorController].delegate = nil;
     [self.meeting getRecordController].delegate = nil;
-    if (self.initialized) {
+    if (self.initialized && WHZoomNativeOwner == self) {
+        [[[[ZoomSDK sharedSDK] getSettingService] getVirtualBGSetting] setDelegate:nil];
+        [[[[ZoomSDK sharedSDK] getSettingService] getVideoSetting] setDelegate:nil];
         [[ZoomSDK sharedSDK] getAuthService].delegate = nil;
         [[ZoomSDK sharedSDK] getReminderHelper].delegate = nil;
         [[ZoomSDK sharedSDK] unInitSDK];
+        WHZoomNativeOwner = nil;
     }
     self.initialized = NO; self.joinRequested = NO; self.meeting = nil;
+    self.mediaMicrophoneHelper = nil; self.mediaSpeakerHelper = nil;
+    self.mediaMicrophoneTestToken = nil; self.mediaSpeakerTestToken = nil;
+    self.mediaMicrophoneTestDeviceID = nil; self.mediaSpeakerTestDeviceID = nil;
+    self.mediaMicrophoneObserver = nil; self.mediaSpeakerObserver = nil;
+    self.mediaMicrophoneStopFailed = NO; self.mediaSpeakerStopFailed = NO;
+    self.mediaMicrophoneNeedsRecordingStop = NO; self.mediaMicrophoneTestState = @"idle";
     self.joinParameters = nil; self.hostParameters = nil; self.appSignal = nil;
     self.terminationMessage = nil; self.hasEnteredMeeting = NO; self.terminalStatusObserved = NO;
     [self.indicators removeAllObjects];
@@ -382,6 +1407,8 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self onMeetingStatusChange:state meetingError:error EndReason:reason]; }); return;
     }
     if (!self.sessionID) return;
+    // The premeeting service can report Idle while it listens for a room.
+    if (self.roomShare && self.directShareRunning && state == ZoomSDKMeetingStatus_Idle && !self.ending) return;
     self.terminalStatusObserved = WHZoomStatusIsTerminal(state);
     [self logConnection:"meeting-status" code:error status:state reason:reason];
     [self updateConnectionWatchdogForStatus:state];
@@ -411,6 +1438,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
                 [self.meeting getRecordController].delegate = self;
             }
             [self emit:@"status" object:@"inMeeting"];
+            [self emitMediaDevices];
             [self refreshParticipants]; [self refreshWaitingRoom]; [self refreshShares]; [self refreshChatNotice];
             [self refreshIndicators];
             [self refreshCloudRecording];
@@ -420,12 +1448,12 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
                 if (invitation.length) [self emit:@"invitation" object:invitation];
                 // Connect playback while keeping the input muted through Zoom's join-VoIP setting.
                 ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
-                if ([[action getMyself] getAudioType] == ZoomSDKAudioType_None) {
+                if (!self.roomShare && [[action getMyself] getAudioType] == ZoomSDKAudioType_None) {
                     [action actionMeetingWithCmd:ActionMeetingCmd_JoinVoip userID:0 onScreen:ScreenType_First];
                 }
             }
             break;
-        case ZoomSDKMeetingStatus_AudioReady: [self refreshParticipants]; break;
+        case ZoomSDKMeetingStatus_AudioReady: [self refreshParticipants]; [self emitMediaDevices]; break;
         default: break;
     }
 }
@@ -458,6 +1486,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ [self refreshParticipants]; }); return; }
     if (!self.meeting || self.ending) return;
     ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
+    [self refreshChatPolicy];
     NSMutableArray *people = [NSMutableArray array];
     NSArray<NSNumber *> *identifiers = [action getParticipantsList] ?: @[];
     NSSet *currentIDs = [NSSet setWithArray:identifiers];
@@ -476,8 +1505,8 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         ZoomSDKAudioStatus audio = [user getAudioStatus];
         BOOL muted = !(audio == ZoomSDKAudioStatus_UnMuted || audio == ZoomSDKAudioStatus_UnMutedByHost || audio == ZoomSDKAudioStatus_UnMutedAllByHost);
         NSMutableDictionary *person = [@{@"id":@([user getUserID]).stringValue, @"name":[user getUserName] ?: @"Participant",
-                           @"isSelf":@([user isMySelf]), @"isHost":@([user isHost]), @"isMuted":@(muted),
-                           @"isCameraEnabled":@([user isVideoOn]), @"isSpeaking":@([user isTalking])} mutableCopy];
+                           @"isSelf":@([user isMySelf]), @"isHost":@([user isHost]), @"isMuted":@(muted), @"handRaised":@([user isRaisingHand]),
+                           @"isConferenceRoom":@([user isH323User]), @"isCameraEnabled":@([user isVideoOn]), @"isSpeaking":@([user isTalking])} mutableCopy];
         NSValue *videoSize = [self videoSizeForUser:identifier.unsignedIntValue cameraEnabled:[user isVideoOn]];
         if (videoSize) {
             person[@"videoWidth"] = @(videoSize.sizeValue.width);
@@ -520,6 +1549,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
             if (![[[self.meeting getMeetingActionController] getUserByUserID:userID] isVideoOn]) {
                 BOOL wasSubscribed = [self.subscribedVideos containsObject:identifier];
                 [self.subscribedVideos removeObject:identifier];
+                [self.videosReportingLiveData removeObject:identifier];
                 if (wasSubscribed) { [element subscribeVideo:NO]; [element showVideo:NO]; }
                 [self.videoRetryAttempts removeObjectForKey:identifier];
                 [self.videoRetryTokens removeObjectForKey:identifier];
@@ -543,6 +1573,9 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
     if (!action) return ZoomSDKError_WrongUsage;
     if (enabled) {
+        if ([self applyCameraBackground:self.preferredCameraBackground imagePath:self.preferredCameraImagePath autoFraming:self.preferredCameraAutoFraming] != ZoomSDKError_Success) {
+            return ZoomSDKError_ServiceFailed;
+        }
         // Request HD only after the person explicitly turns on their camera.
         ZoomSDKVideoSetting *video = [[[ZoomSDK sharedSDK] getSettingService] getVideoSetting];
         ZoomSDKError hdResult = video ? [video enableCatchHDVideo:YES] : ZoomSDKError_ServiceFailed;
@@ -583,13 +1616,109 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         statistics != nil, hd, cameraOn, sent, sent & 0xffff, sent >> 16, (long)statistics.sendFps, (long)statistics.sendBandwidth,
         received, received & 0xffff, received >> 16, (long)statistics.recvFps, (long)statistics.recvBandwidth);
 }
-- (NSInteger)sendChatText:(NSString *)text {
+- (NSDictionary *)chatPolicySnapshot {
+    ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
+    ZoomSDKChatStatus *status = [action getChatStatus];
+    ZoomSDKNormalMeetingChatPrivilege *normal = [status getNormalMeetingPrivilege];
+    ZoomSDKWebinarAttendeeChatPrivilege *attendee = [status getWebinarAttendeePrivilege];
+    ZoomSDKWebinarPanelistChatPrivilege *panelist = [status getWebinarPanelistPrivilege];
+    ZoomSDKUserInfo *myself = [action getMyself];
+    BOOL moderator = [myself isHost] || [myself getUserRole] == UserRole_CoHost;
     ZoomSDKMeetingChatController *chat = [self.meeting getMeetingChatController];
-    if (!chat) return ZoomSDKError_WrongUsage;
-    ZoomSDKChatMsgInfoBuilder *builder = [ZoomSDKChatMsgInfoBuilder new];
-    ZoomSDKChatInfo *message = [[[[builder setContent:text] setReceiver:0] setMessageType:ZoomSDKChatMessageType_To_All] build];
-    if (!message) return ZoomSDKError_WrongUsage;
-    return [chat sendChatMsgTo:message];
+    return @{@"canEveryone":[NSNumber numberWithBool:normal ? normal.canChat && normal.canChatToAll : (attendee.canChat && attendee.canChatToAllPanellistAndAttendee) || panelist.canChatToAllPanellistAndAttendee],
+        @"canPrivate":[NSNumber numberWithBool:normal ? normal.canChat && normal.canChatToIndividual : panelist.canChatToIndividual],
+        @"onlyHost":[NSNumber numberWithBool:normal.canChat && normal.isOnlyCanChatToHost],
+        @"canPanelists":[NSNumber numberWithBool:(attendee.canChat && attendee.canChatToAllPanellist) || panelist.canChatToAllPanellist],
+        @"canWaitingRoom":[NSNumber numberWithBool:moderator && [[self.meeting getWaitingRoomController] isEnableWaitingRoomOnEntry]],
+        @"canTransferFiles":[NSNumber numberWithBool:[chat isFileTransferEnabled]], @"allowedFileTypes":[chat getTransferFileTypeAllowList] ?: @"",
+        @"maxFileBytes":@([chat getMaxTransferFileSizeBytes])};
+}
+- (void)refreshChatPolicy {
+    if (!self.sessionID || self.ending || !self.hasEnteredMeeting) return;
+    NSDictionary *policy = [self chatPolicySnapshot];
+    if (![policy isEqual:self.lastChatPolicy]) { self.lastChatPolicy = policy; [self emit:@"chatPolicy" object:policy]; }
+}
+- (BOOL)canSendChatTo:(NSDictionary *)recipient {
+    NSDictionary *policy = [self chatPolicySnapshot];
+    NSString *kind = recipient[@"kind"];
+    if ([kind isEqual:@"everyone"]) return [policy[@"canEveryone"] boolValue];
+    if ([kind isEqual:@"waitingRoom"]) return [policy[@"canWaitingRoom"] boolValue];
+    if ([kind isEqual:@"panelists"]) return [policy[@"canPanelists"] boolValue];
+    if (![kind isEqual:@"participant"]) return NO;
+    NSString *identifier = recipient[@"participantID"];
+    if (![identifier isKindOfClass:NSString.class] || !identifier.length ||
+        [identifier rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location != NSNotFound ||
+        identifier.longLongValue <= 0 || identifier.longLongValue > UINT32_MAX) return NO;
+    ZoomSDKUserInfo *user = [[self.meeting getMeetingActionController] getUserByUserID:(unsigned int)identifier.longLongValue];
+    return user && ![user isMySelf] && ([policy[@"onlyHost"] boolValue] ? [user isHost] : [policy[@"canPrivate"] boolValue]);
+}
+- (NSInteger)sendChatMessage:(NSData *)payload {
+    if (!self.sessionID || self.ending || !self.hasEnteredMeeting) return ZoomSDKError_WrongUsage;
+    NSDictionary *draft = [NSJSONSerialization JSONObjectWithData:payload options:0 error:nil];
+    if (![draft isKindOfClass:NSDictionary.class] || ![draft[@"recipient"] isKindOfClass:NSDictionary.class]) return ZoomSDKError_InvalidParameter;
+    if (![self canSendChatTo:draft[@"recipient"]]) { [self refreshChatPolicy]; return ZoomSDKError_NoPermission; }
+    ZoomSDKMeetingChatController *chat = [self.meeting getMeetingChatController];
+    ZoomSDKChatInfo *message = WHZoomBuildChatMessage(draft, chat, [[[self.meeting getMeetingActionController] getMyself] getUserID]);
+    return message ? [chat sendChatMsgTo:message] : ZoomSDKError_InvalidParameter;
+}
+- (NSInteger)sendChatText:(NSString *)text {
+    NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"text":text, @"recipient":@{@"kind":@"everyone", @"name":@"Everyone"}} options:0 error:nil];
+    return [self sendChatMessage:data];
+}
+- (NSInteger)sendChatReply:(NSString *)text toMessage:(NSString *)messageID {
+    ZoomSDKChatInfo *original = [[self.meeting getMeetingChatController] getChatMessageById:messageID];
+    if (!original) return ZoomSDKError_WrongUsage;
+    NSDictionary *target = WHZoomChatRecipient(original, [[[self.meeting getMeetingActionController] getMyself] getUserID], YES);
+    NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"text":text, @"recipient":target, @"replyToSDKID":messageID} options:0 error:nil];
+    return [self sendChatMessage:data];
+}
+- (NSInteger)deleteChatMessage:(NSString *)messageID {
+    ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
+    ZoomSDKChatInfo *message = [[self.meeting getMeetingChatController] getChatMessageById:messageID];
+    if (!self.sessionID || self.ending || !message || [message getSenderUserID] != [[action getMyself] getUserID] ||
+        ![action isChatMessageCanBeDeleted:messageID]) return ZoomSDKError_NoPermission;
+    return [action deleteChatMessage:messageID];
+}
+- (NSInteger)sendChatFile:(NSString *)path recipient:(NSData *)data {
+    NSDictionary *recipient = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![recipient isKindOfClass:NSDictionary.class] || ![self canSendChatTo:recipient]) return ZoomSDKError_NoPermission;
+    ZoomSDKMeetingChatController *chat = [self.meeting getMeetingChatController];
+    if (!self.sessionID || self.ending || !self.hasEnteredMeeting || ![chat isFileTransferEnabled]) return ZoomSDKError_NoPermission;
+    NSString *kind = recipient[@"kind"];
+    if ([kind isEqual:@"everyone"]) return [chat transferFileToAll:path];
+    if ([kind isEqual:@"participant"]) return [chat transferFile:path toUser:[recipient[@"participantID"] intValue]];
+    return ZoomSDKError_UnSupportedFeature;
+}
+- (NSInteger)receiveChatFile:(NSString *)attachmentID path:(NSString *)path {
+    ZoomSDKFileReceiver *receiver = self.chatFileReceivers[attachmentID];
+    NSDictionary *previous = self.chatFileMetadata[attachmentID];
+    if (!self.sessionID || self.ending || !receiver || !path.isAbsolutePath || !previous ||
+        [previous[@"isFromSelf"] boolValue] || ![@[@"available", @"failed", @"cancelled"] containsObject:previous[@"status"]]) return ZoomSDKError_WrongUsage;
+    NSString *session = [self.sessionID copy];
+    // The receiver remains owned by this session after cancellation. Ask the
+    // SDK to start again; its actual return value decides whether it can retry.
+    // Clear cancellation suppression before calling, since progress can arrive
+    // synchronously. Do not overwrite progress already delivered by the SDK.
+    NSMutableDictionary *receiving = [previous mutableCopy];
+    receiving[@"status"] = @"transferring"; receiving[@"progress"] = @0;
+    self.chatFileMetadata[attachmentID] = receiving;
+    ZoomSDKError result = [receiver startReceive:path];
+    if ([self.sessionID isEqual:session] && self.chatFileMetadata[attachmentID] == receiving) {
+        if (result == ZoomSDKError_Success) [self emit:@"chatAttachment" object:receiving];
+        else self.chatFileMetadata[attachmentID] = previous;
+    }
+    return result;
+}
+- (NSInteger)cancelChatFile:(NSString *)attachmentID {
+    if (!self.sessionID || self.ending) return ZoomSDKError_WrongUsage;
+    ZoomSDKFileSender *sender = self.chatFileSenders[attachmentID];
+    ZoomSDKFileReceiver *receiver = self.chatFileReceivers[attachmentID];
+    ZoomSDKError result = sender ? [sender cancelSend] : receiver ? [receiver cancelReceive] : ZoomSDKError_WrongUsage;
+    if (result == ZoomSDKError_Success && self.chatFileMetadata[attachmentID]) {
+        NSMutableDictionary *metadata = [self.chatFileMetadata[attachmentID] mutableCopy]; metadata[@"status"] = @"cancelled";
+        self.chatFileMetadata[attachmentID] = metadata; [self emit:@"chatAttachment" object:metadata];
+    }
+    return result;
 }
 - (BOOL)hasCloudRecordingControlRole {
     ZoomSDKUserInfo *myself = [[self.meeting getMeetingActionController] getMyself];
@@ -675,17 +1804,23 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 - (void)onChatMessageNotification:(ZoomSDKChatInfo *)chat { [self publishChat:chat event:@"chat"]; }
 - (void)publishChat:(ZoomSDKChatInfo *)chat event:(NSString *)event {
+    NSString *session = [self.sessionID copy];
+    unsigned int selfID = [[[self.meeting getMeetingActionController] getMyself] getUserID];
+    NSDictionary *recipient = WHZoomChatRecipient(chat, selfID, NO);
     NSDictionary *snapshot = @{@"id":[[chat getMessageID] copy] ?: @"", @"senderName":[[chat getSenderDisplayName] copy] ?: @"Participant",
         @"text":[[chat getMsgContent] copy] ?: @"", @"timestamp":@([chat getTimeStamp]),
-        @"senderID":@([chat getSenderUserID])};
+        @"senderID":@([chat getSenderUserID]).stringValue, @"threadID":[[chat getThreadID] copy] ?: @"",
+        @"isReply":[NSNumber numberWithBool:[chat isComment]], @"recipient":recipient, @"runs":WHZoomChatRuns(chat),
+        @"canReply":[NSNumber numberWithBool:[chat isThread] || [chat isComment]], @"isFromSelf":[NSNumber numberWithBool:[chat getSenderUserID] == selfID],
+        @"canDelete":[NSNumber numberWithBool:[chat getSenderUserID] == selfID && [[self.meeting getMeetingActionController] isChatMessageCanBeDeleted:[chat getMessageID]]]};
     [self onMain:^{
-        NSMutableDictionary *message = [snapshot mutableCopy];
-        message[@"isFromSelf"] = @([message[@"senderID"] unsignedIntValue] == [[[self.meeting getMeetingActionController] getMyself] getUserID]);
-        [self emit:event object:message];
+        if (!session || ![self.sessionID isEqual:session] || self.ending) return;
+        [self emit:event object:snapshot];
     }];
 }
 - (void)refreshChatNotice {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ [self refreshChatNotice]; }); return; }
+    [self refreshChatPolicy];
     ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
     if ([action isMeetingChatLegalNoticeAvailable]) {
         [self emit:@"chatLegalNotice" object:@{@"prompt":[action getChatLegalNoticesPrompt] ?: @"",
@@ -768,6 +1903,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     if (subscribed) return;
     // Bind after the participant's camera-on view has joined a window. Eager binding
     // on onUserJoin can precede Zoom's video readiness (including admission).
+    [self.videosReportingLiveData removeObject:identifier];
     [self.subscribedVideos addObject:identifier]; // guards synchronous SDK callbacks
     unsigned int userID = (unsigned int)identifier.longLongValue;
     if (element.userid != userID) {
@@ -803,6 +1939,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 - (void)suspendVideo:(NSString *)identifier element:(ZoomSDKNormalVideoElement *)element {
     if (self.videos[identifier] != element || ![self.subscribedVideos containsObject:identifier]) return;
     [self.subscribedVideos removeObject:identifier];
+    [self.videosReportingLiveData removeObject:identifier];
     [self.videoRetryTokens removeObjectForKey:identifier];
     [self.videoRetryAttempts removeObjectForKey:identifier];
     [self.videoRetryExhausted removeObject:identifier];
@@ -868,6 +2005,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
                 WHZoomRenderHost *host = self.videoHosts[identifier];
                 host.resizeRenderer = nil; host.reconcileRenderer = nil;
                 [self.subscribedVideos removeObject:identifier];
+                [self.videosReportingLiveData removeObject:identifier];
                 [self.videoRetryAttempts removeObjectForKey:identifier];
                 [self.videoRetryTokens removeObjectForKey:identifier]; [self.videoRetryExhausted removeObject:identifier];
                 // Drop identity before SDK cleanup can synchronously call its delegate.
@@ -911,17 +2049,40 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     } @finally { self.updatingVisibleParticipants = NO; }
 }
 - (NSView *)videoViewForParticipant:(NSString *)participantID { return self.videoHosts[participantID]; }
+- (BOOL)isVideoReadyForCaptureForParticipant:(NSString *)participantID {
+    ZoomSDKNormalVideoElement *element = self.videos[participantID];
+    if (!self.sessionID || self.ending || !self.hasEnteredMeeting || !element ||
+        element.userid != participantID.longLongValue || ![self.subscribedVideos containsObject:participantID] ||
+        ![self.videosReportingLiveData containsObject:participantID] ||
+        self.videoRetryTokens[participantID] || [self.videoRetryExhausted containsObject:participantID] ||
+        !self.videoHosts[participantID].isReadyForRenderer || [element getDataType] != VideoRenderDataType_Video ||
+        ![[[self.meeting getMeetingActionController] getUserByUserID:element.userid] isVideoOn]) return NO;
+    // The SDK exposes a render-data-type callback, not a per-frame presentation
+    // callback. Check its current video state and uncached stream geometry;
+    // callers also allow the native window compositor time to present it.
+    CGSize size = [self.meeting getUserVideoSize:element.userid];
+    return isfinite(size.width) && isfinite(size.height) && size.width >= 1 && size.height >= 1 &&
+        size.width <= 16384 && size.height <= 16384 && size.width / size.height >= 0.125 && size.width / size.height <= 8;
+}
 - (void)onRenderUserChanged:(ZoomSDKVideoElement *)element User:(unsigned int)userID {
     [self onMain:^{ [self logVideo:"render-user" element:element code:0]; [self refreshParticipants]; }];
 }
 - (void)onRenderDataTypeChanged:(ZoomSDKVideoElement *)element DataType:(VideoRenderDataType)type {
-    [self onMain:^{ [self logVideo:"render-data" element:element code:type]; [self refreshParticipants]; }];
+    [self onMain:^{
+        NSString *identifier = element ? [self.videos allKeysForObject:(id)element].firstObject : nil;
+        if (!identifier || !self.sessionID || self.ending) return;
+        if (type == VideoRenderDataType_Video && [self.subscribedVideos containsObject:identifier]) {
+            [self.videosReportingLiveData addObject:identifier];
+        } else [self.videosReportingLiveData removeObject:identifier];
+        [self logVideo:"render-data" element:element code:type]; [self refreshParticipants];
+    }];
 }
 - (void)onSubscribeUserFail:(ZoomSDKVideoSubscribeFailReason)error videoElement:(ZoomSDKVideoElement *)element {
     [self onMain:^{
         if (!element || !self.sessionID || self.ending) return;
         NSString *identifier = [self.videos allKeysForObject:(id)element].firstObject;
         if (!identifier || ![self.subscribedVideos containsObject:identifier] || !self.videoHosts[identifier].isReadyForRenderer) return;
+        if (error != ZoomSDKVideoSubscribe_Fail_None) [self.videosReportingLiveData removeObject:identifier];
         [self logVideo:"subscription-failed" element:element code:error];
         if (error == ZoomSDKVideoSubscribe_Fail_TooFrequentCall) {
             [self scheduleVideoRetry:identifier element:(ZoomSDKNormalVideoElement *)element];
@@ -935,9 +2096,20 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     }];
 }
 
-- (BOOL)isWindowShareable:(uint32_t)windowID { return [[self.meeting getASController] isShareAppValid:windowID]; }
-- (BOOL)isDesktopSharingEnabled { return [[self.meeting getASController] isDesktopSharingEnabled]; }
+- (BOOL)isWindowShareable:(uint32_t)windowID {
+    if (self.roomShare) return [[self.directShareContentHandler getSupportedDirectShareType] containsObject:@(ZoomSDKShareContentType_AS)];
+    return [[self.meeting getASController] isShareAppValid:windowID];
+}
+- (BOOL)isDesktopSharingEnabled {
+    if (self.roomShare) return [[self.directShareContentHandler getSupportedDirectShareType] containsObject:@(ZoomSDKShareContentType_DS)];
+    return [[self.meeting getASController] isDesktopSharingEnabled];
+}
 - (NSInteger)startSharingWindow:(uint32_t)windowID {
+    if (self.photoShutter || self.sharingComputerAudio || self.requestedComputerAudio) return ZoomSDKError_WrongUsage;
+    if (self.roomShare) {
+        if (!self.directShareContentHandler || self.ending) return ZoomSDKError_WrongUsage;
+        return [self.directShareContentHandler tryShareApplication:windowID shareSound:NO optimizeVideoClip:NO];
+    }
     ZoomSDKASController *share = [self.meeting getASController];
     if (!share || ![share isShareAppValid:windowID]) return ZoomSDKError_WrongUsage;
     ZoomSDKError result = [share startAppShare:windowID];
@@ -946,12 +2118,68 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     return result;
 }
 - (NSInteger)startSharingDisplay:(uint32_t)displayID {
+    if (self.photoShutter || self.sharingComputerAudio || self.requestedComputerAudio) return ZoomSDKError_WrongUsage;
+    if (self.roomShare) {
+        if (!self.directShareContentHandler || self.ending) return ZoomSDKError_WrongUsage;
+        return [self.directShareContentHandler tryShareDesktop:displayID shareSound:NO optimizeVideoClip:NO];
+    }
     ZoomSDKASController *share = [self.meeting getASController];
     if (!share || ![share isDesktopSharingEnabled]) return ZoomSDKError_WrongUsage;
     ZoomSDKError result = [share startMonitorShare:displayID];
     [self logConnection:"share-display-return" code:result status:[self.meeting getMeetingStatus] reason:0];
     if (result == ZoomSDKError_Success) [self confirmRequestedShareWindow:0 display:displayID];
     return result;
+}
+- (BOOL)isComputerAudioSharingEnabled {
+    return !self.roomShare && !self.ending && [[self.meeting getASController] isAbleToShareComputerAudio];
+}
+- (NSInteger)startSharingComputerAudio {
+    // Audio-only must never silently retain an existing screen broadcast.
+    if (self.photoShutter || self.localShareActive || self.requestedComputerAudio || ![self isComputerAudioSharingEnabled]) return ZoomSDKError_WrongUsage;
+    ZoomSDKASController *share = [self.meeting getASController];
+    ZoomSDKError result = [share setAudioShareMode:ZoomSDKAudioShareMode_Stereo];
+    if (result != ZoomSDKError_Success) return result;
+    self.requestedComputerAudio = YES;
+    result = [share startAudioShare];
+    if (result != ZoomSDKError_Success) self.requestedComputerAudio = NO;
+    [self logConnection:"share-audio-return" code:result status:[self.meeting getMeetingStatus] reason:0];
+    return result;
+}
+- (NSInteger)preparePhotoShutter:(NSData *)pcm {
+    if (self.photoShutter || self.localShareActive || self.requestedComputerAudio || self.roomShare || self.ending ||
+        !self.sessionID || !self.meeting || pcm.length == 0 || pcm.length > 88200 || pcm.length % 2) return ZoomSDKError_WrongUsage;
+    ZoomSDKRawDataShareSourceController *source = nil;
+    ZoomSDKError result = [[[ZoomSDK sharedSDK] getRawDataController] getRawDataShareSourceHelper:&source];
+    if (result != ZoomSDKError_Success || !source) return result == ZoomSDKError_Success ? ZoomSDKError_UnSupportedFeature : result;
+    WHPhotoShutterAudio *audio = [WHPhotoShutterAudio new];
+    audio.pcm = pcm;
+    __weak typeof(self) weakSelf = self;
+    __weak WHPhotoShutterAudio *weakAudio = audio;
+    audio.finished = ^{
+        if (weakAudio.failed) [weakSelf emit:@"controlError" object:@"Zoom couldn’t send the shutter sound to the meeting."];
+        [weakSelf cancelPhotoShutter];
+    };
+    audio.stopped = ^{
+        if (weakSelf.photoShutter == weakAudio) weakSelf.photoShutter = nil;
+    };
+    self.photoShutter = audio;
+    result = [source setSharePureAudioSource:audio];
+    if (result != ZoomSDKError_Success) { [audio invalidate]; self.photoShutter = nil; }
+    return result;
+}
+- (BOOL)isPhotoShutterReady { return self.photoShutter.sender != nil; }
+- (BOOL)playPhotoShutter {
+    if (!self.photoShutter.sender) return NO;
+    self.photoShutter.playing = YES;
+    return YES;
+}
+- (void)cancelPhotoShutter {
+    if (!self.photoShutter || self.photoShutter.stopping) return;
+    self.photoShutter.stopping = YES;
+    [self.photoShutter invalidate];
+    // Keep the delegate retained through stopShare, including synchronous SDK callbacks.
+    [[self.meeting getASController] stopShare];
+    // onStopSendAudio releases the delegate after the SDK is finished with it.
 }
 - (NSInteger)stopSharing {
     // Cancel pending source-name reconciliation; the SDK's SelfEnd callback still
@@ -963,6 +2191,10 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 - (void)publishLocalShareWindow:(uint32_t)windowID display:(uint32_t)displayID {
     if (!self.localShareActive) return;
+    if (self.sharingComputerAudio) {
+        [self emit:@"sharing" object:@{@"active":@YES, @"computerAudio":@YES}];
+        return;
+    }
     if (self.awaitingShareSource) {
         if (WHZoomShareSourceMatches(windowID, displayID, self.requestedShareWindowID, self.requestedShareDisplayID)) {
             self.awaitingShareSource = NO;
@@ -1022,6 +2254,9 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 - (void)sharingStatus:(ZoomSDKShareStatus)status owner:(unsigned int)ownerID window:(uint32_t)windowID display:(uint32_t)displayID {
     if (!self.sessionID) return;
     unsigned int localID = [[[self.meeting getMeetingActionController] getMyself] getUserID];
+    if (self.photoShutter && (status == ZoomSDKShareStatus_SelfStartAudioShare || status == ZoomSDKShareStatus_SelfStopAudioShare)) return;
+    // An audio-ended callback accompanying a screen share must not hide its Stop control.
+    if (status == ZoomSDKShareStatus_SelfStopAudioShare && !self.sharingComputerAudio && !self.requestedComputerAudio) return;
     WHZoomLocalShareUpdate update = WHZoomLocalShareUpdateForStatus(status, ownerID, localID);
     // No window/display/user identifiers or titles enter diagnostics.
     os_log_info(WHZoomConnectionLog(), "share=status status=%{public}ld update=%{public}lu ownerPresent=%{public}d localOwner=%{public}d windowPresent=%{public}d displayPresent=%{public}d",
@@ -1029,10 +2264,16 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     switch (update) {
         case WHZoomLocalShareUpdateActive:
             self.localShareActive = YES;
+            if (status == ZoomSDKShareStatus_SelfStartAudioShare || self.requestedComputerAudio) {
+                self.sharingComputerAudio = YES;
+                self.requestedComputerAudio = NO;
+                self.awaitingShareSource = NO;
+                self.shareSourceRevision += 1;
+            }
             [self publishLocalShareWindow:windowID display:displayID];
             break;
         case WHZoomLocalShareUpdateIdle:
-            self.localShareActive = NO; self.awaitingShareSource = NO; self.shareSourceRevision += 1;
+            self.localShareActive = NO; self.sharingComputerAudio = NO; self.requestedComputerAudio = NO; self.awaitingShareSource = NO; self.shareSourceRevision += 1;
             [self emit:@"sharing" object:@{@"active":@NO}];
             break;
         case WHZoomLocalShareUpdateUnchanged: break;
@@ -1040,7 +2281,13 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     [self refreshShares];
 }
 - (void)onShareContentChanged:(ZoomSDKSharingSourceInfo *)info { [self onSharingStatusChanged:info]; }
-- (void)onFailedToStartShare { [self emit:@"controlError" object:@"Zoom could not start sharing. Check screen recording permission and the meeting’s sharing settings."]; }
+- (void)onFailedToStartShare {
+    BOOL audio = self.requestedComputerAudio;
+    self.requestedComputerAudio = NO;
+    [self emit:@"controlError" object:audio
+        ? @"Zoom could not start computer audio sharing. Check the meeting’s sharing settings and allow any macOS audio capture request, then try again."
+        : @"Zoom could not start sharing. Check screen recording permission and the meeting’s sharing settings."];
+}
 - (void)refreshShares {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ [self refreshShares]; }); return; }
     ZoomSDKASController *controller = [self.meeting getASController];
@@ -1193,7 +2440,10 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 - (void)onVirtualNameTagStatusChanged:(BOOL)bOn userID:(unsigned int)userID { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onVirtualNameTagRosterInfoUpdated:(unsigned int)userID { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onSpotlightVideoUserChange:(NSArray*_Nullable)spotlightedUserList { /* This feature is not offered by Yap. No state or permission is changed. */ }
-- (void)onLowOrRaiseHandStatusChange:(BOOL)raise UserID:(unsigned int)userID { /* This feature is not offered by Yap. No state or permission is changed. */ }
+- (void)onLowOrRaiseHandStatusChange:(BOOL)raise UserID:(unsigned int)userID {
+    NSString *session = [self.sessionID copy];
+    [self onMain:^{ if (WHZoomNativeOwner == self && session && [self.sessionID isEqualToString:session] && self.hasEnteredMeeting && !self.ending) [self refreshParticipants]; }];
+}
 - (void)onMultiToSingleShareNeedConfirm:(ZoomSDKMultiToSingleShareConfirmHandler*_Nullable)confirmHandle { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onActiveVideoUserChanged:(unsigned int)userID { [self refreshParticipants]; }
 - (void)onActiveSpeakerVideoUserChanged:(unsigned int)userID { [self refreshParticipants]; }
@@ -1203,7 +2453,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 - (void)onHostVideoOrderUpdated:(NSArray*)orderList { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onLocalVideoOrderUpdated:(NSArray*)localOrderList { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onFollowHostVideoOrderChanged:(BOOL)follow { /* This feature is not offered by Yap. No state or permission is changed. */ }
-- (void)onAllHandsLowered { /* This feature is not offered by Yap. No state or permission is changed. */ }
+- (void)onAllHandsLowered { [self onLowOrRaiseHandStatusChange:NO UserID:0]; }
 - (void)onUserVideoQualityChanged:(ZoomSDKVideoQuality)quality userID:(unsigned int)userID { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onChatMsgDeleteNotification:(NSString*)msgID messageDeleteType:(ZoomSDKChatMessageDeleteType)deleteBy { [self emit:@"chatDeleted" object:[msgID copy] ?: @""]; }
 - (void)onShareMeetingChatStatusChanged:(BOOL)isStart { /* This feature is not offered by Yap. No state or permission is changed. */ }
@@ -1247,9 +2497,53 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 - (void)onRemoveCompanionRelation:(unsigned int)childUserID { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onGrantCoOwnerPrivilegeChanged:(BOOL)canGrantOther { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onChatMessageEditNotification:(ZoomSDKChatInfo*)chatInfo { [self publishChat:chatInfo event:@"chatEdited"]; }
-- (void)onFileSendStart:(ZoomSDKFileSender *)sender { /* This feature is not offered by Yap. No state or permission is changed. */ }
-- (void)onFileReceived:(ZoomSDKFileReceiver *)receiver { /* This feature is not offered by Yap. No state or permission is changed. */ }
-- (void)onFileTransferProgress:(ZoomSDKFileTransferInfo *)info { /* This feature is not offered by Yap. No state or permission is changed. */ }
+- (void)publishChatFile:(ZoomSDKFileTransferInfo *)info metadata:(NSDictionary *)initial {
+    if (!self.sessionID || self.ending || !info.messageId.length) return;
+    if (!self.chatFileMetadata) self.chatFileMetadata = [NSMutableDictionary dictionary];
+    NSMutableDictionary *metadata = [(initial ?: self.chatFileMetadata[info.messageId]) mutableCopy];
+    if (!metadata) return;
+    NSString *status = @"available";
+    switch (info.transferStatus) {
+        case ZoomSDKFileTransferStatus_Transfering: status = @"transferring"; break;
+        case ZoomSDKFileTransferStatus_TransferDone: status = @"completed"; break;
+        case ZoomSDKFileTransferStatus_TransferFailed: status = @"failed"; break;
+        default: if ([metadata[@"isFromSelf"] boolValue]) status = @"transferring"; break;
+    }
+    // A cancellation callback must not turn a cancelled transfer back into Failed.
+    if ([metadata[@"status"] isEqual:@"cancelled"] && info.transferStatus != ZoomSDKFileTransferStatus_TransferDone) status = @"cancelled";
+    [metadata addEntriesFromDictionary:@{@"id":info.messageId, @"name":info.fileName ?: @"File", @"bytes":@(info.fileSizeBytes),
+        @"date":@(info.timeStamp), @"status":status, @"progress":@(MIN(1.0, info.completePercentage / 100.0))}];
+    self.chatFileMetadata[info.messageId] = metadata;
+    [self emit:@"chatAttachment" object:metadata];
+}
+- (void)onFileSendStart:(ZoomSDKFileSender *)sender {
+    NSString *session = [self.sessionID copy];
+    [self onMain:^{
+        if (!session || ![self.sessionID isEqual:session] || self.ending || !sender.transferInfo.messageId.length) return;
+        if (!self.chatFileSenders) self.chatFileSenders = [NSMutableDictionary dictionary];
+        self.chatFileSenders[sender.transferInfo.messageId] = sender;
+        ZoomSDKUserInfo *user = [[self.meeting getMeetingActionController] getUserByUserID:sender.receiverUserId];
+        NSDictionary *recipient = sender.receiverUserId ? @{@"kind":@"participant", @"participantID":@(sender.receiverUserId).stringValue, @"name":[user getUserName] ?: @"Participant"} : @{@"kind":@"everyone", @"name":@"Everyone"};
+        [self publishChatFile:sender.transferInfo metadata:@{@"senderName":@"You", @"recipient":recipient, @"isFromSelf":@YES}];
+    }];
+}
+- (void)onFileReceived:(ZoomSDKFileReceiver *)receiver {
+    NSString *session = [self.sessionID copy];
+    [self onMain:^{
+        if (!session || ![self.sessionID isEqual:session] || self.ending || !receiver.transferInfo.messageId.length) return;
+        if (!self.chatFileReceivers) self.chatFileReceivers = [NSMutableDictionary dictionary];
+        self.chatFileReceivers[receiver.transferInfo.messageId] = receiver;
+        ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
+        ZoomSDKUserInfo *user = [action getUserByUserID:receiver.senderUserId];
+        NSDictionary *recipient = receiver.transferInfo.isSendToAll ? @{@"kind":@"everyone", @"name":@"Everyone"} :
+            @{@"kind":@"participant", @"participantID":@([[action getMyself] getUserID]).stringValue, @"name":@"You"};
+        [self publishChatFile:receiver.transferInfo metadata:@{@"senderName":[user getUserName] ?: @"Participant", @"recipient":recipient, @"isFromSelf":@NO}];
+    }];
+}
+- (void)onFileTransferProgress:(ZoomSDKFileTransferInfo *)info {
+    NSString *session = [self.sessionID copy];
+    [self onMain:^{ if (session && [self.sessionID isEqual:session] && !self.ending) [self publishChatFile:info metadata:nil]; }];
+}
 - (void)onWaitingRoomPresetAudioStatusChanged:(BOOL)audioCanTurnOn { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onWaitingRoomPresetVideoStatusChanged:(BOOL)videoCanTurnOn { /* This feature is not offered by Yap. No state or permission is changed. */ }
 - (void)onCustomWaitingRoomDataUpdated:(ZoomSDKCustomWaitingRoomData*_Nullable)bData handle:(ZoomSDKWaitingRoomDataDownloadHandler*_Nullable)handle { /* This feature is not offered by Yap. No state or permission is changed. */ }

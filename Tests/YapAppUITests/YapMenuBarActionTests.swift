@@ -6,6 +6,52 @@ import YapMeetings
 
 @Suite("Menu bar meeting actions", .serialized) @MainActor
 struct YapMenuBarActionTests {
+    @Test func scheduleJoinCanSelectASecondReadyEventWithoutJoiningTheFirst() async {
+        let first = MenuBarFixture.event(number: "12345678901", id: "first")
+        let second = MenuBarFixture.event(number: "98765432101", id: "second")
+        let fixture = MenuBarFixture(events: [first, second])
+        defer { fixture.cleanUp() }
+        await fixture.model.start()
+
+        await fixture.actions.joinScheduleEvent(id: second.id)
+
+        #expect(fixture.driver.requests.count == 1)
+        #expect(fixture.model.selectedEvent?.id == second.id)
+        #expect(await fixture.calendar.eventRequests == 2)
+        #expect(fixture.driver.mediaControls == 0)
+    }
+
+    @Test func aRemovedScheduleEventCannotJoinTheReplacementMeeting() async {
+        let previous = MenuBarFixture.event(number: "12345678901", id: "previous")
+        let replacement = MenuBarFixture.event(number: "98765432101", id: "replacement")
+        let fixture = MenuBarFixture(events: [previous])
+        defer { fixture.cleanUp() }
+        await fixture.model.start()
+        await fixture.calendar.setEvents([replacement])
+
+        await fixture.actions.joinScheduleEvent(id: previous.id)
+
+        #expect(fixture.driver.requests.isEmpty)
+        #expect(fixture.model.error != nil)
+        #expect(!fixture.actions.isPerforming)
+    }
+
+    @Test func aStopFromThePreviousSessionCannotStopTheNewSessionsShare() async {
+        let fixture = MenuBarFixture()
+        defer { fixture.cleanUp() }
+        await fixture.connect()
+        fixture.driver.setSharing(.sharing(MenuBarFixture.sharedWindow))
+        let previousSession = fixture.model.meeting.sessionID
+        await fixture.model.meeting.leave()
+        await fixture.connect()
+        fixture.driver.setSharing(.sharing(MenuBarFixture.sharedWindow))
+
+        await fixture.actions.performPrimaryAction(expectedAction: .stopSharing, expectedSessionID: previousSession)
+
+        #expect(fixture.driver.stopRequests == 0)
+        #expect(fixture.model.meeting.sharing.isSharing)
+    }
+
     @Test func idlePrimaryTogglesButContextOpenAndManualJoinAlwaysShow() async {
         let fixture = MenuBarFixture()
         defer { fixture.cleanUp() }
@@ -370,23 +416,17 @@ struct YapMenuBarActionTests {
         #expect(await fixture.calendar.eventRequests == 1)
     }
 
-    @Test func floatingChatCanBeReopenedAndHiddenWithoutActivatingTheMainWindow() async {
+    @Test func sharingChatToggleUsesTheMainSidebar() async {
         let fixture = MenuBarFixture()
         defer { fixture.cleanUp() }
         await fixture.connect()
         fixture.driver.setSharing(.sharing(MenuBarFixture.sharedWindow))
-        fixture.model.sharingPresentation.setPresenting(true)
-        fixture.model.sharingPresentation.chatVisible = false
         fixture.model.sidebar = .people
         #expect(fixture.actions.sharingChatIsVisible == false)
         fixture.actions.setSharingChatVisible(true)
         #expect(fixture.actions.sharingChatIsVisible == true)
-        #expect(fixture.model.sharingPresentation.chatVisible)
-        #expect(fixture.model.sharingPresentation.isPresenting)
-        #expect(fixture.model.sidebar == .people)
+        #expect(fixture.model.sidebar == .chat)
         fixture.actions.setSharingChatVisible(false)
-        #expect(!fixture.model.sharingPresentation.chatVisible)
-        #expect(fixture.model.sharingPresentation.isPresenting)
         #expect(fixture.openCount == 0)
         #expect(fixture.driver.stopRequests == 0)
     }
@@ -396,19 +436,11 @@ struct YapMenuBarActionTests {
         defer { fixture.cleanUp() }
         await fixture.connect()
         fixture.driver.setSharing(.sharing(MenuBarFixture.sharedWindow))
-        fixture.model.sharingPresentation.chatVisible = false
         fixture.model.sidebar = .people
         #expect(fixture.actions.sharingChatIsVisible == false)
         fixture.actions.setSharingChatVisible(true)
         #expect(fixture.model.sidebar == .chat)
-        #expect(!fixture.model.sharingPresentation.chatVisible)
         fixture.actions.setSharingChatVisible(false)
-        #expect(fixture.model.sidebar == nil)
-        // The menu may have been opened before the floating panels appeared.
-        fixture.model.sharingPresentation.setPresenting(true)
-        fixture.model.sharingPresentation.chatVisible = true
-        fixture.actions.setSharingChatVisible(true)
-        #expect(fixture.model.sharingPresentation.chatVisible)
         #expect(fixture.model.sidebar == nil)
         #expect(fixture.openCount == 0)
     }
@@ -417,25 +449,20 @@ struct YapMenuBarActionTests {
         let fixture = MenuBarFixture()
         defer { fixture.cleanUp() }
         await fixture.connect()
-        fixture.model.sharingPresentation.chatVisible = false
         fixture.model.sidebar = .people
         #expect(fixture.actions.sharingChatIsVisible == nil)
         fixture.actions.setSharingChatVisible(true)
-        #expect(!fixture.model.sharingPresentation.chatVisible)
         #expect(fixture.model.sidebar == .people)
         fixture.driver.setSharing(.sharing(MenuBarFixture.sharedWindow))
-        fixture.model.sharingPresentation.setPresenting(true)
         let priorSession = fixture.model.meeting.sessionID
         fixture.driver.setSharing(.idle)
         fixture.actions.setSharingChatVisible(true)
         #expect(fixture.actions.sharingChatIsVisible == nil)
-        #expect(!fixture.model.sharingPresentation.chatVisible)
         #expect(fixture.openCount == 0)
         await fixture.model.meeting.leave()
         await fixture.connect()
         fixture.driver.setSharing(.sharing(MenuBarFixture.sharedWindow))
         fixture.actions.setSharingChatVisible(true, expectedSessionID: priorSession)
-        #expect(!fixture.model.sharingPresentation.chatVisible)
         #expect(fixture.openCount == 0)
     }
 }

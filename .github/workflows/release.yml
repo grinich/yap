@@ -51,6 +51,7 @@ jobs:
           git merge-base --is-ancestor HEAD origin/main
           cp Resources/Info.plist "$RUNNER_TEMP/preflight-info.plist"
           YAP_RELEASE=1 python3 Scripts/configure-updates.py "$RUNNER_TEMP/preflight-info.plist"
+          python3 Scripts/configure-google.py "$RUNNER_TEMP/preflight-info.plist"
           python3 Scripts/validate-release-version.py
       - name: Download and verify private Zoom SDK
         env:
@@ -65,6 +66,7 @@ jobs:
         run: |
           swift package resolve --force-resolved-versions
           /bin/bash Scripts/test.sh
+          /bin/bash Scripts/test-zoom-bridge.sh
           python3 -m unittest discover -s Scripts/tests -v
           python3 Scripts/test-update-signatures.py
       - name: Import release signing credentials
@@ -80,8 +82,6 @@ jobs:
         env:
           YAP_SIGNING_IDENTITY: 'Developer ID Application: Michael Grinich (VSVHNQP588)'
           YAP_NOTARY_PROFILE: yap-ci
-          YAP_GOOGLE_CLIENT_ID: ${{ vars.YAP_GOOGLE_CLIENT_ID }}
-          YAP_GOOGLE_CLIENT_SECRET: ${{ secrets.YAP_GOOGLE_CLIENT_SECRET }}
         run: /bin/bash Scripts/package-release.sh
       - name: Retain verified release artifacts
         # Artifacts in a public repository are downloadable by other signed-in

@@ -26,9 +26,9 @@ struct MeetingLayoutTests {
         #expect(meeting.presentationParticipant == nil)
         meeting.setLayout(.activeSpeaker)
         #expect(meeting.presentationParticipant?.id == "person-149")
-        #expect(meeting.visibleParticipants.count == 7)
+        #expect(meeting.visibleParticipants.map(\.id) == ["person-149", "person-0"])
         #expect(driver.visibleParticipantIDs.first == "person-149")
-        #expect(Set(driver.visibleParticipantIDs).count == 7)
+        #expect(driver.visibleParticipantIDs == ["person-149", "person-0"])
         #expect(meeting.pageCount == 1)
         meeting.setLayout(.gallery)
         #expect(meeting.pageSize == 25)
@@ -111,12 +111,37 @@ struct MeetingLayoutTests {
         driver.onEvent?(session, .participants((0..<150).map { person("\($0)") }))
         meeting.showAllParticipants()
         meeting.setPinnedParticipant("149")
-        #expect(meeting.visibleParticipants.count == 7)
+        #expect(meeting.visibleParticipants.map(\.id) == ["149"])
         meeting.setLayout(.gallery)
         #expect(meeting.pinnedParticipantID == nil)
         #expect(meeting.visibleParticipants.count == 150 && meeting.showsAllParticipants)
         meeting.setLayout(.activeSpeaker)
         meeting.setLayout(.gallery)
         #expect(driver.visibleParticipantIDs.count == 150)
+    }
+
+    @Test func hideSelfAlsoHidesSoloSpeakerViewAndClearsSelfPins() async throws {
+        let (meeting, driver, session) = try await fixture()
+        driver.onEvent?(session, .participants([person("self", isSelf: true)]))
+        meeting.setLayout(.activeSpeaker)
+        #expect(meeting.presentationParticipant?.id == "self")
+        meeting.hideSelfView = true
+        #expect(meeting.presentationParticipant == nil)
+        #expect(meeting.visibleParticipants.isEmpty)
+        #expect(driver.visibleParticipantIDs.isEmpty)
+        meeting.hideSelfView = false
+        #expect(meeting.presentationParticipant?.id == "self")
+
+        driver.onEvent?(session, .participants([person("self", isSelf: true), person("A"), person("B")]))
+        meeting.setLayout(.gallery)
+        meeting.setPinnedParticipant("self")
+        #expect(meeting.presentationParticipant?.id == "self")
+        meeting.hideSelfView = true
+        #expect(meeting.pinnedParticipantID == nil)
+        #expect(meeting.visibleParticipants.map(\.id) == ["A", "B"])
+        #expect(driver.visibleParticipantIDs == ["A", "B"])
+        meeting.setPinnedParticipant("self")
+        #expect(meeting.pinnedParticipantID == nil)
+        #expect(driver.visibleParticipantIDs == ["A", "B"])
     }
 }

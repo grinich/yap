@@ -7,6 +7,7 @@ struct MeetingShareChooser: View {
     @Environment(\.dismiss) private var dismiss
     @State private var snapshot: MeetingShareSourceSnapshot?
     @State private var selectedID: String?
+    @State private var audioOnly = false
     @State private var isLoading = true
     @State private var isSubmitting = false
     @State private var localError: String?
@@ -14,15 +15,22 @@ struct MeetingShareChooser: View {
     @State private var refreshID = UUID()
     @State private var previews = MeetingSharePreviewProvider()
 
-    private var selectedTarget: ShareTarget? { snapshot?.target(for: selectedID, currentSessionID: meeting.sessionID) }
+    private var selectedTarget: ShareTarget? {
+        if audioOnly { return meeting.sessionID == nil ? nil : .computerAudio }
+        return snapshot?.target(for: selectedID, currentSessionID: meeting.sessionID)
+    }
+    private var mustStopCurrentShare: Bool {
+        guard let current = meeting.sharing.target, let selected = selectedTarget else { return false }
+        return (current.kind == .computerAudio) != (selected.kind == .computerAudio)
+    }
     private var visibleSources: [ShareTarget] { snapshot?.presentationTargets ?? [] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(meeting.isDemo ? "Preview sharing" : "Share screen").font(.headline)
+                Text(meeting.isDemo ? "Preview sharing" : "Share").font(.headline)
                 Spacer()
-                if !meeting.isDemo {
+                if !meeting.isDemo && !audioOnly {
                     Button { refreshID = UUID() } label: {
                         Label("Refresh windows and displays", systemImage: "arrow.clockwise")
                             .frame(width: 32, height: 32).contentShape(Rectangle())
@@ -30,14 +38,46 @@ struct MeetingShareChooser: View {
                     .labelStyle(.iconOnly).buttonStyle(.borderless)
                     .yapIconHover()
                     .help("Refresh windows and displays")
-                    .disabled(isLoading || isSubmitting || !meeting.isConnected)
+                    .disabled(isLoading || isSubmitting || !meeting.canChooseSharingContent)
                 }
             }
-            sourceGrid.frame(height: 316)
+            if !meeting.isRoomShare {
+                Picker("Share content", selection: $audioOnly) {
+                    Text("Screen or window").tag(false)
+                    Text("Computer audio").tag(true)
+                }
+                .pickerStyle(.segmented).disabled(isSubmitting)
+            }
+            Group {
+                if audioOnly {
+                    VStack(spacing: 16) {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 48, weight: .medium)).foregroundStyle(.tint)
+                            .frame(width: 108, height: 96)
+                            .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 24))
+                        Text("Share computer audio").font(.title2.weight(.semibold))
+                        Text("Play music or sound from any app on your Mac.\nPeople in the meeting will hear it in stereo.")
+                            .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        Label("Your screen stays private", systemImage: "lock.shield")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else { sourceGrid }
+            }.frame(height: 316)
             Divider()
-            if let localError, !visibleSources.isEmpty, !permissionRequired {
+            if let localError, audioOnly || (!visibleSources.isEmpty && !permissionRequired) {
                 Text(localError).font(.callout).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if mustStopCurrentShare {
+                HStack {
+                    Text("Stop your current share before changing to \(audioOnly ? "audio only" : "a screen or window").")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Stop sharing") { Task { await meeting.stopShare() } }
+                        .disabled(meeting.isApplyingControl || isSubmitting)
+                }
+            } else if audioOnly {
+                Text(meeting.isDemo ? "Sample controls stay on this Mac. Nothing is broadcast." : "Your microphone stays as it is. Stop sharing at any time in the call.")
+                    .font(.callout).foregroundStyle(.secondary)
             } else if localError == nil, selectedTarget?.kind == .display {
                 Label("Everything on this display will be visible.", systemImage: "display")
                     .font(.callout).foregroundStyle(.secondary)
@@ -52,12 +92,15 @@ struct MeetingShareChooser: View {
                 Button(meeting.isDemo ? "Preview share" : meeting.sharing.isSharing ? "Switch share" : "Share", action: share)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(selectedTarget == nil || permissionRequired || isLoading || isSubmitting || meeting.isApplyingControl || !meeting.isConnected)
+                    .disabled(selectedTarget == nil || mustStopCurrentShare || (!audioOnly && permissionRequired) || isLoading || isSubmitting || meeting.isApplyingControl || !meeting.canChooseSharingContent)
             }
         }
         .padding(20).frame(width: 620)
-        .task(id: refreshID) { await loadSources() }
+        .task(id: "\(refreshID)-\(audioOnly)") { await loadSources() }
         .onChange(of: meeting.sessionID) { _, _ in dismiss() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if !isLoading && !isSubmitting && !audioOnly { refreshID = UUID() }
+        }
         .onDisappear { previews.clear() }
         .interactiveDismissDisabled(isSubmitting)
     }
@@ -77,8 +120,12 @@ struct MeetingShareChooser: View {
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 360)
                 HStack {
+                    Button("Allow screen access") {
+                        _ = CGRequestScreenCaptureAccess()
+                        refreshID = UUID()
+                    }
                     Button("Open System Settings…") {
-                        NSWorkspace.shared.open(URL(filePath: "/System/Applications/System Settings.app"))
+                        ScreenSharingAccess.openSettings()
                     }
                     Button("Try again") { refreshID = UUID() }
                 }
@@ -102,11 +149,17 @@ struct MeetingShareChooser: View {
     }
 
     private func loadSources() async {
-        guard let sessionID = meeting.sessionID, meeting.isConnected else { dismiss(); return }
+        guard let sessionID = meeting.sessionID, meeting.canChooseSharingContent else { dismiss(); return }
         isLoading = true
         localError = nil
         permissionRequired = false
         previews.clear()
+        if audioOnly {
+            snapshot = nil
+            selectedID = nil
+            isLoading = false
+            return
+        }
         let targets: [ShareTarget]
         if meeting.isDemo {
             targets = [ShareTarget(id: "sample-presentation", title: "Sample presentation", kind: .demo),
@@ -120,7 +173,7 @@ struct MeetingShareChooser: View {
             do { targets = try await meeting.availableShareTargetsForChooser() }
             catch is CancellationError { return }
             catch {
-                guard !Task.isCancelled, sessionID == meeting.sessionID, meeting.isConnected else { return }
+                guard !Task.isCancelled, sessionID == meeting.sessionID, meeting.canChooseSharingContent else { return }
                 localError = error.localizedDescription
                 permissionRequired = (error as? MeetingError) == .screenCapturePermissionRequired
                 snapshot = nil
@@ -139,7 +192,7 @@ struct MeetingShareChooser: View {
     }
 
     private func share() {
-        guard !isSubmitting, !isLoading, meeting.isConnected, !meeting.isApplyingControl,
+        guard !isSubmitting, !isLoading, meeting.canChooseSharingContent, !meeting.isApplyingControl,
               let target = selectedTarget, let sessionID = meeting.sessionID else { return }
         isSubmitting = true
         localError = nil
@@ -148,11 +201,11 @@ struct MeetingShareChooser: View {
             defer { if sessionID == meeting.sessionID { isSubmitting = false } }
             do {
                 try await meeting.startShareFromChooser(target)
-                guard sessionID == meeting.sessionID, meeting.isConnected else { return }
+                guard sessionID == meeting.sessionID, meeting.canChooseSharingContent else { return }
                 dismiss()
             } catch is CancellationError {
             } catch {
-                guard sessionID == meeting.sessionID, meeting.isConnected else { return }
+                guard sessionID == meeting.sessionID, meeting.canChooseSharingContent else { return }
                 localError = error.localizedDescription
                 permissionRequired = (error as? MeetingError) == .screenCapturePermissionRequired
             }

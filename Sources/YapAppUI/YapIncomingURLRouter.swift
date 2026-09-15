@@ -14,7 +14,7 @@ final class YapIncomingURLRouter {
     }
 
     func receive(_ urls: [URL]) {
-        // The app has one join sheet. The latest invitation is the user's current
+        // The app has one call. The latest invitation is the user's current
         // destination; never queue multiple meetings to join after launch.
         guard let url = urls.last else { return }
         if let handle { handle(url) }

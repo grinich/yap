@@ -14,6 +14,7 @@ struct RecordingPlayerWindowTests {
         let controller = try #require(fixture.model.playerWindows[fixture.first.id])
         let window = try #require(controller.window)
         #expect(window.isVisible)
+        #expect(window.contentView?.superview?.subviews.contains { $0 is YapWindowPinButton } == false)
         #expect(controller.playback !== fixture.model)
         #expect(controller.playback.player !== fixture.model.player)
         #expect(controller.playback.selectedMeeting?.id == fixture.first.id)

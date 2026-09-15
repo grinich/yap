@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import Observation
-import YapCredentials
 import YapCalendar
 import YapMeetings
 import YapSystem
@@ -60,10 +59,11 @@ enum YapReminderPermissionError: Error { case notificationsNotAllowed }
 
 @MainActor @Observable
 public final class YapModel {
-    public var meeting: MeetingCoordinator
-    public let sharingPresentation = YapSharingPresentation()
+    public var meeting: MeetingCoordinator { didSet { configureChatNotifications() } }
+    public let meetingPresentation = YapMeetingPresentation()
     public let zoomConnection: ZoomConnectionModel
     public let recordings: RecordingLibraryModel
+    public let cameraEffects: CameraEffectsModel
     public private(set) var events: [CalendarEvent] = []
     public private(set) var calendars: [GoogleCalendar] = []
     public var selectedCalendarIDs: Set<String> = []
@@ -75,7 +75,30 @@ public final class YapModel {
     public private(set) var isPreview = false
     public var displayName: String { didSet { preferences.set(displayName, forKey: "displayName"); joinInputError = nil } }
     public var remindersEnabled: Bool { didSet { preferences.set(remindersEnabled, forKey: "remindersEnabled") } }
+    public var chatNotificationSound: ChatNotificationSound {
+        didSet { preferences.set(chatNotificationSound.rawValue, forKey: "chatNotificationSound") }
+    }
+    @ObservationIgnored private var lastChatSoundAt = Date.distantPast
+    public var hideSelfView: Bool {
+        get { meeting.hideSelfView }
+        set { preferences.set(newValue, forKey: "hideSelfView"); meeting.hideSelfView = newValue }
+    }
+    public var showNonVideoParticipants: Bool {
+        get { meeting.showNonVideoParticipants }
+        set { preferences.set(newValue, forKey: "showNonVideoParticipants"); meeting.showNonVideoParticipants = newValue }
+    }
+    private func configureChatNotifications() {
+        meeting.hideSelfView = preferences.bool(forKey: "hideSelfView")
+        meeting.showNonVideoParticipants = preferences.bool(forKey: "showNonVideoParticipants")
+        meeting.onUnreadChatMessage = { [weak self] in
+            guard let self, Date.now.timeIntervalSince(self.lastChatSoundAt) >= 0.6 else { return }
+            self.lastChatSoundAt = .now
+            self.chatNotificationSound.play()
+        }
+    }
+
     public var reminderMinutes: Int { didSet { preferences.set(reminderMinutes, forKey: "reminderMinutes") } }
+    public var askBeforeLeavingMeeting: Bool { didSet { preferences.set(askBeforeLeavingMeeting, forKey: "askBeforeLeavingMeeting") } }
     public private(set) var showReminderPermission = false
     public private(set) var reminderAuthorizationStatus: ReminderAuthorizationStatus = .notDetermined
     public private(set) var isChangingReminders = false
@@ -101,7 +124,6 @@ public final class YapModel {
 
     private var calendarClient: any YapCalendarServing
     @ObservationIgnored private let reminders: YapReminderActions
-    @ObservationIgnored private let saveGoogleConfiguration: (Data) throws -> Void
     @ObservationIgnored private let loadGoogleConfiguration: @Sendable () throws -> GoogleOAuthConfiguration?
     @ObservationIgnored private let makeConfiguredCalendarClient: (GoogleOAuthConfiguration) -> any YapCalendarServing
     @ObservationIgnored private var configurationLoad: Task<Void, Never>?
@@ -115,6 +137,17 @@ public final class YapModel {
     @ObservationIgnored private var activeRefreshID: UUID?
     @ObservationIgnored private var pendingCalendarJoinID: UUID?
     @ObservationIgnored private var meetingLinkRevision = UUID()
+    @ObservationIgnored private var calendarMeetingContext: CalendarMeetingContext?
+
+    private struct CalendarMeetingContext {
+        let url: URL
+        let joinedAt: Date
+        let coordinatorID: ObjectIdentifier
+        let sessionID: UUID
+        let revision: UUID
+        let calendarGeneration: UUID
+        let calendarSelection: UUID
+    }
     @ObservationIgnored private var activeRefreshPresentsErrors = false
     @ObservationIgnored private var liveCalendarLoadCount = 0
     @ObservationIgnored private var generation = UUID()
@@ -128,28 +161,35 @@ public final class YapModel {
                 zoomConnection: ZoomConnectionModel? = nil,
                 calendarClient: (any YapCalendarServing)? = nil,
                 reminders: YapReminderActions? = nil,
-                saveGoogleConfiguration: ((Data) throws -> Void)? = nil,
                 loadGoogleConfiguration: (@Sendable () throws -> GoogleOAuthConfiguration?)? = nil,
                 makeConfiguredCalendarClient: ((GoogleOAuthConfiguration) -> any YapCalendarServing)? = nil) {
         self.preferences = preferences
+        self.chatNotificationSound = ChatNotificationSound(rawValue: preferences.string(forKey: "chatNotificationSound") ?? "Pop") ?? .pop
         self.displayName = preferences.string(forKey: "displayName") ?? NSFullUserName().components(separatedBy: " ").first ?? "Me"
         self.remindersEnabled = preferences.bool(forKey: "remindersEnabled")
+        self.askBeforeLeavingMeeting = preferences.bool(forKey: "askBeforeLeavingMeeting")
         self.reminderMinutes = max(1, preferences.integer(forKey: "reminderMinutes") == 0 ? 2 : preferences.integer(forKey: "reminderMinutes"))
         let zoomConnection = zoomConnection ?? ZoomConnectionModel()
         self.zoomConnection = zoomConnection
         let recordings = RecordingLibraryModel(client: zoomConnection.client)
         self.recordings = recordings
-        zoomConnection.onAccountWillChange = { [weak recordings] in recordings?.clear() }
         let liveMeeting = meeting ?? MeetingCoordinator(driver: makeZoomMeetingDriver(accountClient: zoomConnection.client))
         self.meeting = liveMeeting
         self.liveMeeting = liveMeeting
+        let cameraEffects = CameraEffectsModel(driver: liveMeeting.cameraEffectsDriver, preferences: preferences)
+        self.cameraEffects = cameraEffects
+        zoomConnection.onAccountWillChange = { [weak recordings, weak cameraEffects] in
+            recordings?.clear()
+            cameraEffects?.close()
+        }
         self.calendarClient = calendarClient ?? Self.makeCalendarClient()
         self.googleConfigurationLoadState = calendarClient == nil || loadGoogleConfiguration != nil ? .pending : .loaded
         self.reminders = reminders ?? .live
-        self.saveGoogleConfiguration = saveGoogleConfiguration ?? YapConfigurationStore.saveGoogle
-        self.loadGoogleConfiguration = loadGoogleConfiguration ?? YapConfigurationStore.loadGoogle
+        self.loadGoogleConfiguration = loadGoogleConfiguration ?? { try GoogleOAuthConfiguration.yap() }
         self.makeConfiguredCalendarClient = makeConfiguredCalendarClient ?? { Self.makeCalendarClient(configuration: $0) }
         self.selectedCalendarIDs = Set(preferences.stringArray(forKey: "selectedCalendarIDs") ?? [])
+        recordings.zoomSignInRecovery = ZoomSignInRecovery(model: self)
+        configureChatNotifications()
         if preview {
             enterPreview()
             if ProcessInfo.processInfo.arguments.contains("--recordings-preview") { recordings.isPresented = true }
@@ -194,8 +234,8 @@ public final class YapModel {
             let loader = loadGoogleConfiguration
             configurationLoadID = operationID
             googleConfigurationLoadState = .loading
-            // SecItemCopyMatching can wait for a legitimate macOS approval dialog.
-            // Keep that synchronous call off MainActor so the first window can draw.
+            // Keep resource loading off MainActor so the first window can draw.
+            // This loads Yap’s public client; it never reads developer configuration from Keychain.
             configurationLoad = Task.detached(priority: .userInitiated) { [weak self] in
                 let result = Result {
                     try Task.checkCancellation()
@@ -266,6 +306,7 @@ public final class YapModel {
                 guard current == generation, !isPreview else { return }
                 events = snapshot.events.filter { selectedCalendarIDs.contains($0.calendarID) }
                 lastRefreshed = snapshot.fetchedAt
+                reconcileCalendarMeetingContext()
             }
             let listed = try await client.calendars()
             guard current == generation, !isPreview else { return }
@@ -304,14 +345,25 @@ public final class YapModel {
 
     public func connectGoogle() async {
         guard !isConnecting else { return }
-        guard googleConfigured else { showSettings = true; return }
         if isPreview {
             guard !activeCall else { error = "Leave the preview meeting before connecting Google Calendar."; return }
             await exitPreview()
         }
+        guard !isConnecting else { return }
         isConnecting = true
+        error = nil
         let current = generation
         defer { if current == generation { isConnecting = false } }
+        if googleConfigurationLoadState == .failed || googleConfigurationLoadState == .cancelled {
+            googleConfigurationLoadState = .pending
+        }
+        // A click can arrive before startup finishes loading the bundled client.
+        // Join that load and continue straight into sign-in, without a Settings detour.
+        guard await bootstrapGoogleConfiguration(), current == generation, !Task.isCancelled else { return }
+        guard googleConfigured else {
+            error = "Google Calendar sign-in is unavailable in this copy of Yap. Reinstall the latest Yap build and try again."
+            return
+        }
         do {
             let result = try await calendarClient.connect { url in NSWorkspace.shared.open(url) }
             guard generation == current else { return }
@@ -400,6 +452,7 @@ public final class YapModel {
             }
             events = updated.filter { selectedCalendarIDs.contains($0.calendarID) }
             lastRefreshed = .now
+            reconcileCalendarMeetingContext()
             await synchronizeReminders()
             return generation == current && selectionRevision == selection && !isPreview
         } catch {
@@ -480,18 +533,6 @@ public final class YapModel {
         preferences.removeObject(forKey: "selectedCalendarIDs")
         await reminders.disable()
         try await client.disconnect()
-    }
-
-    public func importGoogleConfiguration(from url: URL) async {
-        do {
-            let data = try Data(contentsOf: url)
-            let configuration = try YapConfigurationStore.parseGoogle(data)
-            // Always invalidate stored credentials, including when a previous sign-in expired.
-            try await disconnectCalendarConnection()
-            try saveGoogleConfiguration(data)
-            calendarClient = makeConfiguredCalendarClient(configuration)
-            googleConfigurationLoadState = .loaded
-        } catch { self.error = error.localizedDescription }
     }
 
     public func beginReminderSetup() async {
@@ -614,10 +655,47 @@ public final class YapModel {
         }
     }
 
+    private func joinCalendarAware(_ url: URL, event explicitEvent: CalendarEvent? = nil) async {
+        guard !Task.isCancelled, !activeCall else { return }
+        let revision = meetingLinkRevision
+        let requestedMeeting = meeting
+        let calendarGeneration = generation
+        let calendarSelection = selectionRevision
+        calendarMeetingContext = nil
+        let joinedAt = Date.now
+        let event = explicitEvent.flatMap { CalendarMeetingMatch.matches(url, event: $0) && !$0.isCancelled ? $0 : nil }
+            ?? CalendarMeetingMatch.event(for: url, in: events, now: joinedAt)
+        let interval = event.flatMap { $0.endDate > $0.startDate ? DateInterval(start: $0.startDate, end: $0.endDate) : nil }
+        // Calendar metadata must never delay joining Zoom. Use what is already
+        // available, then enrich this exact session after the refresh completes.
+        await requestedMeeting.join(url: url, displayName: displayName, title: event?.title ?? "", scheduledInterval: interval)
+        guard explicitEvent == nil, let sessionID = requestedMeeting.sessionID,
+              meeting === requestedMeeting, meetingLinkRevision == revision,
+              requestedMeeting.status.isActive else { return }
+        calendarMeetingContext = CalendarMeetingContext(url: url, joinedAt: joinedAt,
+            coordinatorID: ObjectIdentifier(requestedMeeting), sessionID: sessionID, revision: revision,
+            calendarGeneration: calendarGeneration, calendarSelection: calendarSelection)
+        reconcileCalendarMeetingContext()
+    }
+
+    private func reconcileCalendarMeetingContext() {
+        guard let context = calendarMeetingContext else { return }
+        guard ObjectIdentifier(meeting) == context.coordinatorID, meeting.sessionID == context.sessionID,
+              meetingLinkRevision == context.revision, generation == context.calendarGeneration,
+              selectionRevision == context.calendarSelection, activeCall else {
+            calendarMeetingContext = nil
+            return
+        }
+        let event = CalendarMeetingMatch.event(for: context.url, in: events, now: context.joinedAt)
+        let interval = event.flatMap { $0.endDate > $0.startDate ? DateInterval(start: $0.startDate, end: $0.endDate) : nil }
+        meeting.updateCalendarContext(title: event?.title ?? "", scheduledInterval: interval, sessionID: context.sessionID)
+    }
+
     public func join(_ event: CalendarEvent) async {
         guard isPreview || !zoomConnection.isBusy else { error = "Finish connecting your Zoom account before joining a meeting."; return }
         guard !activeCall else { error = "Leave your current meeting before joining another."; return }
         guard !event.isCancelled, event.endDate > Date() else { error = "This meeting has ended or was cancelled. Refresh your calendar for the latest details."; return }
+        meetingLinkRevision = UUID()
         selectedEvent = event
         let links = AgendaRules.meetingURLs(for: event)
         guard links.count == 1, let url = links.first else {
@@ -625,7 +703,7 @@ public final class YapModel {
             showJoinSheet = true
             return
         }
-        await meeting.join(url: url, displayName: displayName, title: event.title)
+        await joinCalendarAware(url, event: event)
     }
 
     public func receiveMeetingLink(_ url: URL) {
@@ -647,7 +725,23 @@ public final class YapModel {
         unsupportedZoomLink = nil
         selectedEvent = nil
         joinLink = meetingURL.absoluteString
-        showJoinSheet = true
+        showJoinSheet = false
+        guard !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showJoinSheet = true
+            joinInputError = "Enter your name before joining the meeting."
+            return
+        }
+        let revision = meetingLinkRevision
+        let requestedMeeting = meeting
+        Task { [weak self] in
+            guard let self, self.meetingLinkRevision == revision,
+                  self.meeting === requestedMeeting, !self.activeCall else { return }
+            guard self.isPreview || !self.zoomConnection.isBusy else {
+                self.error = "Finish connecting your Zoom account before joining a meeting."
+                return
+            }
+            await self.joinCalendarAware(meetingURL)
+        }
     }
 
     public func joinPastedLink() async {
@@ -662,16 +756,45 @@ public final class YapModel {
         guard !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             joinInputError = "Enter your name before joining the meeting."; return
         }
+        meetingLinkRevision = UUID()
         showJoinSheet = false
-        await meeting.join(url: url, displayName: displayName, title: selectedEvent?.title ?? "Zoom meeting")
+        await joinCalendarAware(url, event: selectedEvent)
     }
 
     public func hostMeeting() async {
         guard isPreview || !zoomConnection.isBusy else { error = "Finish connecting your Zoom account before starting a meeting."; return }
-        await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "Personal meeting")
+        meetingLinkRevision = UUID()
+        await meeting.host(displayName: displayName, title: isPreview ? "Design catch-up" : "")
+    }
+
+    public func shareScreenToRoom() async {
+        guard !Task.isCancelled, !activeCall else { return }
+        guard !isPreview else { error = "Exit preview to share to a Zoom Room."; return }
+        guard !zoomConnection.isBusy else { error = "Finish signing in to Zoom before sharing to a room."; return }
+        meetingLinkRevision = UUID()
+        selectedEvent = nil
+        showJoinSheet = false
+        areMeetingControlsVisible = true
+        await meeting.shareToRoom(displayName: displayName)
+    }
+
+    public func requestLeaveMeeting() {
+        guard activeCall, meeting.status != .leaving else { return }
+        if askBeforeLeavingMeeting {
+            showLeaveConfirmation = true
+            return
+        }
+        let requestedMeeting = meeting
+        let sessionID = meeting.sessionID
+        Task { [weak self] in
+            guard let self, self.meeting === requestedMeeting, self.meeting.sessionID == sessionID else { return }
+            await self.leaveMeeting()
+        }
     }
 
     public func leaveMeeting(endForEveryone: Bool = false) async {
+        meetingLinkRevision = UUID()
+        showLeaveConfirmation = false
         await meeting.leave(endForEveryone: endForEveryone)
         if !meeting.status.isActive { sidebar = nil; focusedParticipantID = nil }
     }
@@ -679,6 +802,7 @@ public final class YapModel {
     public func enterPreview() {
         guard !activeCall else { error = "Leave your meeting before opening a preview."; return }
         guard !isPreview else { return }
+        cameraEffects.close()
         liveMeeting = meeting
         liveCalendarEvents = events
         selectedEvent = nil; joinLink = ""; showJoinSheet = false
@@ -772,9 +896,28 @@ public final class YapModel {
     }
 
     static func sampleEvents(now: Date) -> [CalendarEvent] {
-        [("Design catch-up", 300.0, 1800.0), ("A little time to think", 3600.0, 1800.0), ("Friday roundtable", 7200.0, 2700.0)].enumerated().map { index, item in
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+        let afterTomorrow = calendar.date(byAdding: .day, value: 2, to: today)!
+        var samples = [("Design catch-up", 300.0, 1800.0), ("A little time to think", 3600.0, 1800.0), ("Team roundtable", 7200.0, 2700.0)].enumerated().map { index, item in
             CalendarEvent(id: "preview-\(index)", title: item.0, startDate: now.addingTimeInterval(item.1), endDate: now.addingTimeInterval(item.1 + item.2), calendarID: "preview", calendarName: "Preview calendar", meetingURLs: index == 1 ? [] : [URL(string: "https://zoom.us/j/12345678901")!])
         }
+        samples += [
+            CalendarEvent(id: "preview-all-day", title: "Team planning week", startDate: today, endDate: tomorrow,
+                calendarID: "preview", calendarName: "Preview calendar", isAllDay: true),
+            CalendarEvent(id: "preview-current", title: "Focus time", startDate: now.addingTimeInterval(-900), endDate: now.addingTimeInterval(240),
+                calendarID: "preview", calendarName: "Personal"),
+            CalendarEvent(id: "preview-past", title: "Morning check-in", startDate: now.addingTimeInterval(-3600), endDate: now.addingTimeInterval(-1800),
+                calendarID: "preview", calendarName: "Preview calendar", meetingURLs: [URL(string: "https://zoom.us/j/12345678901")!]),
+            CalendarEvent(id: "preview-tomorrow", title: "Product review and next steps", startDate: tomorrow.addingTimeInterval(9 * 3600), endDate: tomorrow.addingTimeInterval(10 * 3600),
+                calendarID: "preview", calendarName: "Preview calendar", meetingURLs: [URL(string: "https://zoom.us/j/12345678901")!]),
+            CalendarEvent(id: "preview-tomorrow-lunch", title: "Lunch with the team", startDate: tomorrow.addingTimeInterval(12 * 3600), endDate: tomorrow.addingTimeInterval(13 * 3600),
+                calendarID: "preview", calendarName: "Personal"),
+            CalendarEvent(id: "preview-tomorrow-all-day", title: "Release day", startDate: tomorrow, endDate: afterTomorrow,
+                calendarID: "preview", calendarName: "Preview calendar", isAllDay: true)
+        ]
+        return samples
     }
 }
 
@@ -800,41 +943,5 @@ public enum AgendaRules {
             !meetingURLs(for: $0).isEmpty
         }
             .sorted { $0.startDate == $1.startDate ? $0.id < $1.id : $0.startDate < $1.startDate }
-    }
-}
-
-enum YapConfigurationStore {
-    private static let service = "app.yap.personal.configuration"
-    static func parseGoogle(_ data: Data) throws -> GoogleOAuthConfiguration {
-        struct File: Decodable { struct Installed: Decodable { let client_id: String; let client_secret: String? }; let installed: Installed }
-        let file = try JSONDecoder().decode(File.self, from: data)
-        let configuration = GoogleOAuthConfiguration(clientID: file.installed.client_id, clientSecret: file.installed.client_secret)
-        guard configuration.isValid else { throw GoogleCalendarError.notConfigured }
-        return configuration
-    }
-    private static let key = CredentialKey(service: service, account: "google-desktop")
-    static func loadGoogle() throws -> GoogleOAuthConfiguration? {
-        try resolveGoogle(savedData: { try access { try CredentialVault.shared.load(key) } },
-                          bundledInfo: Bundle.main.infoDictionary ?? [:])
-    }
-    // Packaged builds use Yap's client directly. Source builds can import their own.
-    // Reading the bundled public client does not require Keychain access.
-    static func resolveGoogle(savedData: () throws -> Data?, bundledInfo: [String: Any]) throws -> GoogleOAuthConfiguration? {
-        guard let clientID = bundledInfo["YapGoogleClientID"] as? String else {
-            return try savedData().map(parseGoogle)
-        }
-        let configuration = GoogleOAuthConfiguration(clientID: clientID,
-            clientSecret: bundledInfo["YapGoogleClientSecret"] as? String)
-        guard configuration.isValid else { throw GoogleCalendarError.notConfigured }
-        return configuration
-    }
-    static func saveGoogle(_ data: Data) throws {
-        _ = try parseGoogle(data)
-        try access { try CredentialVault.shared.save(data, for: key) }
-    }
-    private static func access<Value>(_ action: () throws -> Value) throws -> Value {
-        do { return try action() }
-        catch CredentialVaultError.keychain(let status) { throw GoogleCalendarError.keychain(status) }
-        catch CredentialVaultError.invalidData { throw GoogleCalendarError.invalidResponse }
     }
 }

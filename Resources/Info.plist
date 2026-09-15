@@ -9,14 +9,14 @@
     <key>CFBundleName</key><string>Yap</string>
     <key>CFBundleDisplayName</key><string>Yap</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.5</string>
-    <key>CFBundleVersion</key><string>6</string>
+    <key>CFBundleShortVersionString</key><string>0.1.6</string>
+    <key>CFBundleVersion</key><string>7</string>
     <key>CFBundleIconFile</key><string>Yap</string>
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSCameraUsageDescription</key><string>Yap uses your camera when you choose to turn on video in a meeting.</string>
-    <key>NSMicrophoneUsageDescription</key><string>Yap uses your microphone when you choose to speak in a meeting.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Yap uses your microphone when you choose to speak in a meeting or detect a nearby Zoom Room for screen sharing.</string>
     <key>NSScreenCaptureUsageDescription</key><string>Yap shares the window or display you select with people in your Zoom meeting.</string>
     <key>NSHumanReadableCopyright</key><string>© 2026 Michael Grinich</string>
     <key>YapZoomOAuthClientID</key><string>_Xz_EnBNS3OPtUmqZ1og3A</string>

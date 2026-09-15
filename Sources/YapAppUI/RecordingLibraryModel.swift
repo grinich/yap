@@ -96,11 +96,12 @@ public final class RecordingLibraryModel {
     private(set) var downloadedFile: URL?
     private(set) var downloadError: String?
     private(set) var playerWindows: [String: RecordingPlayerWindowController] = [:]
-    let player = AVPlayer()
+    let player = RecordingPlayer()
     let chat: RecordingChatModel
     let transcript: RecordingTranscriptModel
 
     @ObservationIgnored private let client: ZoomAccountClient
+    @ObservationIgnored var zoomSignInRecovery: ZoomSignInRecovery?
     @ObservationIgnored private let fetchPage: @Sendable (Date, Date, String) async throws -> ZoomRecordingPage
     @ObservationIgnored private let makePlaybackSource: @MainActor (ZoomRecordingFile) -> RecordingPlaybackSource
     @ObservationIgnored private let downloadVideo: @Sendable (ZoomRecordingFile, URL) async throws -> Void
@@ -119,6 +120,7 @@ public final class RecordingLibraryModel {
     @ObservationIgnored private var itemObservation: NSKeyValueObservation?
     @ObservationIgnored private var videoSizeObservation: NSKeyValueObservation?
     @ObservationIgnored private var playbackSpeedObservation: NSKeyValueObservation?
+    @ObservationIgnored private var playbackTransportObservation: NSKeyValueObservation?
     @ObservationIgnored private var itemRevision = UUID()
     @ObservationIgnored private var resumedItemRevision: UUID?
     @ObservationIgnored private var downloadTask: Task<Void, Never>?
@@ -161,6 +163,9 @@ public final class RecordingLibraryModel {
         }
         self.seekForPlaybackRestoration = seekForPlaybackRestoration ?? { player, time in
             await player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        playbackTransportObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.player.preserveExplicitPause() }
         }
         playbackSpeedObservation = player.observe(\.defaultRate, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in
@@ -206,6 +211,9 @@ public final class RecordingLibraryModel {
 
     private func applyPlaybackSpeed(_ speed: Float) {
         guard speed.isFinite, speed > 0 else { return }
+        // A delayed autoplay rate can precede its rate-observation callback.
+        // Speed changes must respect the most recent explicit Pause as well.
+        player.preserveExplicitPause()
         playbackSpeed = speed
         if player.defaultRate != speed { player.defaultRate = speed }
         if let position = pendingPosition, position.rate != 0 {
@@ -457,6 +465,7 @@ public final class RecordingLibraryModel {
         let transferredSpeed = position.flatMap { $0.rate > 0 ? $0.rate : nil } ?? playbackSpeed
         playback.applyPlaybackSpeed(transferredSpeed)
         playback.isPreview = isPreview
+        playback.zoomSignInRecovery = zoomSignInRecovery
         playback.selectedMeeting = meeting
         playback.chat.adoptState(from: chat)
         playback.detailTab = detailTab

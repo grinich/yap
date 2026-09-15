@@ -10,6 +10,7 @@ struct GalleryOrderTests {
     private func fixture() async throws -> (MeetingCoordinator, DemoMeetingDriver, UUID) {
         let driver = DemoMeetingDriver(participantCount: 1)
         let meeting = MeetingCoordinator(driver: driver)
+        meeting.showNonVideoParticipants = true
         await meeting.host(displayName: "Self")
         let session = try #require(meeting.sessionID)
         driver.onEvent?(session, .participants(people(["A", "B", "C", "D"])))
@@ -78,5 +79,27 @@ struct GalleryOrderTests {
         #expect(!meeting.moveGalleryParticipant("D", to: "A", sessionID: session))
         #expect(!meeting.moveGalleryParticipant("A", to: "A", sessionID: currentSession))
         #expect(meeting.visibleParticipants.map(\.id) == ["A", "B", "C", "D"])
+    }
+
+    @Test func reorderingKeepsHiddenPeopleAvailableWhenVisibilityChanges() async throws {
+        let (meeting, driver, session) = try await fixture()
+        driver.onEvent?(session, .participants([
+            MeetingParticipant(id: "self", name: "Self", isSelf: true),
+            MeetingParticipant(id: "A", name: "A", isCameraEnabled: true),
+            MeetingParticipant(id: "off", name: "Camera off"),
+            MeetingParticipant(id: "B", name: "B", isCameraEnabled: true)
+        ]))
+        meeting.hideSelfView = true
+        meeting.showNonVideoParticipants = false
+        #expect(!meeting.moveGalleryParticipant("off", to: "A", sessionID: session))
+        #expect(meeting.moveGalleryParticipant("B", to: "A", sessionID: session))
+        #expect(meeting.galleryParticipants.map(\.id) == ["B", "A"])
+
+        // No roster event occurs between the drag and the settings toggles.
+        meeting.hideSelfView = false
+        #expect(meeting.galleryParticipants.map(\.id) == ["self", "B", "A"])
+        meeting.showNonVideoParticipants = true
+        #expect(meeting.galleryParticipants.map(\.id) == ["self", "B", "A", "off"])
+        #expect(driver.visibleParticipantIDs == ["self", "B", "A", "off"])
     }
 }

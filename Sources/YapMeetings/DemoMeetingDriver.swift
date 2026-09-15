@@ -3,7 +3,7 @@ import Foundation
 /// Synthetic participants and messages for interface tests. No audio, camera,
 /// capture, video decoding or network calls occur in this driver.
 @MainActor
-public final class DemoMeetingDriver: MeetingDriver {
+public final class DemoMeetingDriver: MeetingDriver, MeetingMediaDriver {
     public let isDemo = true
     public let capabilities = MeetingCapabilities(
         canJoin: true, canHost: true, canChat: true, canShare: true,
@@ -15,6 +15,18 @@ public final class DemoMeetingDriver: MeetingDriver {
     private var request: MeetingRequest?
     private var participants: [MeetingParticipant] = []
     private var recordingStatus: MeetingCloudRecordingStatus = .stopped
+    private var fixtureMessageSequence = 0
+    private var messages: [String: MeetingChatMessage] = [:]
+    private var attachments: [String: MeetingChatAttachment] = [:]
+    private var fixtureTransfers: [String: Task<Void, Never>] = [:]
+    private var fixtureMediaTest: Task<Void, Never>?
+    public var rejectNextControl = false
+    public var onMediaDevicesChanged: (@MainActor (MeetingMediaState) -> Void)?
+    private var mediaState = MeetingMediaState(isReady: true,
+        microphones: [.init(id: "demo-mic", name: "Built-in Microphone (preview)", selected: true), .init(id: "demo-usb-mic", name: "USB Microphone (preview)")],
+        speakers: [.init(id: "demo-speaker", name: "Built-in Speakers (preview)", selected: true), .init(id: "demo-headphones", name: "Headphones (preview)")],
+        cameras: [.init(id: "demo-camera", name: "Built-in Camera (preview)", selected: true), .init(id: "demo-usb-camera", name: "USB Camera (preview)")],
+        microphoneVolume: 70, speakerVolume: 50, canSetMicrophoneVolume: true, canSetSpeakerVolume: true)
 
     public init(participantCount: Int = 6) {
         self.participantCount = max(1, min(participantCount, 1_000))
@@ -27,6 +39,10 @@ public final class DemoMeetingDriver: MeetingDriver {
         rebuildParticipants()
         onEvent?(sessionID, .status(.inMeeting))
         onEvent?(sessionID, .participants(participants))
+        onEvent?(sessionID, .chatPolicy(MeetingChatPolicy(canPrivate: true, canWaitingRoom: request.isHost,
+            canTransferFiles: true, maxFileBytes: 10 * 1_024 * 1_024)))
+        mediaState.isInMeeting = true
+        onMediaDevicesChanged?(mediaState)
         recordingStatus = .stopped
         onEvent?(sessionID, .cloudRecording(MeetingCloudRecording(status: recordingStatus,
             canControl: request.isHost, unavailableReason: request.isHost ? nil : "Only the host controls recording in this interface preview.")))
@@ -40,6 +56,11 @@ public final class DemoMeetingDriver: MeetingDriver {
         self.sessionID = nil
         request = nil
         participants = []
+        for task in fixtureTransfers.values { task.cancel() }
+        fixtureTransfers = [:]; messages = [:]; attachments = [:]
+        stopMediaTests()
+        mediaState.isInMeeting = false
+        onMediaDevicesChanged?(mediaState)
         visibleParticipantIDs = []
         onEvent?(sessionID, .status(.idle))
     }
@@ -59,9 +80,175 @@ public final class DemoMeetingDriver: MeetingDriver {
     }
 
     public func sendChat(text: String, sessionID: UUID) async throws {
+        try await sendChat(MeetingChatDraft(text: text), sessionID: sessionID)
+    }
+
+    public func sendChat(_ draft: MeetingChatDraft, sessionID: UUID) async throws {
+        try requireSession(sessionID); try acceptFixtureControl()
+        guard draft.hasValidFormatting else { throw MeetingError.unavailable("Formatting doesn’t match the message.") }
+        if draft.recipient.kind == .participant {
+            guard participants.contains(where: { $0.id == draft.recipient.participantID && !$0.isSelf }) else {
+                throw MeetingError.unavailable("This person has left the preview meeting.")
+            }
+        }
+        fixtureMessageSequence += 1
+        publish(MeetingChatMessage(senderName: request?.displayName ?? "You", text: draft.text,
+            isFromSelf: true, sdkID: "fixture-sent-\(fixtureMessageSequence)", threadID: draft.replyToSDKID,
+            isReply: draft.replyToSDKID != nil, canReply: true, senderID: "demo-self",
+            recipient: draft.recipient, runs: draft.runs, canDelete: true), sessionID: sessionID)
+    }
+
+    public func sendChatReply(text: String, messageID: String, sessionID: UUID) async throws {
+        guard let message = messages[messageID], let recipient = message.replyRecipient else {
+            throw MeetingError.unavailable("This message can no longer be replied to.")
+        }
+        try await sendChat(MeetingChatDraft(text: text, recipient: recipient, replyToSDKID: messageID), sessionID: sessionID)
+    }
+
+    public func deleteChat(messageID: String, sessionID: UUID) async throws {
+        try requireSession(sessionID); try acceptFixtureControl()
+        guard let message = messages[messageID], message.isFromSelf, message.canDelete else {
+            throw MeetingError.unavailable("This message can’t be deleted.")
+        }
+        messages.removeValue(forKey: messageID)
+        onEvent?(sessionID, .messageRemoved(message.id))
+    }
+
+    public func sendChatFile(_ url: URL, recipient: MeetingChatRecipient, sessionID: UUID) async throws {
+        try requireSession(sessionID); try acceptFixtureControl()
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        let attachment = MeetingChatAttachment(id: UUID().uuidString, name: url.lastPathComponent,
+            bytes: UInt64(max(0, size)), senderName: request?.displayName ?? "You", recipient: recipient,
+            isFromSelf: true, status: .transferring, progress: 0)
+        attachments[attachment.id] = attachment
+        onEvent?(sessionID, .chatAttachment(attachment))
+        startFixtureTransfer(attachment.id, sessionID: sessionID)
+    }
+
+    public func receiveChatFile(_ id: String, to url: URL, sessionID: UUID) async throws {
+        try requireSession(sessionID); try acceptFixtureControl()
+        guard var attachment = attachments[id], !attachment.isFromSelf else { throw MeetingError.noMeeting }
+        guard !FileManager.default.fileExists(atPath: url.path) else { throw MeetingError.unavailable("Choose a new filename for this preview attachment.") }
+        attachment.status = .transferring; attachment.progress = 0
+        attachments[id] = attachment
+        onEvent?(sessionID, .chatAttachment(attachment))
+        startFixtureTransfer(id, sessionID: sessionID, destination: url)
+    }
+
+    public func cancelChatFile(_ id: String, sessionID: UUID) async throws {
         try requireSession(sessionID)
-        onEvent?(sessionID, .message(MeetingChatMessage(senderName: request?.displayName ?? "You",
-                                                        text: text, isFromSelf: true)))
+        guard var attachment = attachments[id] else { throw MeetingError.noMeeting }
+        fixtureTransfers.removeValue(forKey: id)?.cancel()
+        attachment.status = .cancelled
+        attachments[id] = attachment
+        onEvent?(sessionID, .chatAttachment(attachment))
+    }
+
+    public func setHandRaised(_ raised: Bool, sessionID: UUID) async throws {
+        try requireSession(sessionID); try acceptFixtureControl()
+        guard let index = participants.firstIndex(where: \.isSelf) else { throw MeetingError.noMeeting }
+        participants[index].isHandRaised = raised
+        onEvent?(sessionID, .participants(participants))
+    }
+
+    public func prepareMediaDevices() async throws -> MeetingMediaState {
+        try acceptFixtureControl(); return mediaState
+    }
+
+    public func selectMediaDevice(_ deviceID: String, kind: MeetingMediaKind) async throws -> MeetingMediaState {
+        try acceptFixtureControl()
+        let devices = mediaState.devices(for: kind)
+        guard devices.contains(where: { $0.id == deviceID }) else { throw MeetingError.unavailable("This preview device was disconnected.") }
+        let updated = devices.map { MeetingMediaDevice(id: $0.id, name: $0.name, selected: $0.id == deviceID) }
+        switch kind {
+        case .microphone: mediaState.microphones = updated
+        case .speaker: mediaState.speakers = updated
+        case .camera: mediaState.cameras = updated
+        }
+        stopMediaTests(); return mediaState
+    }
+
+    public func setMediaVolume(_ volume: Int, kind: MeetingMediaKind) async throws -> MeetingMediaState {
+        try acceptFixtureControl()
+        switch kind {
+        case .microphone: mediaState.microphoneVolume = min(100, max(0, volume))
+        case .speaker: mediaState.speakerVolume = min(100, max(0, volume))
+        case .camera: throw MeetingError.unavailable("Cameras do not have volume.")
+        }
+        onMediaDevicesChanged?(mediaState); return mediaState
+    }
+
+    public func setAutomaticMicrophoneVolume(_ enabled: Bool) async throws -> MeetingMediaState {
+        try acceptFixtureControl(); mediaState.automaticMicrophoneVolume = enabled
+        onMediaDevicesChanged?(mediaState); return mediaState
+    }
+
+    public func setMediaTest(_ kind: MeetingMediaKind, running: Bool) async throws -> MeetingMediaState {
+        try acceptFixtureControl()
+        stopMediaTests()
+        if kind == .microphone { mediaState.microphoneTest = running ? "recording" : "idle" }
+        if kind == .speaker { mediaState.speakerTestRunning = running }
+        if running {
+            fixtureMediaTest = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(kind == .microphone ? 5 : 10))
+                    guard let self, !Task.isCancelled else { return }
+                    if kind == .microphone {
+                        self.mediaState.microphoneTest = "playing"
+                        self.onMediaDevicesChanged?(self.mediaState)
+                        try await Task.sleep(for: .seconds(5))
+                    }
+                    self.stopMediaTests()
+                } catch {}
+            }
+        }
+        onMediaDevicesChanged?(mediaState); return mediaState
+    }
+
+    public func stopMediaTests() {
+        fixtureMediaTest?.cancel(); fixtureMediaTest = nil
+        mediaState.microphoneTest = "idle"; mediaState.speakerTestRunning = false
+        onMediaDevicesChanged?(mediaState)
+    }
+
+    private func acceptFixtureControl() throws {
+        guard rejectNextControl else { return }
+        rejectNextControl = false
+        throw MeetingError.unavailable("The preview rejected this action. Try again.")
+    }
+
+    private func publish(_ message: MeetingChatMessage, sessionID: UUID) {
+        if let sdkID = message.sdkID { messages[sdkID] = message }
+        onEvent?(sessionID, .message(message))
+    }
+
+    private func startFixtureTransfer(_ id: String, sessionID: UUID, destination: URL? = nil) {
+        fixtureTransfers[id]?.cancel()
+        fixtureTransfers[id] = Task { [weak self] in
+            do {
+                for step in 1...4 {
+                    try await Task.sleep(for: .milliseconds(750))
+                    guard let self, self.sessionID == sessionID, !Task.isCancelled,
+                          var attachment = self.attachments[id] else { return }
+                    attachment.progress = Double(step) / 4
+                    if step == 4 {
+                        if let destination {
+                            try Data("This is a local Yap chat attachment fixture.\n".utf8).write(to: destination, options: .withoutOverwriting)
+                        }
+                        attachment.status = .completed
+                    }
+                    self.attachments[id] = attachment
+                    self.onEvent?(sessionID, .chatAttachment(attachment))
+                }
+                self?.fixtureTransfers.removeValue(forKey: id)
+            } catch is CancellationError {} catch {
+                guard let self, self.sessionID == sessionID, var attachment = self.attachments[id] else { return }
+                attachment.status = .failed
+                self.attachments[id] = attachment
+                self.onEvent?(sessionID, .chatAttachment(attachment))
+                self.fixtureTransfers.removeValue(forKey: id)
+            }
+        }
     }
 
     public func startShare(_ target: ShareTarget, sessionID: UUID) async throws {
@@ -98,6 +285,78 @@ public final class DemoMeetingDriver: MeetingDriver {
         onEvent?(sessionID, .participants(participants))
     }
 
+    /// Deterministic, explicitly local events for testing the real meeting UI.
+    public func receiveFixtureMessage() {
+        guard let sessionID else { return }
+        fixtureMessageSequence += 1
+        let name = participants.first(where: { !$0.isSelf })?.name ?? "Avery Chen"
+        publish(MeetingChatMessage(senderName: name,
+            text: "Preview message \(fixtureMessageSequence): the agenda is ready. https://example.com/agenda",
+            sdkID: "fixture-incoming-\(fixtureMessageSequence)", canReply: true, senderID: "demo-1"), sessionID: sessionID)
+    }
+
+    public func receiveFixtureThread() {
+        guard let sessionID else { return }
+        fixtureMessageSequence += 1
+        let rootID = "fixture-thread-\(fixtureMessageSequence)"
+        publish(MeetingChatMessage(senderName: "Avery Chen",
+            text: "Which design should we discuss first?", sdkID: rootID, canReply: true, senderID: "demo-1"), sessionID: sessionID)
+        for (index, text) in ["Let’s start with the new calendar menu.", "Then the chat controls — I have a few ideas."].enumerated() {
+            publish(MeetingChatMessage(senderName: index == 0 ? "Jordan Ellis" : "Sam Rivera",
+                text: text, sdkID: "\(rootID)-reply-\(index)", threadID: rootID, isReply: true, canReply: true,
+                senderID: "demo-\(index + 2)"), sessionID: sessionID)
+        }
+    }
+
+    public func receiveFixturePrivateMessage() {
+        guard let sessionID else { return }
+        fixtureMessageSequence += 1
+        publish(MeetingChatMessage(senderName: "Avery Chen", text: "Can you review the notes privately after this call?",
+            sdkID: "fixture-private-\(fixtureMessageSequence)", canReply: true, senderID: "demo-1",
+            recipient: .init(kind: .participant, participantID: "demo-self", name: request?.displayName ?? "You")), sessionID: sessionID)
+    }
+
+    public func receiveFixtureFormatting() {
+        guard let sessionID else { return }
+        fixtureMessageSequence += 1
+        let runs: [MeetingChatTextRun] = [.init(text: "Next steps 👋\n", bold: true),
+            .init(text: "Review the calendar menu", italic: true), .init(text: " and "),
+            .init(text: "read the notes", underline: true, link: "https://example.com/notes"),
+            .init(text: ".\nOld deadline", strikethrough: true)]
+        publish(MeetingChatMessage(senderName: "Jordan Ellis", text: runs.map(\.text).joined(),
+            sdkID: "fixture-format-\(fixtureMessageSequence)", canReply: true, senderID: "demo-2", runs: runs), sessionID: sessionID)
+    }
+
+    public func receiveFixtureWaitingRoomMessage() {
+        guard let sessionID else { return }
+        fixtureMessageSequence += 1
+        publish(MeetingChatMessage(senderName: "Riley Park", text: "Hi! I’m waiting to be admitted.",
+            sdkID: "fixture-waiting-\(fixtureMessageSequence)", senderID: "demo-waiting-1",
+            recipient: .waitingRoom), sessionID: sessionID)
+    }
+
+    public func setFixtureChatEnabled(_ enabled: Bool) {
+        guard let sessionID else { return }
+        onEvent?(sessionID, .chatPolicy(MeetingChatPolicy(canEveryone: enabled, canPrivate: enabled,
+            canWaitingRoom: enabled && request?.isHost == true, canTransferFiles: enabled,
+            maxFileBytes: 10 * 1_024 * 1_024)))
+    }
+
+    public func receiveFixtureAttachment() {
+        guard let sessionID else { return }
+        let attachment = MeetingChatAttachment(id: UUID().uuidString, name: "Preview meeting notes.txt", bytes: 44,
+            senderName: "Avery Chen", isFromSelf: false)
+        attachments[attachment.id] = attachment
+        onEvent?(sessionID, .chatAttachment(attachment))
+    }
+
+    public func simulateFixtureDeviceDisconnect() {
+        mediaState.microphones = [.init(id: "demo-mic", name: "Built-in Microphone (preview)", selected: true)]
+        mediaState.speakers = [.init(id: "demo-speaker", name: "Built-in Speakers (preview)", selected: true)]
+        mediaState.cameras = [.init(id: "demo-camera", name: "Built-in Camera (preview)", selected: true)]
+        stopMediaTests()
+    }
+
     private func requireSession(_ id: UUID) throws {
         guard id == sessionID else { throw MeetingError.noMeeting }
     }
@@ -112,7 +371,8 @@ public final class DemoMeetingDriver: MeetingDriver {
             if index == 0 {
                 return MeetingParticipant(id: "demo-self", name: request.displayName, isSelf: true,
                     isHost: request.isHost, isMuted: local?.isMuted ?? request.microphoneMuted,
-                    isCameraEnabled: local?.isCameraEnabled ?? request.cameraEnabled, avatarSeed: 0)
+                    isCameraEnabled: local?.isCameraEnabled ?? request.cameraEnabled, avatarSeed: 0,
+                    isHandRaised: local?.isHandRaised ?? false)
             }
             let cycle = (index - 1) / names.count
             let name = names[(index - 1) % names.count] + (cycle == 0 ? "" : " \(cycle + 1)")

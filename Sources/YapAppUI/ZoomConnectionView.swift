@@ -42,6 +42,15 @@ public final class ZoomConnectionModel {
         await refreshStatus(for: operationID)
     }
 
+    func statusLabel(authenticationError: String? = nil) -> String {
+        if isConnecting { return "Signing in…" }
+        if ZoomSignInError.matches(authenticationError) { return "Sign-in needs attention" }
+        if isLoadingStatus || (!hasLoadedStatus && statusError == nil) { return "Checking connection…" }
+        if statusError != nil || !hasLoadedStatus { return "Connection status unavailable" }
+        // A matching record in Keychain is not proof that Zoom still accepts it.
+        return hasSavedConnection ? "Sign-in saved" : "Not connected"
+    }
+
     private func refreshStatus(for expectedOperation: UUID) async {
         let requestID = UUID()
         statusRequestID = requestID
@@ -200,11 +209,11 @@ struct ZoomConnectionView: View {
     @Bindable var connection: ZoomConnectionModel
     @State private var showConfigurationEntry = false
 
-    private var statusLabel: String {
-        if connection.hasSavedConnection { return "Account connected" }
-        if connection.isLoadingStatus || (!connection.hasLoadedStatus && connection.statusError == nil) { return "Checking connection…" }
-        if !connection.hasLoadedStatus { return "Connection status unavailable" }
-        return "Not connected"
+    private var authenticationError: String? {
+        [model.recordings.error, model.recordings.playbackError, model.recordings.downloadError,
+         model.recordings.chat.error, model.recordings.transcript.error,
+         model.meeting.lastError, model.error, connection.error]
+            .compactMap { $0 }.first { ZoomSignInError.matches($0) }
     }
 
     var body: some View {
@@ -212,7 +221,7 @@ struct ZoomConnectionView: View {
             HStack {
                 Label("Zoom", systemImage: "video")
                 Spacer()
-                Text(statusLabel).foregroundStyle(.secondary)
+                Text(connection.statusLabel(authenticationError: authenticationError)).foregroundStyle(.secondary)
             }
             Text("Use your Zoom account to join and host ordinary Zoom meetings.").font(.callout).foregroundStyle(.secondary)
             if connection.isLoadingStatus || (!connection.hasLoadedStatus && connection.statusError == nil) {
@@ -241,10 +250,14 @@ struct ZoomConnectionView: View {
                             .disabled(model.activeCall || connection.isUpdatingConfiguration)
                     }
                 } else if connection.hasSavedConnection {
-                    Button("Disconnect Zoom", role: .destructive) { Task { await connection.disconnect() } }
-                        .disabled(model.activeCall || connection.isBusy)
+                    HStack {
+                        Button("Sign in again", action: signIn)
+                            .disabled(model.activeCall || connection.isBusy || connection.isLoadingStatus)
+                        Button("Disconnect Zoom", role: .destructive) { Task { await connection.disconnect() } }
+                            .disabled(model.activeCall || connection.isBusy)
+                    }
                 } else {
-                    Button("Sign in with Zoom") { Task { await connection.connect() } }
+                    Button("Sign in to Zoom", action: signIn)
                         .disabled(connection.isBusy || connection.isLoadingStatus || model.activeCall)
                 }
                 Menu(connection.hasPublicConfiguration ? "Developer configuration…" : "Replace Zoom configuration…") {
@@ -267,13 +280,22 @@ struct ZoomConnectionView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         } header: { Text("Your meetings") }
-        .task { await connection.loadStatus() }
+        // API failures can invalidate saved tokens after Settings first loaded.
+        .task(id: authenticationError) { await connection.loadStatus() }
         .sheet(isPresented: $showConfigurationEntry, onDismiss: { connection.error = nil }) {
             ZoomConfigurationEntry(model: model, connection: connection)
         }
         .alert("Zoom connection", isPresented: Binding(get: { connection.error != nil && connection.statusError == nil && !showConfigurationEntry }, set: { if !$0 { connection.error = nil } })) {
+            ZoomSignInButton(error: connection.error ?? "", recovery: model.recordings.zoomSignInRecovery)
             Button("OK", role: .cancel) { connection.error = nil }
         } message: { Text(connection.error ?? "") }
+    }
+
+    private func signIn() {
+        Task {
+            if let recovery = model.recordings.zoomSignInRecovery { await recovery.signIn() }
+            else { await connection.connect() }
+        }
     }
 
     private func enterConfiguration() {

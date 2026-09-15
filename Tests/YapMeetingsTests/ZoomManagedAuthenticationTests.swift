@@ -66,6 +66,39 @@ struct ZoomManagedAuthenticationTests {
         #expect(!String(reflecting: original).contains("fixture-access"))
     }
 
+    @Test func cameraSettingsAuthorizeWithoutFetchingZAKOrCreatingMeeting() async throws {
+        let store = ManagedZoomStore(tokens: tokens())
+        let server = ManagedZoomServer()
+        let client = makeClient(store, server)
+        let signature = try await client.cameraSettingsSignature()
+        #expect(!signature.isEmpty)
+        #expect(await server.requests.map { $0.url?.absoluteString } == [managed.sdkSignerURL.absoluteString])
+        try await client.configure(personal)
+        #expect(try await !client.cameraSettingsSignature().isEmpty)
+        #expect(await server.requests.count == 1)
+    }
+
+    @Test func cameraSettingsRefreshExpiredSigningAuthorizationWithoutZAK() async throws {
+        let server = ManagedZoomServer(rejectFirstSignature: true)
+        let client = makeClient(ManagedZoomStore(tokens: tokens()), server)
+        _ = try await client.cameraSettingsSignature()
+        let requests = await server.requests
+        #expect(requests.filter { $0.url?.path == "/v1/oauth/token" }.count == 1)
+        #expect(requests.filter { $0.url?.path == "/v1/meeting-sdk/signature" }.count == 2)
+        #expect(requests.allSatisfy { $0.url?.host == "signer.example" })
+    }
+
+    @Test func cancelledCameraSettingsCannotReturnLateSignature() async throws {
+        let server = ManagedZoomServer(pauseSignature: true)
+        let client = makeClient(ManagedZoomStore(tokens: tokens()), server)
+        let request = Task { try await client.cameraSettingsSignature() }
+        await server.waitForSignature()
+        request.cancel()
+        await server.resumeSignature()
+        await #expect(throws: CancellationError.self) { try await request.value }
+        #expect(await server.requests.allSatisfy { $0.url?.host == "signer.example" })
+    }
+
     @Test func signsOnlyAtPinnedEndpointWithMatchedAccessAndServiceGrant() async throws {
         let store = ManagedZoomStore(tokens: tokens())
         let server = ManagedZoomServer()

@@ -9,20 +9,17 @@ import YapMeetings
 @Suite("Calendar configuration observation")
 @MainActor
 struct CalendarConfigurationObservationTests {
-    @Test func firstImportNotifiesTheSettingsSignInControl() async throws {
+    @Test func bundledClientLoadNotifiesTheSignInControl() async throws {
         let suite = "YapCalendarConfigurationObservation.\(UUID())"
         let preferences = try #require(UserDefaults(suiteName: suite))
         defer { preferences.removePersistentDomain(forName: suite) }
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("YapGoogleImport-\(UUID()).json")
-        defer { try? FileManager.default.removeItem(at: path) }
-        try Data(#"{"installed":{"client_id":"personal.apps.googleusercontent.com"}}"#.utf8).write(to: path)
 
         let model = YapModel(
             preview: false, preferences: preferences,
             meeting: MeetingCoordinator(driver: DemoMeetingDriver()),
             calendarClient: ImportCalendarService(isConfigured: false),
             reminders: YapReminderActions(requestAuthorization: { false }, synchronize: { _, _ in }, disable: {}),
-            saveGoogleConfiguration: { _ in },
+            loadGoogleConfiguration: { try GoogleOAuthConfiguration.yap() },
             makeConfiguredCalendarClient: { _ in ImportCalendarService(isConfigured: true) }
         )
         let didChange = Mutex(false)
@@ -32,7 +29,7 @@ struct CalendarConfigurationObservationTests {
             didChange.withLock { $0 = true }
         }
 
-        await model.importGoogleConfiguration(from: path)
+        await model.loadGoogleConnection()
 
         #expect(model.googleConfigured)
         #expect(didChange.withLock { $0 })

@@ -213,7 +213,12 @@ struct RecordingTranscriptView: View {
                 Image(systemName: "exclamationmark.bubble").font(.system(size: 27, weight: .ultraLight)).foregroundStyle(.tertiary)
                 Text("Couldn’t load transcript").font(.system(size: 13, weight: .medium))
                 Text(error).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
-                Button("Retry") { transcript.retry() }.buttonStyle(.bordered).controlSize(.small)
+                if ZoomSignInError.matches(error) {
+                    ZoomSignInButton(error: error, recovery: model.zoomSignInRecovery)
+                        .buttonStyle(.bordered).controlSize(.small)
+                } else {
+                    Button("Retry") { transcript.retry() }.buttonStyle(.bordered).controlSize(.small)
+                }
             } else {
                 Image(systemName: "text.alignleft").font(.system(size: 27, weight: .ultraLight)).foregroundStyle(.tertiary)
                 Text(transcript.hasTranscriptFile ? "No spoken passages" : "No transcript available")

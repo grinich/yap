@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import YapSystem
+import YapMeetings
 
 private let yapMainWindowAttached = Notification.Name("com.grinich.yap.main-window-attached")
 let yapMainWindowWillHide = Notification.Name("com.grinich.yap.main-window-will-hide")
@@ -59,9 +60,13 @@ public struct YapMenuBarView: View {
 public struct YapCommands: Commands {
     let model: YapModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     public init(model: YapModel) { self.model = model }
 
     public var body: some Commands {
+        let shouldMuteMicrophone = !model.meeting.isMicrophoneMuted
+        let shouldEnableCamera = !model.meeting.isCameraEnabled
+        let shouldRaiseHand = !model.meeting.isHandRaised
         CommandGroup(after: .newItem) {
             Button("Open Yap") { YapSystemActions.request(.openYap) }.keyboardShortcut("0", modifiers: .command)
             Button("Join with a link…") {
@@ -69,9 +74,13 @@ public struct YapCommands: Commands {
             }.keyboardShortcut("j", modifiers: .command).disabled(model.activeCall)
             Button("Join next meeting") { openWindow(id: "main"); Task { await model.handleSystemAction(.joinNextMeeting) } }
                 .keyboardShortcut(.return, modifiers: .command).disabled(model.nextMeeting == nil || model.activeCall)
-            Button("Start a meeting") { openWindow(id: "main"); Task { await model.hostMeeting() } }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(model.activeCall)
+            Button("Start new meeting") { openWindow(id: "main"); Task { await model.hostMeeting() } }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(model.activeCall)
         }
         CommandGroup(after: .toolbar) {
+            Toggle("Keep on Top", isOn: Binding(get: { YapWindowLevel.shared.isEnabled },
+                                                set: { YapWindowLevel.shared.isEnabled = $0 }))
+            Button("Show Schedule") { NotificationCenter.default.post(name: yapShowScheduleMenu, object: nil) }
+            Divider()
             Button(model.recordings.isPresented ? "Hide Recordings" : "Show Recordings") {
                 openWindow(id: "main")
                 model.recordings.toggle()
@@ -85,18 +94,48 @@ public struct YapCommands: Commands {
         CommandGroup(replacing: .help) {
             Link("Report a Bug", destination: URL(string: "https://github.com/grinich/yap/issues/new/choose")!)
         }
-        CommandMenu("Meeting") {
-            Button(model.meeting.isMicrophoneMuted ? "Unmute microphone" : "Mute microphone") { Task { await model.meeting.setMicrophoneMuted(!model.meeting.isMicrophoneMuted) } }
+        CommandMenu("Microphone") {
+            Button(shouldMuteMicrophone ? "Mute microphone" : "Unmute microphone") { Task { await model.meeting.setMicrophoneMuted(shouldMuteMicrophone) } }
                 .keyboardShortcut("a", modifiers: [.command, .shift]).disabled(!model.meeting.isConnected || model.meeting.isApplyingControl)
-            Button(model.meeting.isCameraEnabled ? "Turn camera off" : "Turn camera on") { Task { await model.meeting.setCameraEnabled(!model.meeting.isCameraEnabled) } }
+            Divider()
+            MeetingMediaMenuItems(meeting: model.meeting, kind: .microphone)
+            Divider()
+            Button("Microphone modes…") { YapSystemMediaEffects.showMicrophoneModes() }
+                .disabled(model.isPreview || !model.meeting.isConnected)
+        }
+        CommandMenu("Speaker") {
+            MeetingMediaMenuItems(meeting: model.meeting, kind: .speaker)
+        }
+        CommandMenu("Camera") {
+            Button(shouldEnableCamera ? "Turn camera on" : "Turn camera off") { Task { await model.meeting.setCameraEnabled(shouldEnableCamera) } }
                 .keyboardShortcut("v", modifiers: [.command, .shift]).disabled(!model.meeting.isConnected || model.meeting.isApplyingControl)
+            Divider()
+            MeetingMediaMenuItems(meeting: model.meeting, kind: .camera)
+            Divider()
+            Button("Camera effects…") {
+                UserDefaults.standard.set(3, forKey: "settings.selectedPane")
+                openSettings()
+            }.disabled(model.isPreview)
+            Button("macOS video effects…") { YapSystemMediaEffects.showVideoEffects() }
+                .disabled(model.isPreview || !model.meeting.isCameraEnabled)
+        }
+        CommandMenu("Meeting") {
+            Button(shouldRaiseHand ? "Raise hand" : "Lower hand") {
+                Task { await model.meeting.setHandRaised(shouldRaiseHand) }
+            }.keyboardShortcut("y", modifiers: [.command, .shift])
+                .disabled(!model.meeting.canRaiseHand || model.meeting.isApplyingControl)
             Button(model.sidebar == .chat ? "Hide Chat" : "Show Chat") { openWindow(id: "main"); NSApplication.shared.activate(); model.sidebar = model.sidebar == .chat ? nil : .chat }.keyboardShortcut("h", modifiers: [.command, .shift]).disabled(!model.meeting.isConnected)
             Button(model.sidebar == .people ? "Hide People" : "Show People") { openWindow(id: "main"); NSApplication.shared.activate(); model.sidebar = model.sidebar == .people ? nil : .people }.disabled(!model.meeting.isConnected)
             Button("Stop sharing") { Task { await model.meeting.stopShare() } }.disabled(!model.meeting.sharing.isSharing || !model.meeting.isConnected || model.meeting.isApplyingControl)
             Divider()
             MeetingCloudRecordingMenuItems(meeting: model.meeting)
             Divider()
-            Button("Leave meeting…") { model.showLeaveConfirmation = true }.keyboardShortcut("w", modifiers: [.command, .shift]).disabled(!model.activeCall)
+            Button(model.askBeforeLeavingMeeting ? "Leave meeting…" : "Leave meeting") { model.requestLeaveMeeting() }
+                .keyboardShortcut("w", modifiers: [.command, .shift]).disabled(!model.activeCall)
+            if model.meeting.isHost {
+                Button("End for everyone…") { model.showLeaveConfirmation = true }
+                    .disabled(!model.activeCall || model.meeting.status == .leaving)
+            }
         }
     }
 }
@@ -108,7 +147,6 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     private var routingTask: Task<Void, Never>?
     private var isObservingActions = false
     private var menuBarController: YapMenuBarController?
-    private var sharingOverlayController: YapSharingOverlayController?
     private let incomingURLs = YapIncomingURLRouter()
     private var recordingsWindowReveal = YapRecordingsWindowReveal()
     private lazy var windowPresenter = YapMainWindowPresenter(actions: .init(
@@ -122,7 +160,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
         },
         applicationIsActive: { NSApplication.shared.isActive },
         restoreWindow: { [weak self] in
-            guard let window = self?.model?.sharingPresentation.mainWindow else { return nil }
+            guard let window = self?.model?.meetingPresentation.mainWindow else { return nil }
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.orderFrontRegardless()
             window.makeKeyAndOrderFront(nil)
@@ -142,11 +180,6 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     public func configure(model: YapModel, openMainWindow: @escaping () -> Void) {
         self.model = model
         self.openMainWindow = openMainWindow
-        if sharingOverlayController == nil {
-            sharingOverlayController = YapSharingOverlayController(model: model) { [weak self] in
-                self?.presentMainWindow()
-            }
-        }
         if menuBarController == nil {
             menuBarController = YapMenuBarController(model: model,
                 toggleMainWindow: { [weak self] in self?.toggleMainWindow() },
@@ -190,7 +223,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func toggleMainWindow() {
-        guard let window = model?.sharingPresentation.mainWindow,
+        guard let window = model?.meetingPresentation.mainWindow,
               NSApplication.shared.isActive, !NSApplication.shared.isHidden,
               window.isVisible, !window.isMiniaturized, window.isOnActiveSpace,
               window.isKeyWindow || window.attachedSheet?.isKeyWindow == true else {
@@ -215,12 +248,12 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func mainWindowDidMiniaturize(_ notification: Notification) {
-        guard notification.object as? NSWindow === model?.sharingPresentation.mainWindow else { return }
+        guard notification.object as? NSWindow === model?.meetingPresentation.mainWindow else { return }
         recordingsWindowReveal.windowWillHide()
     }
 
     @objc private func mainWindowBecameAvailable(_ notification: Notification) {
-        guard notification.object as? NSWindow === model?.sharingPresentation.mainWindow else { return }
+        guard notification.object as? NSWindow === model?.meetingPresentation.mainWindow else { return }
         if let recordings = model?.recordings, recordings.isPresented {
             recordings.prepareForPresentation()
         }
@@ -234,7 +267,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillHide(_ notification: Notification) {
-        guard model?.sharingPresentation.mainWindow != nil else { return }
+        guard model?.meetingPresentation.mainWindow != nil else { return }
         recordingsWindowReveal.windowWillHide()
     }
 
@@ -243,7 +276,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshRecordingsAfterWindowReveal() {
-        guard let model, let window = model.sharingPresentation.mainWindow,
+        guard let model, let window = model.meetingPresentation.mainWindow,
               recordingsWindowReveal.shouldRefresh(isVisible: window.isVisible,
                   isMiniaturized: window.isMiniaturized, isApplicationHidden: NSApplication.shared.isHidden,
                   recordingsPresented: model.recordings.isPresented, isPreview: model.isPreview,
@@ -252,7 +285,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor [weak model] in
             guard let model, model.recordings.isPresented, !model.isPreview, !model.activeCall,
                   !model.zoomConnection.isBusy, model.zoomConnection.accountRevision == accountRevision,
-                  let window = model.sharingPresentation.mainWindow, window.isVisible,
+                  let window = model.meetingPresentation.mainWindow, window.isVisible,
                   !window.isMiniaturized, !NSApplication.shared.isHidden else { return }
             await model.recordings.refreshForPresentation()
         }
@@ -272,17 +305,18 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
         model?.recordings.closePlayerWindows()
         model?.recordings.chat.clear()
         windowPresenter.cancel()
-        sharingOverlayController?.stop()
         menuBarController?.stop()
     }
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, model.activeCall else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = "Leave the meeting and quit Yap?"
-        alert.informativeText = "Your microphone, camera, and screen sharing will stop."
-        alert.addButton(withTitle: "Leave and quit")
-        alert.addButton(withTitle: "Stay in meeting")
-        guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        if model.askBeforeLeavingMeeting {
+            let alert = NSAlert()
+            alert.messageText = "Leave the meeting and quit Yap?"
+            alert.informativeText = "Your microphone, camera, and screen sharing will stop."
+            alert.addButton(withTitle: "Leave and quit")
+            alert.addButton(withTitle: "Stay in meeting")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        }
         Task {
             await model.leaveMeeting()
             let ended = await model.meeting.waitForMeetingEnd()
@@ -318,6 +352,7 @@ struct WindowBehavior: NSViewRepresentable {
     }
 
     private func configureAppearance(of window: NSWindow) {
+        YapWindowLevel.shared.register(window)
         window.title = title
         window.titleVisibility = .hidden
         // Joining removes the agenda toolbar. Preserve a full-size content view
@@ -337,6 +372,7 @@ struct WindowBehavior: NSViewRepresentable {
         let model: YapModel
         private weak var window: NSWindow?
         private let closeButton = YapWindowCloseButton(frame: .zero)
+        private let pinButton = YapWindowPinButton(frame: .zero)
         // NSObject's selector lookup is nonisolated; the weak reference is only
         // replaced during main-actor window attachment and never owns its target.
         nonisolated(unsafe) private weak var originalDelegate: (any NSWindowDelegate)?
@@ -354,17 +390,29 @@ struct WindowBehavior: NSViewRepresentable {
                 closeButton.removeFromSuperview()
                 frameView.addSubview(closeButton, positioned: .above, relativeTo: nil)
             }
+            if !model.activeCall {
+                pinButton.removeFromSuperview()
+            } else if pinButton.superview !== frameView {
+                pinButton.removeFromSuperview()
+                frameView.addSubview(pinButton, positioned: .above, relativeTo: nil)
+            }
             // Anchor to the full window frame. AppKit moves its hidden standard
             // buttons when an empty toolbar collapses, so their frames are not
             // stable positioning guides for this independent close control.
             closeButton.frame = NSRect(x: 12, y: frameView.isFlipped ? 12 : frameView.bounds.height - 36,
                                        width: 24, height: 24)
             closeButton.autoresizingMask = [.maxXMargin, frameView.isFlipped ? .maxYMargin : .minYMargin]
+            pinButton.frame = closeButton.frame.offsetBy(dx: 24, dy: 0)
+            pinButton.autoresizingMask = closeButton.autoresizingMask
             let opacity: CGFloat = isVisible ? 1 : 0
-            if closeButton.alphaValue != opacity {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.25
-                    closeButton.animator().alphaValue = opacity
+            pinButton.isEnabled = model.activeCall && isVisible
+            for button in [closeButton, pinButton] as [NSButton] {
+                button.setAccessibilityHidden(!isVisible || (button === pinButton && !model.activeCall))
+                if button.alphaValue != opacity {
+                    NSAnimationContext.runAnimationGroup { context in
+                        context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.25
+                        button.animator().alphaValue = opacity
+                    }
                 }
             }
             for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
@@ -379,14 +427,15 @@ struct WindowBehavior: NSViewRepresentable {
             guard window.delegate !== self else { return }
             detach()
             self.window = window
-            model.sharingPresentation.mainWindow = window
+            model.meetingPresentation.mainWindow = window
             originalDelegate = window.delegate
             window.delegate = self
             NotificationCenter.default.post(name: yapMainWindowAttached, object: model)
         }
         func detach() {
             closeButton.removeFromSuperview()
-            if model.sharingPresentation.mainWindow === window { model.sharingPresentation.mainWindow = nil }
+            pinButton.removeFromSuperview()
+            if model.meetingPresentation.mainWindow === window { model.meetingPresentation.mainWindow = nil }
             if window?.delegate === self { window?.delegate = originalDelegate }
             window = nil
             originalDelegate = nil
@@ -400,7 +449,7 @@ struct WindowBehavior: NSViewRepresentable {
         }
         func windowShouldClose(_ sender: NSWindow) -> Bool {
             if model.activeCall {
-                model.showLeaveConfirmation = true
+                model.requestLeaveMeeting()
                 return false
             }
             model.recordings.suspendPlayback()

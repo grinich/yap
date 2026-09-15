@@ -17,26 +17,20 @@ struct ZoomLinkSettingsView: View {
 
     var body: some View {
         Section("Meeting links") {
-            Picker("Open Zoom links with", selection: Binding(
-                get: { selection },
-                set: { if let choice = $0 { select(choice) } }
-            )) {
-                if selection == nil {
-                    Text(currentLabel).tag(Optional<ZoomLinkHandlerChoice>.none).disabled(true)
-                }
-                ForEach(ZoomLinkHandlerChoice.allCases, id: \.self) { choice in
-                    Text(status.applicationURL(for: choice) == nil ? "\(choice.displayName) (not installed)" : choice.displayName)
-                        .tag(Optional(choice))
-                        .disabled(status.applicationURL(for: choice) == nil)
-                }
+            HStack(spacing: 20) {
+                SettingsLabel(title: "Open Zoom links with", detail: "The app your browser opens when you join a Zoom meeting.")
+                Spacer(minLength: 0)
+                SettingsChoiceMenu(title: "Open Zoom links with", selection: Binding(
+                    get: { selection },
+                    set: { if let choice = $0 { select(choice) } }
+                ), choices: choices)
+                .frame(width: 190)
+                .disabled(isChanging)
+                .accessibilityIdentifier("zoomLinkHandlerPicker")
             }
-            .disabled(isChanging)
-            .accessibilityIdentifier("zoomLinkHandlerPicker")
             if isChanging {
                 ProgressView("Updating your Mac’s setting…").controlSize(.small)
             }
-            Text("Meeting links opened in your browser launch the selected app when you choose “Open Zoom”.")
-                .font(.caption).foregroundStyle(.secondary)
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.red)
             }
@@ -45,6 +39,18 @@ struct ZoomLinkSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if !isChanging { refresh() }
         }
+    }
+
+    private var choices: [SettingsChoice<ZoomLinkHandlerChoice?>] {
+        var items: [SettingsChoice<ZoomLinkHandlerChoice?>] = []
+        if selection == nil {
+            items.append(SettingsChoice(value: nil, title: currentLabel, isEnabled: false))
+        }
+        items += ZoomLinkHandlerChoice.allCases.map { choice in
+            let installed = status.applicationURL(for: choice) != nil
+            return SettingsChoice(value: Optional(choice), title: installed ? choice.displayName : "\(choice.displayName) (not installed)", isEnabled: installed)
+        }
+        return items
     }
 
     private var selection: ZoomLinkHandlerChoice? {

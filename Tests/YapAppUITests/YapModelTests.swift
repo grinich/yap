@@ -222,35 +222,6 @@ struct YapModelTests {
         #expect(fixture.reminders.disableCount == 1)
     }
 
-    @Test func importDisconnectsStoredCredentialsEvenBeforeConnectionStatusLoads() async throws {
-        let fixture = ModelFixture()
-        defer { fixture.cleanUp() }
-        #expect(!fixture.model.isCalendarConnected)
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("YapModelConfig-\(UUID()).json")
-        defer { try? FileManager.default.removeItem(at: path) }
-        let data = Data(#"{"installed":{"client_id":"replacement.apps.googleusercontent.com"}}"#.utf8)
-        try data.write(to: path)
-        await fixture.model.importGoogleConfiguration(from: path)
-        #expect(await fixture.calendar.disconnectCount == 1)
-        #expect(fixture.configuration.saved == data)
-        #expect(fixture.configuration.createdClientID == "replacement.apps.googleusercontent.com")
-        #expect(fixture.model.events.isEmpty)
-        #expect(!fixture.model.isCalendarConnected)
-    }
-
-    @Test func failedCredentialDeletionStopsConfigurationReplacement() async throws {
-        let fixture = ModelFixture()
-        defer { fixture.cleanUp() }
-        await fixture.calendar.failDisconnect()
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("YapModelConfig-\(UUID()).json")
-        defer { try? FileManager.default.removeItem(at: path) }
-        try Data(#"{"installed":{"client_id":"replacement.apps.googleusercontent.com"}}"#.utf8).write(to: path)
-        await fixture.model.importGoogleConfiguration(from: path)
-        #expect(fixture.configuration.saved == nil)
-        #expect(fixture.configuration.createdClientID == nil)
-        #expect(fixture.model.error != nil)
-    }
-
     @Test func showAllPickerTracksTheCurrentCoordinatorAcrossPreview() async {
         let fixture = ModelFixture()
         defer { fixture.cleanUp() }
@@ -362,7 +333,6 @@ private final class ModelFixture {
     let calendars = [GoogleCalendar(id: "a", name: "A", isPrimary: true), GoogleCalendar(id: "b", name: "B")]
     let calendar: ModelCalendar
     let reminders = ModelReminders()
-    let configuration = ConfigurationProbe()
     let liveMeeting = MeetingCoordinator(driver: DemoMeetingDriver(participantCount: 3))
     var model: YapModel!
 
@@ -382,20 +352,11 @@ private final class ModelFixture {
 
     func makeModel(preview: Bool = false) -> YapModel {
         let calendar = self.calendar
-        let configuration = self.configuration
         return YapModel(preview: preview, preferences: preferences, meeting: liveMeeting, calendarClient: calendar,
-                           reminders: reminders.actions,
-                           saveGoogleConfiguration: { configuration.saved = $0 },
-                           makeConfiguredCalendarClient: { config in configuration.createdClientID = config.clientID; return calendar })
+                           reminders: reminders.actions)
     }
 
     func cleanUp() { preferences.removePersistentDomain(forName: suite) }
-}
-
-@MainActor
-private final class ConfigurationProbe {
-    var saved: Data?
-    var createdClientID: String?
 }
 
 @MainActor

@@ -37,7 +37,7 @@ struct RecordingSidebar: View {
                     ForEach(filteredMeetings) { meeting in
                         recordingRow(meeting)
                     }
-                    if filteredMeetings.isEmpty, !model.isLoading {
+                    if filteredMeetings.isEmpty, !model.isLoading, !connection.isConnecting {
                         if isPreview {
                             sidebarMessage("Connect to your library", detail: "Exit preview to browse your Zoom cloud recordings.")
                         } else if model.error == nil {
@@ -51,17 +51,21 @@ struct RecordingSidebar: View {
                                 .font(.system(size: 12, weight: .medium))
                             Text(error).font(.system(size: 12)).foregroundStyle(.secondary)
                                 .textSelection(.enabled)
-                            HStack {
-                                Button("Retry") {
-                                    Task { await model.retryLoading() }
-                                }
-                                Button("Zoom settings", action: openSettings)
+                            ViewThatFits(in: .horizontal) {
+                                HStack { errorActions(error) }
+                                VStack(alignment: .leading, spacing: 8) { errorActions(error) }
                             }.controlSize(.small)
                         }
                         .padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal, 6).padding(.vertical, 12)
                     }
-                    if model.isLoading || model.isLoadingOlder {
+                    if connection.isConnecting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Signing in to Zoom…")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                        }.frame(maxWidth: .infinity).padding(.vertical, 22)
+                    } else if model.isLoading || model.isLoadingOlder {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text(model.isLoadingOlder ? "Loading earlier recordings…" : "Loading recordings…")
@@ -97,6 +101,15 @@ struct RecordingSidebar: View {
             Text(title).font(.system(size: 12, weight: .medium))
             Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
         }.padding(.horizontal, 12).padding(.vertical, 20)
+    }
+
+    @ViewBuilder private func errorActions(_ error: String) -> some View {
+        if ZoomSignInError.matches(error) {
+            ZoomSignInButton(error: error, recovery: model.zoomSignInRecovery)
+        } else {
+            Button("Retry") { Task { await model.retryLoading() } }
+        }
+        Button("Zoom settings", action: openSettings)
     }
 
     private func recordingRow(_ meeting: ZoomRecordingMeeting) -> some View {
@@ -354,8 +367,13 @@ struct RecordingPlayerView: View {
                         VStack(spacing: 14) {
                             Image(systemName: "arrow.down.circle").font(.system(size: 28, weight: .light))
                             Text(error).font(.system(size: 12)).multilineTextAlignment(.center)
-                            Button("Download to play") { model.downloadSelected() }
-                                .buttonStyle(.borderedProminent).disabled(model.isDownloading)
+                            if ZoomSignInError.matches(error) {
+                                ZoomSignInButton(error: error, recovery: model.zoomSignInRecovery)
+                                    .buttonStyle(.borderedProminent)
+                            } else {
+                                Button("Download to play") { model.downloadSelected() }
+                                    .buttonStyle(.borderedProminent).disabled(model.isDownloading)
+                            }
                         }
                         .padding(24).frame(maxWidth: 320)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
@@ -451,6 +469,7 @@ struct RecordingPlayerView: View {
             }
         } else if let error = model.downloadError {
             Text(error).font(.system(size: 12)).foregroundStyle(.secondary)
+            ZoomSignInButton(error: error, recovery: model.zoomSignInRecovery)
         } else if let url = model.downloadedFile {
             HStack {
                 Label("Video saved", systemImage: "checkmark.circle").font(.system(size: 12)).foregroundStyle(.secondary)

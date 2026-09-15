@@ -114,6 +114,28 @@ public actor ZoomAccountClient {
         try await removeConfiguration()
     }
 
+    /// Camera settings need SDK authorization, but do not need a meeting or a ZAK.
+    public func cameraSettingsSignature() async throws -> String {
+        guard connectionTask == nil else { throw ZoomAccountError.authorizationInProgress }
+        let currentGeneration = generation
+        let configuration = try await configuration()
+        try requireGeneration(currentGeneration)
+        for attempt in 0...1 {
+            do {
+                let signature: String
+                switch configuration {
+                case .personal(let personal): signature = try ZoomSDKJWT.make(configuration: personal)
+                case .managed(let managed):
+                    let tokens = try await authorizationTokens(configuration: configuration, generation: currentGeneration, forceRefresh: attempt > 0)
+                    signature = try await ZoomRemoteSDKSigner.signature(configuration: managed, tokens: tokens, transport: transport)
+                }
+                try requireGeneration(currentGeneration)
+                return signature
+            } catch ZoomAccountError.notConnected where attempt == 0 { continue }
+        }
+        throw ZoomAccountError.notConnected
+    }
+
     public func meetingCredentials() async throws -> ZoomMeetingCredentials {
         guard connectionTask == nil else { throw ZoomAccountError.authorizationInProgress }
         let currentGeneration = generation

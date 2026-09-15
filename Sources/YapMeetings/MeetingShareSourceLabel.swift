@@ -3,7 +3,8 @@ import Foundation
 /// Source labels come from SDK-confirmed identifiers. An accepted switch request
 /// alone cannot establish that the SDK is already transmitting the selected item.
 enum MeetingShareSourceLabel {
-    static func target(windowID: UInt32, displayID: UInt32, available: [ShareTarget]) -> ShareTarget {
+    static func target(windowID: UInt32, displayID: UInt32, available: [ShareTarget], computerAudio: Bool = false) -> ShareTarget {
+        if computerAudio { return .computerAudio }
         guard windowID != 0 || displayID != 0 else {
             return ShareTarget(id: "current-shared-content", title: "Shared screen", kind: .window)
         }

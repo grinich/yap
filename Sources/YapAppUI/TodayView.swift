@@ -5,6 +5,8 @@ import YapMeetings
 import YapSystem
 
 public struct YapRootView: View {
+    @AppStorage("screenSharingSetupCompleted") private var screenSharingSetupCompleted = false
+    @State private var showScreenSharingSetup = false
     @Bindable var model: YapModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
@@ -15,9 +17,36 @@ public struct YapRootView: View {
         self.applicationDelegate = applicationDelegate
     }
 
+    @ViewBuilder private var meetingErrorActions: some View {
+            ZoomSignInButton(error: model.error ?? model.meeting.lastError ?? "",
+                             recovery: model.recordings.zoomSignInRecovery)
+            if model.meeting.failedRoomShare && model.error == nil && !model.activeCall {
+                Button("Open Zoom Workplace") {
+                    model.meeting.dismissError()
+                    Task {
+                        guard let application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: ZoomLinkHandlerService.zoomBundleIdentifier) else {
+                            model.error = "Zoom Workplace isn’t installed. Install it or join the meeting in Yap using its invitation link."
+                            return
+                        }
+                        do {
+                            _ = try await NSWorkspace.shared.openApplication(at: application, configuration: NSWorkspace.OpenConfiguration())
+                        } catch { model.error = "Couldn’t open Zoom Workplace: \(error.localizedDescription)" }
+                    }
+                }
+                Button("Join with a link…") {
+                    model.meeting.dismissError()
+                    model.selectedEvent = nil
+                    model.joinLink = ""
+                    model.showJoinSheet = true
+                }
+            }
+            Button("OK", role: .cancel) { model.error = nil; model.meeting.dismissError() }
+    }
+
     public var body: some View {
         Group {
-            if model.activeCall { MeetingView(model: model) }
+            if model.activeCall && model.meeting.isRoomShare { RoomSharingView(model: model) }
+            else if model.activeCall { MeetingView(model: model) }
             else { TodayView(model: model) }
         }
         .frame(minWidth: model.recordings.isPresented && !model.activeCall ? 700 : 320, minHeight: 240)
@@ -58,14 +87,30 @@ public struct YapRootView: View {
         .onChange(of: model.activeCall) { _, active in
             if active { model.recordings.dismiss() }
         }
+        .sheet(isPresented: $showScreenSharingSetup) {
+            ScreenSharingSetupView {
+                screenSharingSetupCompleted = true
+                showScreenSharingSetup = false
+            }
+        }
+        .task {
+            guard !screenSharingSetupCompleted, !model.isPreview, !model.activeCall, !model.showJoinSheet else { return }
+            let access = ScreenSharingAccess()
+            await access.check()
+            guard !Task.isCancelled, !model.activeCall, !model.showJoinSheet else { return }
+            if access.state == .ready { screenSharingSetupCompleted = true }
+            else { showScreenSharingSetup = true }
+        }
+        .onChange(of: model.activeCall) { _, active in if active { showScreenSharingSetup = false } }
+        .onChange(of: model.showJoinSheet) { _, showing in if showing { showScreenSharingSetup = false } }
         .sheet(isPresented: $model.showJoinSheet) { JoinMeetingSheet(model: model) }
         .confirmationDialog(model.meeting.isHost ? "Leave or end this meeting?" : "Leave this meeting?", isPresented: $model.showLeaveConfirmation, titleVisibility: .visible) {
             Button("Leave meeting", role: .destructive) { Task { await model.leaveMeeting() } }
             if model.meeting.isHost { Button("End for everyone", role: .destructive) { Task { await model.leaveMeeting(endForEveryone: true) } } }
             Button("Stay", role: .cancel) {}
         } message: { Text(model.meeting.isHost ? "Ending the meeting disconnects everyone. Leaving keeps it open when Zoom allows a host handoff." : "Your microphone, camera, and sharing will stop.") }
-        .alert("Yap", isPresented: Binding(get: { model.error != nil || model.meeting.lastError != nil }, set: { if !$0 { model.error = nil; model.meeting.dismissError() } })) {
-            Button("OK", role: .cancel) { model.error = nil; model.meeting.dismissError() }
+        .alert(model.meeting.failedRoomShare && model.error == nil ? "Room sharing unavailable" : "Yap", isPresented: Binding(get: { model.error != nil || model.meeting.lastError != nil }, set: { if !$0 { model.error = nil; model.meeting.dismissError() } })) {
+            meetingErrorActions
         } message: { Text(model.error ?? model.meeting.lastError ?? "") }
         .alert("Open in Zoom Workplace?", isPresented: Binding(
             get: { model.unsupportedZoomLink != nil },
@@ -78,8 +123,8 @@ public struct YapRootView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("This link uses a Zoom feature that Yap doesn’t support yet. You can open it in the official app.")
+        } message: { url in
+            Text(YapDeepLink.unsupportedExplanation(for: url))
         }
         .onAppear {
             applicationDelegate?.configure(model: model, openMainWindow: { openWindow(id: "main") })
@@ -98,8 +143,7 @@ public struct YapRootView: View {
 
     private var windowTitle: String {
         if model.activeCall {
-            let title = model.meeting.meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            return title.isEmpty ? "Meeting" : title
+            return model.meeting.displayTitle
         }
         if model.recordings.isPresented { return "Recordings" }
         return model.isPreview ? "Agenda Preview" : "Agenda"
@@ -228,17 +272,14 @@ struct TodayView: View {
         HStack(spacing: 8) {
             Button { Task { await model.hostMeeting() } } label: {
                 Label {
-                    HStack(spacing: 10) {
-                        Text("Start a meeting")
-                        Text("⇧⌘N").font(.system(size: 11, weight: .medium)).opacity(0.7).accessibilityHidden(true)
-                    }
+                    Text("Start new meeting")
                 } icon: { Image(systemName: "plus") }
                 .foregroundStyle(.white)
             }
             .buttonStyle(.glassProminent)
             .yapIconHover(cornerRadius: 100)
-            .help("Start a meeting · ⇧⌘N")
-            .accessibilityLabel("Start a meeting")
+            .help("Start new meeting · ⇧⌘N")
+            .accessibilityLabel("Start new meeting")
             Button("Join with a link…", systemImage: "link") {
                 model.selectedEvent = nil
                 model.joinLink = ""
@@ -250,6 +291,14 @@ struct TodayView: View {
             .foregroundStyle(.primary)
             .help("Join with a link · ⌘J")
             .accessibilityLabel("Join with a link")
+            Button("Share screen", systemImage: "rectangle.on.rectangle") {
+                Task { await model.shareScreenToRoom() }
+            }
+            .buttonStyle(.glass)
+            .yapIconHover(cornerRadius: 100)
+            .tint(nil as Color?).foregroundStyle(.primary)
+            .help("Share a window or display to a nearby Zoom Room")
+            .disabled(model.isPreview || model.zoomConnection.isBusy)
         }
     }
 
@@ -482,6 +531,32 @@ public enum YapDeepLink {
         let values = (parts.queryItems ?? []).filter { $0.name == "url" }
         guard values.count == 1, let value = values.first?.value else { return nil }
         return ZoomMeetingLinkParser.normalizedJoinURL(value)
+    }
+
+    /// Describes the rejected operation without exposing invitation or authentication values.
+    static func unsupportedExplanation(for url: URL) -> String {
+        let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let items = parts?.queryItems ?? []
+        let names = items.map { $0.name.lowercased() }
+        let authority: Set<String> = ["zak", "zpk", "ztk", "tk", "token", "jwt", "auth", "auth_token",
+            "access_token", "refresh_token", "id_token", "hostkey", "host_key", "hosttoken", "host_token", "role", "host", "start"]
+        let restricted = Set(names).intersection(authority).sorted()
+        let reason: String
+        if !restricted.isEmpty {
+            reason = "The link includes authentication, registration, or host fields that Yap cannot handle: " + restricted.joined(separator: ", ") + "."
+        } else if items.contains(where: { $0.name.lowercased() == "stype" && $0.value == "100" }) {
+            reason = "The link requests a special Zoom session type (stype 100) that Yap cannot handle."
+        } else if Set(names).count != names.count {
+            reason = "The link contains repeated parameters, so Yap cannot safely determine which values to use."
+        } else if parts?.path == "/start" {
+            reason = "The link requests starting a meeting as host rather than joining a meeting."
+        } else if parts?.path == "/join", items.contains(where: { $0.name.lowercased() == "action" && $0.value != "join" }) {
+            reason = "The native link requests an action other than joining the meeting."
+        } else {
+            reason = "The native link has an unsupported action or invalid meeting-link parameters."
+        }
+        return "Yap could not read the Zoom app link. No meeting join was attempted.\n\n" + reason
+            + "\n\nTry pasting the original HTTPS invitation into Join with a link, or open Zoom Workplace."
     }
 
     /// Unsupported Zoom actions may be handed to the official app explicitly.

@@ -85,7 +85,12 @@ struct RecordingChatView: View {
                 Text("Couldn’t load chat").font(.system(size: 13, weight: .medium))
                 Text(error).font(.system(size: 12)).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center).textSelection(.enabled)
-                Button("Retry") { chat.retry() }.buttonStyle(.bordered).controlSize(.small)
+                if ZoomSignInError.matches(error) {
+                    ZoomSignInButton(error: error, recovery: model.zoomSignInRecovery)
+                        .buttonStyle(.bordered).controlSize(.small)
+                } else {
+                    Button("Retry") { chat.retry() }.buttonStyle(.bordered).controlSize(.small)
+                }
             }
             .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {

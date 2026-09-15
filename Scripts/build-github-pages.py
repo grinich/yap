@@ -14,8 +14,8 @@ spec.loader.exec_module(site)
 
 def build_files():
     files = site.build_files()  # Validates every source link before rebasing.
-    verification = (ROOT / 'Resources/GoogleSiteVerification.txt').read_text().strip()
-    if not re.fullmatch(r'[A-Za-z0-9_-]+', verification):
+    verifications = (ROOT / 'Resources/GoogleSiteVerification.txt').read_text().splitlines()
+    if not verifications or any(not re.fullmatch(r'[A-Za-z0-9_-]+', token) for token in verifications):
         raise ValueError('Invalid public Google site-verification tag')
     result = {}
     for name, data in files.items():
@@ -25,7 +25,8 @@ def build_files():
             text = data.decode().replace(site.CANONICAL_URL, SITE_URL)
             text = re.sub(r'\b(href|src)="/(?!/)', lambda match: match[1] + '="' + SITE_URL + '/', text)
             if name == 'index.html':
-                text = text.replace('</head>', f'<meta name="google-site-verification" content="{verification}">\n</head>', 1)
+                tags = ''.join(f'<meta name="google-site-verification" content="{token}">\n' for token in verifications)
+                text = text.replace('</head>', tags + '</head>', 1)
             data = text.encode()
         elif name in ('robots.txt', 'sitemap.xml'):
             data = data.replace(site.CANONICAL_URL.encode(), SITE_URL.encode())

@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import YapCalendar
 
@@ -143,14 +144,9 @@ struct GoogleOAuthTests {
         #expect(result.code == "local-test-code")
         #expect(result.redirectURI.hasPrefix("http://127.0.0.1:"))
         #expect(result.verifier.count == 43)
-        #expect(await observed.waitForStatus() == 200)
-        #expect(await !observed.callbackBody.contains("local-test-code"))
-        #expect(await observed.callbackBody.contains("Your Google Calendar sign-in is received."))
-        #expect(await observed.callbackBody.contains("href=\"yap://open\""))
-        #expect(await observed.callbackBody.contains("history.replaceState"))
-        #expect(await observed.callbackBody.contains("prefers-color-scheme:dark"))
-        #expect(await observed.cacheControl == "no-store")
-        #expect(await observed.referrerPolicy == "no-referrer")
+        #expect(await observed.waitForStatus() == 303)
+        await observed.expectRedirect(to: "received")
+        #expect(await !observed.responseText.contains(result.verifier))
         let items = await observed.authorizationQuery
         #expect(items.first(where: { $0.name == "code_challenge_method" })?.value == "S256")
         #expect(items.first(where: { $0.name == "scope" })?.value == GoogleOAuthConfiguration.scopes.joined(separator: " "))
@@ -164,9 +160,8 @@ struct GoogleOAuthTests {
                 Task { await observed.simulateBrowserCallback(url, error: "access_denied") }
             }
         }
-        #expect(await observed.waitForStatus() == 200)
-        #expect(await observed.callbackBody.contains("Sign-in cancelled"))
-        #expect(await observed.callbackBody.contains("href=\"yap://open\""))
+        #expect(await observed.waitForStatus() == 303)
+        await observed.expectRedirect(to: "cancelled")
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["YAP_TEST_LOOPBACK"] == "1"))
@@ -174,12 +169,95 @@ struct GoogleOAuthTests {
         let observed = OAuthBrowserProbe()
         await #expect(throws: GoogleCalendarError.authorizationDenied) {
             try await GoogleDesktopOAuth.authorize(configuration: .init(clientID: "local-test.apps.googleusercontent.com"), timeout: .seconds(5)) { url in
-                Task { await observed.simulateBrowserCallback(url, error: "server_error") }
+                Task { await observed.simulateBrowserCallback(url, error: "server_error-private-provider-detail") }
             }
         }
-        #expect(await observed.waitForStatus() == 200)
-        #expect(await observed.callbackBody.contains("Connection not completed"))
-        #expect(await !observed.callbackBody.contains("Sign-in cancelled"))
+        #expect(await observed.waitForStatus() == 303)
+        await observed.expectRedirect(to: "error")
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["YAP_TEST_LOOPBACK"] == "1"),
+          arguments: ["wrong-state", "wrong-path", "duplicate-code"])
+    func invalidCallbackShowsGenericErrorAndAllowsTheCorrectCallback(_ invalid: String) async throws {
+        let rejected = OAuthBrowserProbe()
+        let accepted = OAuthBrowserProbe()
+        let authorization = try await GoogleDesktopOAuth.authorize(
+            configuration: .init(clientID: "local-test.apps.googleusercontent.com"), timeout: .seconds(5)
+        ) { url in
+            Task {
+                await rejected.simulateBrowserCallback(url, invalid: invalid)
+                await accepted.simulateBrowserCallback(url)
+            }
+        }
+        #expect(authorization.code == "local-test-code")
+        #expect(await rejected.waitForStatus() == 303)
+        await rejected.expectRedirect(to: "error")
+        #expect(await accepted.waitForStatus() == 303)
+        await accepted.expectRedirect(to: "received")
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["YAP_TEST_LOOPBACK"] == "1"))
+    func responseSurvivesNativeCompletionWithoutWaitingForBrowserClose() async throws {
+        let probe = AuthorizationURLProbe()
+        let authorization = Task {
+            try await GoogleDesktopOAuth.authorize(
+                configuration: .init(clientID: "local-test.apps.googleusercontent.com"), timeout: .seconds(2)
+            ) { url in Task { await probe.record(url) } }
+        }
+        defer { authorization.cancel() }
+        let url = await probe.waitForURL()
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let redirect = try #require(items.first(where: { $0.name == "redirect_uri" })?.value)
+        let state = try #require(items.first(where: { $0.name == "state" })?.value)
+        var callback = try #require(URLComponents(string: redirect))
+        callback.queryItems = [.init(name: "code", value: "delayed-read-code"), .init(name: "state", value: state)]
+        let connection = try await sendOpenLoopbackRequest(to: #require(callback.url))
+        defer { connection.cancel() }
+
+        // No receive or browser EOF has happened yet. Authorization must finish within
+        // its two-second deadline, and stop() must leave the full response readable.
+        #expect(try await authorization.value.code == "delayed-read-code")
+        let response = try await readLoopbackResponse(from: connection)
+        #expect(response.hasPrefix("HTTP/1.1 303 See Other\r\n"))
+        #expect(response.contains("\r\nLocation: https://yap.enterprises/connect/google/received/\r\n"))
+        #expect(response.hasSuffix("</body></html>"))
+        #expect(!response.contains(state))
+        #expect(!response.contains("delayed-read-code"))
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["YAP_TEST_LOOPBACK"] == "1"))
+    func completedResponsesKeepTheListenerConnectionLimitUntilBrowserClose() async throws {
+        let probe = AuthorizationURLProbe()
+        let authorization = Task {
+            try await GoogleDesktopOAuth.authorize(
+                configuration: .init(clientID: "local-test.apps.googleusercontent.com"), timeout: .seconds(5)
+            ) { url in Task { await probe.record(url) } }
+        }
+        defer { authorization.cancel() }
+        let url = await probe.waitForURL()
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let redirect = try #require(items.first(where: { $0.name == "redirect_uri" })?.value)
+        var callback = try #require(URLComponents(string: redirect))
+        callback.queryItems = [.init(name: "code", value: "rejected-code"), .init(name: "state", value: "wrong-state")]
+        let callbackURL = try #require(callback.url)
+        var browsers: [NWConnection] = []
+        defer { for browser in browsers { browser.cancel() } }
+        for _ in 0..<8 {
+            let browser = try await sendOpenLoopbackRequest(to: callbackURL)
+            browsers.append(browser)
+            let response = try await readLoopbackResponse(from: browser)
+            #expect(response.contains("\r\nLocation: https://yap.enterprises/connect/google/error/\r\n"))
+        }
+        // All eight responses are written, but these browser sockets remain open.
+        // An extra request must be rejected until a draining socket is released.
+        do {
+            let extraBrowser = try await sendOpenLoopbackRequest(to: callbackURL)
+            defer { extraBrowser.cancel() }
+            let response = try await readLoopbackResponse(from: extraBrowser)
+            #expect(response.isEmpty)
+        } catch { }
+        authorization.cancel()
+        await #expect(throws: CancellationError.self) { try await authorization.value }
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["YAP_TEST_LOOPBACK"] == "1"))
@@ -203,7 +281,7 @@ struct GoogleOAuthTests {
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         let redirect = try #require(items.first(where: { $0.name == "redirect_uri" })?.value.flatMap(URL.init(string:)))
         do {
-            _ = try await URLSession.shared.data(from: redirect)
+            _ = try await sendLocalOAuthCallback(to: redirect)
             Issue.record("A cancelled sign-in left its local listener open.")
         } catch { }
     }
@@ -364,8 +442,8 @@ private actor OAuthBrowserProbe {
     var authorizationQuery: [URLQueryItem] = []
     var callbackStatus: Int?
     var callbackBody = ""
-    var cacheControl: String?
-    var referrerPolicy: String?
+    var callbackResponse: HTTPURLResponse?
+    var privateValues: [String] = []
     var completion: CheckedContinuation<Int, Never>?
 
     func waitForStatus() async -> Int {
@@ -373,7 +451,26 @@ private actor OAuthBrowserProbe {
         return await withCheckedContinuation { completion = $0 }
     }
 
-    func simulateBrowserCallback(_ authorizationURL: URL, error: String? = nil) async {
+    var responseText: String { (callbackResponse?.allHeaderFields.description ?? "") + callbackBody }
+
+    func expectRedirect(to outcome: String) {
+        let destination = "https://yap.enterprises/connect/google/\(outcome)/"
+        #expect(callbackResponse?.statusCode == 303)
+        #expect(callbackResponse?.value(forHTTPHeaderField: "Location") == destination)
+        #expect(callbackResponse?.value(forHTTPHeaderField: "Cache-Control") == "no-store")
+        #expect(callbackResponse?.value(forHTTPHeaderField: "Referrer-Policy") == "no-referrer")
+        #expect(callbackResponse?.value(forHTTPHeaderField: "X-Content-Type-Options") == "nosniff")
+        #expect(callbackResponse?.value(forHTTPHeaderField: "Content-Type") == "text/html; charset=utf-8")
+        #expect(callbackResponse?.value(forHTTPHeaderField: "Content-Length") == String(callbackBody.utf8.count))
+        #expect(callbackResponse?.value(forHTTPHeaderField: "Content-Security-Policy") == "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+        #expect(callbackBody.contains("href=\"\(destination)\""))
+        #expect(!callbackBody.contains("yap://"))
+        #expect(!callbackBody.contains("<script"))
+        #expect(!callbackBody.contains("127.0.0.1"))
+        for value in privateValues { #expect(!responseText.contains(value)) }
+    }
+
+    func simulateBrowserCallback(_ authorizationURL: URL, error: String? = nil, invalid: String? = nil) async {
         let items = URLComponents(url: authorizationURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
         authorizationQuery = items
         guard let redirect = items.first(where: { $0.name == "redirect_uri" })?.value,
@@ -381,13 +478,27 @@ private actor OAuthBrowserProbe {
               var callback = URLComponents(string: redirect) else { return }
         let response = error.map { URLQueryItem(name: "error", value: $0) } ?? URLQueryItem(name: "code", value: "local-test-code")
         callback.queryItems = [response, URLQueryItem(name: "state", value: state)]
+        callback.queryItems! += [
+            .init(name: "email", value: "private-account@example.test"),
+            .init(name: "access_token", value: "private-access-token"),
+            .init(name: "refresh_token", value: "private-refresh-token"),
+            .init(name: "code_verifier", value: "private-code-verifier"),
+            .init(name: "error_description", value: "private-provider-description"),
+            .init(name: "redirect_uri", value: "https://attacker.example/collect?private=secret")
+        ]
+        switch invalid {
+        case "wrong-state": callback.queryItems![1].value = "wrong-private-state"
+        case "wrong-path": callback.path = "/wrong-private-path"
+        case "duplicate-code": callback.queryItems!.append(.init(name: "code", value: "duplicate-private-code"))
+        default: break
+        }
+        privateValues = [state] + (callback.queryItems ?? []).compactMap(\.value)
         guard let url = callback.url else { return }
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            callbackStatus = (response as? HTTPURLResponse)?.statusCode
+            let (data, response) = try await sendLocalOAuthCallback(to: url)
+            callbackResponse = response
+            callbackStatus = response.statusCode
             callbackBody = String(decoding: data, as: UTF8.self)
-            cacheControl = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Cache-Control")
-            referrerPolicy = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Referrer-Policy")
         } catch { callbackStatus = -1 }
         completion?.resume(returning: callbackStatus ?? -1)
         completion = nil

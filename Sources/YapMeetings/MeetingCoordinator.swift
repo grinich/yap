@@ -132,6 +132,7 @@ public final class MeetingCoordinator {
     public let capabilities: MeetingCapabilities
 
     @ObservationIgnored private let driver: any MeetingDriver
+    @ObservationIgnored private var isShutDown = false
     public var cameraEffectsDriver: (any CameraEffectsDriver)? { driver as? any CameraEffectsDriver }
     public var demoDriver: DemoMeetingDriver? { driver as? DemoMeetingDriver }
     @ObservationIgnored private let cloudRecordingConfirmationTimeout: Duration
@@ -147,8 +148,9 @@ public final class MeetingCoordinator {
         self.capabilities = driver.capabilities
         driver.onEvent = { [weak self] sessionID, event in self?.receive(event, for: sessionID) }
         (driver as? any MeetingMediaDriver)?.onMediaDevicesChanged = { [weak self] state in
-            self?.mediaDevices = state
-            self?.mediaDevicesError = state.error
+            guard let self, !self.isShutDown else { return }
+            self.mediaDevices = state
+            self.mediaDevicesError = state.error
         }
     }
 
@@ -169,7 +171,7 @@ public final class MeetingCoordinator {
     public var canRaiseHand: Bool { isConnected && !isRoomShare && participants.count > 1 && participants.contains(where: \.isSelf) }
 
     public func prepareMediaDevices() async {
-        guard !isPreparingMediaDevices, !isApplyingMediaControl else { return }
+        guard !isShutDown, !isPreparingMediaDevices, !isApplyingMediaControl else { return }
         guard let media = driver as? any MeetingMediaDriver else {
             mediaDevicesError = "Device controls aren’t available in this build."; return
         }
@@ -211,8 +213,22 @@ public final class MeetingCoordinator {
         (driver as? any MeetingMediaDriver)?.stopMediaTests()
     }
 
+    /// Quit only after the normal leave path confirms that active media ended.
+    /// Settings can initialize Zoom even when no meeting has ever been joined.
+    @discardableResult public func shutdown() -> Bool {
+        guard !status.isActive else { return false }
+        guard !isShutDown else { return true }
+        guard driver.shutdown() else { return false }
+        isShutDown = true
+        stopMediaTests()
+        resetSession()
+        driver.onEvent = nil
+        (driver as? any MeetingMediaDriver)?.onMediaDevicesChanged = nil
+        return true
+    }
+
     private func applyMediaControl(_ operation: @MainActor (any MeetingMediaDriver) async throws -> MeetingMediaState) async {
-        guard mediaDevices.isReady, !isApplyingMediaControl, !isPreparingMediaDevices,
+        guard !isShutDown, mediaDevices.isReady, !isApplyingMediaControl, !isPreparingMediaDevices,
               let media = driver as? any MeetingMediaDriver else { return }
         let identifier = UUID(), expectedSession = sessionID
         mediaOperation = identifier; isApplyingMediaControl = true; mediaDevicesError = nil
@@ -371,12 +387,14 @@ public final class MeetingCoordinator {
         return Array(galleryParticipants[start..<end])
     }
 
-    public func join(url: URL, displayName: String, title: String = "", scheduledInterval: DateInterval? = nil) async {
+    public func join(url: URL, displayName: String, title: String = "", scheduledInterval: DateInterval? = nil,
+                     joinQuietly: Bool = true) async {
         guard Self.isZoomMeetingURL(url) else {
             lastError = MeetingError.invalidLink.localizedDescription
             return
         }
-        await connect(MeetingRequest(url: url, displayName: displayName, title: title, isHost: false, scheduledInterval: scheduledInterval))
+        await connect(MeetingRequest(url: url, displayName: displayName, title: title, isHost: false,
+                                     microphoneMuted: joinQuietly, cameraEnabled: !joinQuietly, scheduledInterval: scheduledInterval))
     }
 
     public func updateCalendarContext(title: String, scheduledInterval: DateInterval?, sessionID: UUID) {
@@ -385,8 +403,9 @@ public final class MeetingCoordinator {
         self.scheduledInterval = scheduledInterval
     }
 
-    public func host(displayName: String, title: String = "") async {
-        await connect(MeetingRequest(url: nil, displayName: displayName, title: title, isHost: true))
+    public func host(displayName: String, title: String = "", joinQuietly: Bool = true) async {
+        await connect(MeetingRequest(url: nil, displayName: displayName, title: title, isHost: true,
+                                     microphoneMuted: joinQuietly, cameraEnabled: !joinQuietly))
     }
 
     public func shareToRoom(displayName: String) async {
@@ -413,7 +432,7 @@ public final class MeetingCoordinator {
     }
 
     private func connect(_ request: MeetingRequest) async {
-        guard !Task.isCancelled else { return }
+        guard !isShutDown, !Task.isCancelled else { return }
         guard !status.isActive else { lastError = MeetingError.alreadyInMeeting.localizedDescription; return }
         let trimmedName = request.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { lastError = MeetingError.invalidName.localizedDescription; return }
@@ -427,7 +446,8 @@ public final class MeetingCoordinator {
         isHost = false
         status = .connecting
         let normalizedRequest = MeetingRequest(url: request.url, displayName: trimmedName, title: request.title,
-                                               isHost: request.isHost, microphoneMuted: true, cameraEnabled: false,
+                                               isHost: request.isHost, microphoneMuted: request.isRoomShare || request.microphoneMuted,
+                                               cameraEnabled: !request.isRoomShare && request.cameraEnabled,
                                                isRoomShare: request.isRoomShare, scheduledInterval: request.scheduledInterval)
         do {
             try await withTaskCancellationHandler {

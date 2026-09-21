@@ -1,5 +1,11 @@
 # GitHub releases and automatic updates
 
+## Public early preview: v0.1.7
+
+**Yap 0.1.7 (build 17)** improves direct menu-bar joining, current-meeting titles, shared-screen zoom and pan, chat hover controls, meeting-entry preferences, settings, sign-in handoff, and shutdown. [Release notes and limitations](ReleaseNotes/v0.1.7.md) · [Downloads](https://github.com/grinich/yap/releases/tag/v0.1.7).
+
+Release validation passed 831 Swift tests in 104 suites against the locked Zoom SDK, all 11 native Zoom bridge suites, 53 Python release checks, and updater startup/signature tamper checks. The release packages are rebuilt with automatic-update configuration and pass Apple notarization and signature checks before publication. Historical GitHub macOS jobs timed out without recording an assertion failure; the same full test suite passed locally both with and without the SDK. Physical chat-hover and trackpad-gesture checks remain outside this release's automated validation, and no new live Zoom interoperability or provider approval is implied.
+
 ## Public early preview: v0.1.6
 
 **Yap 0.1.6 (build 7)** includes the menu-bar schedule, Zoom camera effects, native device menus, Raise Hand, advanced chat and file transfers, chat notifications, batched group photos, computer-audio sharing, calendar-aware meeting headers, and invitation/onboarding/layout fixes. [Release notes and limitations](ReleaseNotes/v0.1.6.md) · [Downloads](https://github.com/grinich/yap/releases/tag/v0.1.6).

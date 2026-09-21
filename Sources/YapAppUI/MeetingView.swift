@@ -103,9 +103,9 @@ struct MeetingView: View {
                                 .environment(\.colorScheme, .dark)
                                 .modifier(MeetingChromeVisibility(isVisible: showsControls, reduceMotion: reduceMotion))
                             }
-                            // Let the canvas continue beneath the inspector's
-                            // rounded leading corners instead of exposing black.
-                            .padding(.trailing, !compactWidth && model.sidebar != nil ? -22 : 0)
+                            // Camera tiles continue beneath the inspector's
+                            // rounded corners. Share controls stay fully outside it.
+                            .padding(.trailing, !compactWidth && model.sidebar != nil && meeting.selectedReceivedShare == nil ? -22 : 0)
                         if !compactWidth, let sidebar = model.sidebar {
                             inspector(sidebar)
                                 .frame(width: inspectorWidth)
@@ -448,7 +448,8 @@ struct MeetingView: View {
             GeometryReader { geometry in
                 let stripHeight = min(90, max(40, geometry.size.height * 0.22))
                 VStack(spacing: 12) {
-                    ReceivedShareSurface(meeting: meeting, share: share)
+                    ReceivedShareSurface(meeting: meeting, share: share, showsControls: showsControls)
+                        .id(share.id)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if !meeting.shareStripParticipants.isEmpty {
                         ScrollView(.horizontal) {
@@ -466,17 +467,16 @@ struct MeetingView: View {
                         }
                         .scrollIndicators(.hidden)
                         .frame(height: stripHeight)
+                        .padding(.horizontal, 12)
                     }
                 }
                 .onGeometryChange(for: Int.self) { proxy in
                     max(2, Int(proxy.size.width / (stripHeight * 16 / 9 + 8)))
                 } action: { meeting.setShareStripCapacity($0) }
             }
-            // Shared documents keep their full bounds and their own toolbar;
-            // unlike camera video, they must not sit beneath floating controls.
-            .padding(.top, compactHeight ? 54 : 70)
+            // Share content reaches the window edge. Meeting chrome floats
+            // above it instead of reserving a second header and a share card.
             .padding(.bottom, compactHeight ? 76 : (meeting.pageCount > 1 ? 138 : 96))
-            .padding(.horizontal, 12)
         } else if meeting.participants.isEmpty {
             VStack(spacing: 16) {
                 Image(systemName: "video").font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)
@@ -760,7 +760,7 @@ struct MeetingView: View {
             .font(.system(size: 12))
             .padding(.horizontal, 9).padding(.vertical, 7)
             .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-            .background(YapSearchFocusBoundary {
+            .background(YapFieldFocusBoundary {
                 if isParticipantSearchFocused { isParticipantSearchFocused = false }
             })
             .padding(.horizontal, 12).padding(.bottom, 8)

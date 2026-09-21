@@ -13,6 +13,9 @@ public protocol MeetingDriver: AnyObject {
     /// Returning may acknowledge a request. Emit .status(.idle) only after native media has stopped.
     /// Likewise .status(.failed) and .failure are terminal; command failures should throw instead.
     func leave(sessionID: UUID, endForEveryone: Bool) async throws
+    /// Terminal application cleanup, after the meeting has confirmed it ended.
+    /// Release settings-only SDK state as well as meeting resources; do not reconnect afterward.
+    @discardableResult func shutdown() -> Bool
     func setMicrophoneMuted(_ muted: Bool, sessionID: UUID) async throws
     func setCameraEnabled(_ enabled: Bool, sessionID: UUID) async throws
     func setHandRaised(_ raised: Bool, sessionID: UUID) async throws
@@ -50,6 +53,7 @@ public protocol MeetingDriver: AnyObject {
 }
 
 public extension MeetingDriver {
+    @discardableResult func shutdown() -> Bool { true }
     func setHandRaised(_ raised: Bool, sessionID: UUID) async throws {
         throw MeetingError.unavailable("Raising your hand isn’t available in this meeting.")
     }

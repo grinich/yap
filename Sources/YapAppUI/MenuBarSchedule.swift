@@ -179,38 +179,29 @@ final class MenuBarScheduleMenu: NSObject {
     private func eventItem(_ entry: MenuBarSchedule.Entry) -> NSMenuItem {
         let event = entry.event
         let title = MenuBarSchedule.compactTitle(event.title)
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: title, action: #selector(performScheduleAction(_:)), keyEquivalent: "")
+        item.target = self
         item.subtitle = "\(entry.time) · \(MenuBarSchedule.compactTitle(event.calendarName, limit: 28))"
-        item.toolTip = "\(event.title)\n\(entry.time)\n\(event.calendarName)"
+        let details = "\(event.title)\n\(entry.time)\n\(event.calendarName)"
         item.image = eventImage(event)
-        let details = NSMenu()
-        details.autoenablesItems = false
-        details.minimumWidth = 270
-        details.addItem(.sectionHeader(title: title))
-        let time = NSMenuItem(title: entry.time, action: nil, keyEquivalent: "")
-        time.subtitle = "\(event.calendarName) · \(entry.relativeTime)"
-        time.isEnabled = false
-        details.addItem(time)
-        details.addItem(.separator())
-        if !AgendaRules.meetingURLs(for: event).isEmpty {
-            let join = addAction(AgendaRules.meetingURLs(for: event).count > 1 ? "Choose Zoom meeting…" : "Join Zoom meeting",
-                                 request: .join(eventID: event.id), to: details)
-            join.image = NSImage(systemSymbolName: "video", accessibilityDescription: nil)
-            join.isEnabled = entry.canJoin && allowsJoining
-            if !join.isEnabled {
-                join.subtitle = !allowsJoining ? "Leave your current meeting to join another."
+        let links = AgendaRules.meetingURLs(for: event)
+        if !links.isEmpty {
+            item.representedObject = MenuBarScheduleRequest.join(eventID: event.id)
+            item.isEnabled = entry.canJoin && allowsJoining
+            let actionHint: String
+            if item.isEnabled {
+                actionHint = links.count > 1 ? "Choose Zoom meeting…" : "Join Zoom meeting"
+            } else {
+                actionHint = !allowsJoining ? "Leave your current meeting to join another."
                     : entry.isPast ? "This event has ended."
                     : event.isAllDay ? "All-day events don’t have a join time."
                     : "Available five minutes before the start."
             }
+            item.toolTip = "\(details)\n\(actionHint)"
         } else {
-            let local = NSMenuItem(title: "No Zoom link in this event", action: nil, keyEquivalent: "")
-            local.isEnabled = false
-            details.addItem(local)
+            item.representedObject = MenuBarScheduleRequest.openCalendar(MenuBarSchedule.calendarURL(for: event.startDate))
+            item.toolTip = "\(details)\nOpen day in Google Calendar"
         }
-        let open = addAction("Open day in Google Calendar", request: .openCalendar(MenuBarSchedule.calendarURL(for: event.startDate)), to: details)
-        open.image = NSImage(systemSymbolName: "calendar", accessibilityDescription: nil)
-        item.submenu = details
         return item
     }
 

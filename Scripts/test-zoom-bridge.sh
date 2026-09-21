@@ -78,9 +78,10 @@ run_native_suite() {
 
 run_native_suite ComputerAudioSharingTests "${bridge_objects[@]}"
 run_native_suite VideoCaptureReadinessTests "${bridge_objects[@]}"
+run_native_suite JoinMediaPreferenceTests "${bridge_objects[@]}"
 run_native_suite PhotoShutterTests
 run_native_suite ShareStatusTests
 run_native_suite CloudRecordingPolicyTests "$YAP_NATIVE_WORK/WHZoomCloudRecordingPolicy.o"
 run_native_suite RenderHostLifecycleTests "$YAP_NATIVE_WORK/WHZoomRenderHost.o"
 run_native_suite VideoDetachGraceTests "$YAP_NATIVE_WORK/WHZoomVideoDetachGrace.o"
-printf 'All 10 native bridge suites passed.\n'
+printf 'All 11 native bridge suites passed.\n'

@@ -96,7 +96,7 @@ public struct ShowUpcomingMeetingsIntent: AppIntent {
 
 public struct JoinNextMeetingIntent: AppIntent {
     public static let title: LocalizedStringResource = "Join Next Meeting"
-    public static let description = IntentDescription("Open Yap and join your next meeting, with your microphone muted and camera off.")
+    public static let description = IntentDescription("Open Yap and join your next meeting using your Join quietly setting.")
     public static let supportedModes: IntentModes = .foreground
     public init() {}
 

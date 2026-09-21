@@ -196,8 +196,10 @@ static void DrainMainQueue(void) {
 @property(nonatomic, strong) CameraContainer *container;
 @property(nonatomic) NSUInteger leaves;
 @property(nonatomic) NSUInteger joins;
+@property(nonatomic) ZoomSDKMeetingStatus status;
 @end
 @implementation CameraMeeting
+- (instancetype)init { if ((self = [super init])) self.status = ZoomSDKMeetingStatus_InMeeting; return self; }
 - (id)getMeetingActionController { return self.action; }
 - (id)getVideoContainer { return self.container; }
 - (id)getMeetingChatController { return nil; }
@@ -205,7 +207,7 @@ static void DrainMainQueue(void) {
 - (id)getWaitingRoomController { return nil; }
 - (id)getMeetingIndicatorController { return nil; }
 - (id)getRecordController { return nil; }
-- (ZoomSDKMeetingStatus)getMeetingStatus { return ZoomSDKMeetingStatus_InMeeting; }
+- (ZoomSDKMeetingStatus)getMeetingStatus { return self.status; }
 - (ZoomSDKError)leaveMeetingWithCmd:(LeaveMeetingCmd)command { self.leaves++; return ZoomSDKError_Success; }
 - (ZoomSDKError)joinMeeting:(id)parameters { self.joins++; return ZoomSDKError_Success; }
 - (ZoomSDKError)startMeetingWithZAK:(id)parameters { self.joins++; return ZoomSDKError_Success; }

@@ -4,7 +4,7 @@ In **Yap → Settings → General → Meeting links**, choose **Yap** or **Zoom 
 
 Ordinary `https://…zoom.us/j/…` invitations still open the browser. The Zoom page’s **Open Zoom** / **Launch Meeting** action opens the selected app. This setting does not change your default browser or intercept all HTTPS links. A browser may ask you to allow opening an external app.
 
-Yap opens supported invitations in its join sheet with the meeting ID and passcode preserved. Confirming Join uses your saved display name with the microphone muted and camera off. An incoming invitation does not replace an active meeting. Native links can also be pasted into **Join with a link…**.
+Yap uses your saved display name and **Join quietly** preference when opening supported invitations, preserving the meeting ID and passcode. Join quietly is on by default; turn it off in **Settings → General** to request your microphone and camera on when joining or starting a meeting. Zoom and macOS permissions still apply. An incoming invitation does not replace an active meeting. Native links can also be pasted into **Join with a link…**.
 
 Links for unsupported actions, such as Zoom sign-in or starting as host, offer an explicit **Open Zoom Workplace** action. That action targets the official app directly, avoiding a loop through the default handler. Existing `yap://join?url=…` invitations continue to work.
 

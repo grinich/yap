@@ -98,28 +98,127 @@ struct MenuBarScheduleTests {
         let schedule = MenuBarSchedule(events: [ready, focus], now: now, calendar: calendar, locale: locale)
         var requests: [MenuBarScheduleRequest] = []
         let builder = MenuBarScheduleMenu(schedule: schedule, calendars: []) { requests.append($0) }
-        let row = try #require(builder.menu.items.first { $0.title == ready.title && $0.submenu != nil })
-        let join = try #require(row.submenu?.items.first { $0.representedObject as? MenuBarScheduleRequest == .join(eventID: "ready") })
+        let rows = builder.menu.items.filter { $0.title == ready.title }
         let localRow = try #require(builder.menu.items.first { $0.title == focus.title })
 
         #expect(requests.isEmpty)
-        #expect(row.subtitle != nil)
-        #expect(join.isEnabled)
+        #expect(rows.count == 2) // Summary and the day's schedule both use direct rows.
+        for row in rows {
+            #expect(row.submenu == nil)
+            #expect(row.action != nil)
+            #expect(row.isEnabled)
+            #expect(row.representedObject as? MenuBarScheduleRequest == .join(eventID: "ready"))
+            #expect(row.toolTip?.contains(ready.calendarName) == true)
+        }
+        #expect(rows.last?.subtitle?.contains(ready.calendarName) == true)
         #expect(builder.menu.items.contains { $0.isSectionHeader })
-        #expect(localRow.submenu?.items.contains { $0.title == "No Zoom link in this event" } == true)
-        let localRequests = localRow.submenu?.items.compactMap { $0.representedObject as? MenuBarScheduleRequest } ?? []
-        #expect(!localRequests.contains { if case .join = $0 { return true }; return false })
+        #expect(localRow.submenu == nil)
+        #expect(localRow.representedObject as? MenuBarScheduleRequest ==
+                .openCalendar(MenuBarSchedule.calendarURL(for: focus.startDate)))
     }
 
-    @Test @MainActor func activeMeetingDisablesScheduleJoiningWithoutHidingCalendarDetails() throws {
-        let ready = event("ready", day: 14, hour: 10, minute: 2)
-        let schedule = MenuBarSchedule(events: [ready], now: now, calendar: calendar, locale: locale)
-        let builder = MenuBarScheduleMenu(schedule: schedule, calendars: [], allowsJoining: false) { _ in }
-        let row = try #require(builder.menu.items.first { $0.title == ready.title && $0.submenu != nil })
-        let join = try #require(row.submenu?.items.first { $0.title == "Join Zoom meeting" })
-        let open = try #require(row.submenu?.items.first { $0.title == "Open day in Google Calendar" })
-        #expect(!join.isEnabled)
-        #expect(open.isEnabled)
+    @Test @MainActor func activatingSummaryAndDayRowsDispatchesTheExactSelectedEventOnce() throws {
+        let summary = event("summary", day: 14, hour: 10, minute: 2)
+        let other = event("different-event", day: 14, hour: 10, minute: 4)
+        let schedule = MenuBarSchedule(events: [other, summary], now: now, calendar: calendar, locale: locale)
+        var requests: [MenuBarScheduleRequest] = []
+        let builder = MenuBarScheduleMenu(schedule: schedule, calendars: []) { requests.append($0) }
+        let rows = builder.menu.items.filter { $0.title == summary.title || $0.title == other.title }
+        #expect(rows.map(\.title) == [summary.title, summary.title, other.title])
+        #expect(requests.isEmpty)
+
+        for row in rows {
+            #expect(row.submenu == nil)
+            let index = try #require(builder.menu.items.firstIndex { $0 === row })
+            requests.removeAll()
+            _ = NSApplication.shared
+            builder.menu.performActionForItem(at: index)
+            #expect(requests == [.join(eventID: row.title == other.title ? other.id : summary.id)])
+        }
+    }
+
+    @Test(arguments: ["future", "current meeting", "all day"])
+    @MainActor func disabledRowsRetainDetailsAndCannotDispatch(_ reason: String) throws {
+        let meeting = event("unavailable", day: 14, hour: reason == "future" ? 11 : 10, minute: 2,
+                            duration: reason == "all day" ? 86_400 : 3600, allDay: reason == "all day")
+        let schedule = MenuBarSchedule(events: [meeting], now: now, calendar: calendar, locale: locale)
+        let entry = try #require(schedule.days[0].entries.first)
+        var requests: [MenuBarScheduleRequest] = []
+        let builder = MenuBarScheduleMenu(schedule: schedule, calendars: [], allowsJoining: reason != "current meeting") {
+            requests.append($0)
+        }
+        let rows = builder.menu.items.filter { $0.title == meeting.title }
+        #expect(!rows.isEmpty)
+        for row in rows {
+            #expect(row.submenu == nil)
+            #expect(!row.isEnabled)
+            #expect(row.subtitle?.contains(entry.time) == true)
+            #expect(row.toolTip?.contains(meeting.calendarName) == true)
+            let explanation = reason == "future" ? "five minutes" : reason == "all day" ? "All-day" : "current meeting"
+            #expect(row.toolTip?.contains(explanation) == true)
+            let action = try #require(row.action)
+            // Exercise the handler too: even a stale AppKit action cannot join a disabled row.
+            #expect(NSApplication.shared.sendAction(action, to: row.target, from: row))
+        }
+        #expect(rows.last?.subtitle?.contains(meeting.calendarName) == true)
+        #expect(requests.isEmpty)
+    }
+
+    @Test @MainActor func nonZoomRowsOpenTheirCalendarDayDirectlyDuringAnActiveMeeting() throws {
+        let focus = event("focus", day: 14, hour: 10, minute: 2, zoom: false)
+        let schedule = MenuBarSchedule(events: [focus], now: now, calendar: calendar, locale: locale)
+        var requests: [MenuBarScheduleRequest] = []
+        let builder = MenuBarScheduleMenu(schedule: schedule, calendars: [], allowsJoining: false) { requests.append($0) }
+        let rows = builder.menu.items.filter { $0.title == focus.title }
+        #expect(rows.count == 2)
+        for row in rows {
+            #expect(row.submenu == nil)
+            #expect(row.isEnabled)
+            requests.removeAll()
+            let index = try #require(builder.menu.items.firstIndex { $0 === row })
+            _ = NSApplication.shared
+            builder.menu.performActionForItem(at: index)
+            #expect(requests == [.openCalendar(MenuBarSchedule.calendarURL(for: focus.startDate))])
+        }
+    }
+
+    @Test @MainActor func multipleZoomLinksDispatchTheEventToTheExistingMeetingChooser() throws {
+        let start = date(day: 14, hour: 10, minute: 2)
+        let meeting = CalendarEvent(id: "multiple-links", title: "Choose the meeting", startDate: start,
+            endDate: start.addingTimeInterval(3600), calendarID: "work", calendarName: "Work", meetingURLs: [
+                URL(string: "https://zoom.us/j/12345678901")!, URL(string: "https://zoom.us/j/98765432101")!
+            ])
+        let schedule = MenuBarSchedule(events: [meeting], now: now, calendar: calendar, locale: locale)
+        var requests: [MenuBarScheduleRequest] = []
+        let builder = MenuBarScheduleMenu(schedule: schedule, calendars: []) { requests.append($0) }
+        let rows = builder.menu.items.filter { $0.title == meeting.title }
+        #expect(rows.count == 2)
+        for row in rows {
+            #expect(row.submenu == nil)
+            #expect(row.isEnabled)
+            #expect(row.representedObject as? MenuBarScheduleRequest == .join(eventID: meeting.id))
+            requests.removeAll()
+            let index = try #require(builder.menu.items.firstIndex { $0 === row })
+            _ = NSApplication.shared
+            builder.menu.performActionForItem(at: index)
+            #expect(requests == [.join(eventID: meeting.id)])
+        }
+    }
+
+    @Test @MainActor func earlierTodayKeepsItsGroupingWithoutNestedEventSubmenus() throws {
+        let ended = event("ended", day: 14, hour: 8)
+        let schedule = MenuBarSchedule(events: [ended], now: now, calendar: calendar, locale: locale)
+        var requests: [MenuBarScheduleRequest] = []
+        let builder = MenuBarScheduleMenu(schedule: schedule, calendars: []) { requests.append($0) }
+        let earlier = try #require(builder.menu.items.first { $0.title == "Earlier today" }?.submenu)
+        let row = try #require(earlier.items.first { $0.title == ended.title })
+        #expect(row.submenu == nil)
+        #expect(!row.isEnabled)
+        #expect(row.subtitle?.contains(ended.calendarName) == true)
+        #expect(row.toolTip?.contains("ended") == true)
+        let action = try #require(row.action)
+        #expect(NSApplication.shared.sendAction(action, to: row.target, from: row))
+        #expect(requests.isEmpty)
     }
 
     @Test @MainActor func disconnectedMenuOffersSetupWithoutShowingCachedEvents() {

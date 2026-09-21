@@ -145,6 +145,7 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     public weak var model: YapModel?
     private var openMainWindow: (() -> Void)?
     private var routingTask: Task<Void, Never>?
+    private var terminationTask: Task<Void, Never>?
     private var isObservingActions = false
     private var menuBarController: YapMenuBarController?
     private let incomingURLs = YapIncomingURLRouter()
@@ -195,6 +196,24 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
             isObservingActions = true
         }
         incomingURLs.configure { [weak self, weak model] url in
+            if YapDeepLink.isConnectZoomURL(url) {
+                self?.presentMainWindow()
+                guard let model, !model.isPreview else { return }
+                if model.activeCall {
+                    model.error = "Leave the current meeting before changing your Zoom connection."
+                    return
+                }
+                guard !model.zoomConnection.isBusy else { return }
+                UserDefaults.standard.set(0, forKey: "settings.selectedPane")
+                model.showSettings = true
+                // The landing page enters the same sign-in flow as Settings.
+                // A saved connection needs no new authorization until it expires.
+                let request = ZoomConnectLinkRequest(connection: model.zoomConnection)
+                Task {
+                    await request.perform(on: model)
+                }
+                return
+            }
             if YapDeepLink.isOpenAppURL(url) {
                 self?.presentMainWindow()
                 return
@@ -217,9 +236,12 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     public func application(_ application: NSApplication, open urls: [URL]) {
         // Handle URL delivery at the application boundary, including cold launch
         // before SwiftUI attaches the main window and while Settings is in front.
-        guard !urls.isEmpty else { return }
+        // Authentication callbacks must never enter the meeting-link parser or
+        // displace an invitation waiting for the main window to attach.
+        let navigationURLs = urls.filter { !ZoomManagedOAuthCallback.receive($0) }
+        guard !navigationURLs.isEmpty else { return }
         YapSystemActions.discardPendingMeetingNavigation()
-        incomingURLs.receive(urls)
+        incomingURLs.receive(navigationURLs)
     }
 
     func toggleMainWindow() {
@@ -301,6 +323,8 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
     }
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     public func applicationWillTerminate(_ notification: Notification) {
+        routingTask?.cancel(); routingTask = nil
+        model?.shutdownForTermination()
         model?.recordings.stopPlayback()
         model?.recordings.closePlayerWindows()
         model?.recordings.chat.clear()
@@ -308,7 +332,15 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
         menuBarController?.stop()
     }
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, model.activeCall else { return .terminateNow }
+        guard terminationTask == nil else { return .terminateLater }
+        guard let model else { return .terminateNow }
+        guard model.activeCall else {
+            guard model.shutdownForTermination() else {
+                model.error = "Zoom is still closing its camera and audio connection. Yap is still open; try quitting again in a moment."
+                return .terminateCancel
+            }
+            return .terminateNow
+        }
         if model.askBeforeLeavingMeeting {
             let alert = NSAlert()
             alert.messageText = "Leave the meeting and quit Yap?"
@@ -317,11 +349,14 @@ public final class YapApplicationDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Stay in meeting")
             guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
         }
-        Task {
+        terminationTask = Task { [weak self] in
             await model.leaveMeeting()
             let ended = await model.meeting.waitForMeetingEnd()
+            let readyToQuit = ended && model.shutdownForTermination()
             if !ended { model.error = "Zoom hasn’t confirmed that the meeting ended. Yap is still open; try leaving again." }
-            sender.reply(toApplicationShouldTerminate: ended)
+            else if !readyToQuit { model.error = "Zoom is still closing its camera and audio connection. Yap is still open; try quitting again in a moment." }
+            self?.terminationTask = nil
+            sender.reply(toApplicationShouldTerminate: readyToQuit)
         }
         return .terminateLater
     }

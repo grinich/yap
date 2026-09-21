@@ -8,8 +8,11 @@
   "workers_dev": true,
   "preview_urls": false,
   "routes": [],
+  "secrets": {"required": ["ZOOM_SDK_CLIENT_SECRET", "SIGNING_GRANT_SECRET"]},
   "vars": {
     "ZOOM_PUBLIC_CLIENT_ID": "_Xz_EnBNS3OPtUmqZ1og3A",
+    "ZOOM_OAUTH_CLIENT_ID": "UHoml3aIQpy86gZeijjfpQ",
+    "ZOOM_OAUTH_REDIRECT_URI": "https://meeting-auth.mgrinich.workers.dev/oauth/zoom/callback",
     "ZOOM_SDK_CLIENT_ID": "UHoml3aIQpy86gZeijjfpQ"
   },
   "ratelimits": [
@@ -22,5 +25,29 @@
     "enabled": true,
     "logs": {"enabled": true, "invocation_logs": false, "head_sampling_rate": 1},
     "traces": {"enabled": false}
+  },
+  "env": {
+    "development": {
+      "name": "meeting-auth-development",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [],
+      "secrets": {"required": ["ZOOM_SDK_CLIENT_SECRET", "SIGNING_GRANT_SECRET"]},
+      "vars": {
+        "ZOOM_PUBLIC_CLIENT_ID": "l_yJBHqMTnOAnq2TdzeceQ",
+        "ZOOM_OAUTH_CLIENT_ID": "ZA20iVuUSmSKMGVmx7tDyA",
+        "ZOOM_OAUTH_REDIRECT_URI": "https://meeting-auth-development.mgrinich.workers.dev/oauth/zoom/callback",
+        "ZOOM_SDK_CLIENT_ID": "ZA20iVuUSmSKMGVmx7tDyA"
+      },
+      "ratelimits": [
+        {"name": "REQUEST_LIMITER", "namespace_id": "26091401", "simple": {"limit": 120, "period": 60}},
+        {"name": "SIGNATURE_LIMITER", "namespace_id": "26091402", "simple": {"limit": 10, "period": 60}}
+      ],
+      "observability": {
+        "enabled": true,
+        "logs": {"enabled": true, "invocation_logs": false, "head_sampling_rate": 1},
+        "traces": {"enabled": false}
+      }
+    }
   }
 }

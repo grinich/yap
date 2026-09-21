@@ -117,10 +117,14 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 @property(nonatomic, strong) ZoomSDKJoinMeetingElements *joinParameters;
 @property(nonatomic, strong) ZoomSDKStartMeetingUseZakElements *hostParameters;
 @property(nonatomic) BOOL initialized;
+@property(nonatomic) BOOL shutdownRequested;
 @property(nonatomic) BOOL joinRequested;
 @property(nonatomic) BOOL ending;
 @property(nonatomic) BOOL hosting;
 @property(nonatomic) BOOL hasEnteredMeeting;
+@property(nonatomic) BOOL microphoneMutedOnEntry;
+@property(nonatomic) BOOL cameraEnabledOnEntry;
+@property(nonatomic) BOOL initialMediaApplied;
 @property(nonatomic) BOOL terminalStatusObserved;
 @property(nonatomic) BOOL connectionWatchdogArmed;
 @property(nonatomic) NSUInteger connectionWatchdogRevision;
@@ -176,6 +180,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         _videoRetryTokens = [NSMutableDictionary dictionary]; _videoRetryExhausted = [NSMutableSet set];
         _indicators = [NSMutableDictionary dictionary]; _alerts = [NSMutableArray array];
         _preferredCameraBackground = @"none";
+        _microphoneMutedOnEntry = YES;
         _cameraImageAliases = [NSMutableDictionary dictionary];
     }
     return self;
@@ -598,6 +603,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 
 - (NSInteger)prepareCameraEffectsWithJWT:(NSString *)jwt completion:(void (^)(NSInteger, NSString *))completion {
     NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if (self.shutdownRequested) return ZoomSDKError_WrongUsage;
     if (WHZoomNativeOwner && WHZoomNativeOwner != self) return ZoomSDKError_WrongUsage;
     if (self.cameraEffectsReady && !self.ending) { completion(0, nil); return 0; }
     if (self.initialized || self.sessionID || self.cameraPreparationCompletion) return ZoomSDKError_WrongUsage;
@@ -943,6 +949,27 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     if (callback) callback(ZoomSDKError_WrongUsage, @"Camera settings were closed.");
 }
 
+- (BOOL)shutdown {
+    NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if (self.shutdownRequested) return YES;
+    if (![self canSafelyResetNative]) return NO;
+    self.shutdownRequested = YES;
+    self.ending = YES;
+    // Application termination must release Zoom while the native owner is alive,
+    // before the SDK's process-exit destructors start tearing down its modules.
+    self.eventHandler = nil;
+    self.cameraEffectsChanged = nil;
+    self.mediaDevicesChanged = nil;
+    void (^callback)(NSInteger, NSString *) = self.cameraPreparationCompletion;
+    self.cameraPreparationCompletion = nil;
+    self.cameraPreparationToken = nil;
+    self.sessionID = nil; // Invalidate any already queued terminal/auth callbacks.
+    [self resetNative];
+    self.cameraSettingsOnly = NO;
+    if (callback) callback(ZoomSDKError_WrongUsage, @"Camera settings were closed.");
+    return YES;
+}
+
 - (void)onSelectedVBImageChanged { [self emitCameraEffects]; }
 - (void)onVBImageDidDownloaded:(NSString *)path { [self emitCameraEffects]; }
 - (void)onCameraStatusChanged:(ZoomSDKDeviceStatus)status {
@@ -1076,19 +1103,22 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID {
-    if (self.sessionID) return ZoomSDKError_WrongUsage;
+    if (self.shutdownRequested || self.sessionID) return ZoomSDKError_WrongUsage;
     self.roomShare = YES;
     return [self beginWithJWT:jwt zak:@"" meetingNumber:0 vanityID:nil passcode:nil registrantToken:nil
-                 displayName:@"" host:NO sessionID:sessionID];
+                 displayName:@"" host:NO microphoneMuted:YES cameraEnabled:NO sessionID:sessionID];
 }
 
 - (NSInteger)beginWithJWT:(NSString *)jwt zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
                 vanityID:(NSString *)vanityID passcode:(NSString *)passcode
          registrantToken:(NSString *)registrantToken displayName:(NSString *)displayName
-                    host:(BOOL)host sessionID:(NSString *)sessionID {
+                    host:(BOOL)host microphoneMuted:(BOOL)microphoneMuted cameraEnabled:(BOOL)cameraEnabled sessionID:(NSString *)sessionID {
     NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
-    if (self.sessionID || self.initialized || (WHZoomNativeOwner && WHZoomNativeOwner != self)) return ZoomSDKError_WrongUsage;
+    if (self.shutdownRequested || self.sessionID || self.initialized || (WHZoomNativeOwner && WHZoomNativeOwner != self)) return ZoomSDKError_WrongUsage;
     self.sessionID = sessionID; self.ending = NO; self.joinRequested = NO; self.hosting = host;
+    self.microphoneMutedOnEntry = self.roomShare || microphoneMuted;
+    self.cameraEnabledOnEntry = !self.roomShare && cameraEnabled;
+    self.initialMediaApplied = NO;
     self.hasEnteredMeeting = NO; self.terminalStatusObserved = NO; self.terminationMessage = nil;
     ZoomSDKInitParams *params = [ZoomSDKInitParams new];
     params.needCustomizedUI = !self.roomShare; params.enableLog = NO; params.zoomDomain = @"zoom.us";
@@ -1166,10 +1196,12 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     [self installMediaDeviceObserver];
     [self stopMediaTests];
     // SDK services are guaranteed usable only after authorization succeeds.
-    // Refuse to join if Zoom cannot confirm muted-on-entry, before any media starts.
+    // Confirm the captured preference before joining. Audio remains disconnected
+    // until first admission; video starts only through the camera-effects guard.
     ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
-    if (!audio || [audio enableMuteMicJoinVoip:YES] != ZoomSDKError_Success || ![audio isMuteMicWhenJoinMeetingOn]) {
-        [self terminateWithMessage:@"Zoom could not confirm a muted microphone before joining. Please try again."];
+    if (!audio || [audio enableMuteMicJoinVoip:self.microphoneMutedOnEntry] != ZoomSDKError_Success ||
+        [audio isMuteMicWhenJoinMeetingOn] != self.microphoneMutedOnEntry) {
+        [self terminateWithMessage:@"Zoom could not confirm your microphone setting before joining. Please try again."];
         return;
     }
     [audio enableAutoJoinVoip:NO];
@@ -1399,7 +1431,51 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     self.mediaMicrophoneNeedsRecordingStop = NO; self.mediaMicrophoneTestState = @"idle";
     self.joinParameters = nil; self.hostParameters = nil; self.appSignal = nil;
     self.terminationMessage = nil; self.hasEnteredMeeting = NO; self.terminalStatusObserved = NO;
+    self.microphoneMutedOnEntry = YES; self.cameraEnabledOnEntry = NO; self.initialMediaApplied = NO;
     [self.indicators removeAllObjects];
+}
+
+- (void)applyInitialMeetingMedia {
+    if (self.initialMediaApplied || !self.hasEnteredMeeting || self.ending) return;
+    ZoomSDKMeetingStatus currentStatus = [self.meeting getMeetingStatus];
+    if (currentStatus != ZoomSDKMeetingStatus_InMeeting && currentStatus != ZoomSDKMeetingStatus_AudioReady) return;
+    ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
+    ZoomSDKUserInfo *myself = [action getMyself];
+    // Some SDK admission callbacks precede the local roster. Leave the initial
+    // request pending until a usable self record arrives in this admission.
+    if (!self.roomShare && (!action || !myself)) return;
+    // Consume before SDK calls: synchronous callbacks, reconnects, and duplicate
+    // admission events must never repeat a person's original media preference.
+    self.initialMediaApplied = YES;
+    if (self.roomShare) return;
+    if ([myself getAudioType] == ZoomSDKAudioType_None) {
+        ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
+        if (!audio || [audio enableMuteMicJoinVoip:self.microphoneMutedOnEntry] != ZoomSDKError_Success ||
+            [audio isMuteMicWhenJoinMeetingOn] != self.microphoneMutedOnEntry) {
+            [self emit:@"controlError" object:@"Your meeting audio is disconnected because Zoom couldn’t confirm your microphone setting. Leave and try joining again."];
+        } else if (!self.microphoneMutedOnEntry && [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] != AVAuthorizationStatusAuthorized) {
+            [self emit:@"controlError" object:@"Your microphone is disconnected. Allow Yap microphone access in System Settings, then rejoin the meeting."];
+        } else {
+            ZoomSDKError result = [action actionMeetingWithCmd:ActionMeetingCmd_JoinVoip userID:0 onScreen:ScreenType_First];
+            if (result != ZoomSDKError_Success)
+                [self emit:@"controlError" object:@"Zoom couldn’t connect your meeting audio. Leave and try joining again."];
+        }
+    }
+    if (self.cameraEnabledOnEntry && !self.ending) {
+        if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo] != AVAuthorizationStatusAuthorized) {
+            [self emit:@"controlError" object:@"Your camera is still off. Allow Yap camera access in System Settings, then turn it on."];
+        } else if ([self setCameraEnabled:YES] != ZoomSDKError_Success) {
+            [self emit:@"controlError" object:[@"Your camera is still off. " stringByAppendingString:self.cameraEffectsError ?: @"Zoom couldn’t turn it on. Please try the camera control."]];
+        }
+    }
+}
+
+- (void)cancelPendingInitialMediaOptIn {
+    if (self.initialMediaApplied) return;
+    // Preserve the first audio attachment for playback if the SDK has not
+    // supplied a local user yet, but discard automatic camera/unmute intent.
+    self.microphoneMutedOnEntry = YES;
+    self.cameraEnabledOnEntry = NO;
 }
 
 - (void)onMeetingStatusChange:(ZoomSDKMeetingStatus)state meetingError:(ZoomSDKMeetingError)error EndReason:(EndMeetingReason)reason {
@@ -1423,10 +1499,15 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         case ZoomSDKMeetingStatus_Disconnecting:
             self.cloudRecordingStartRequest = nil; [self emit:@"status" object:@"leaving"]; break;
         case ZoomSDKMeetingStatus_Reconnecting:
+            // A later audio attachment must not inherit the original unmuted
+            // join preference after the person or host has muted the microphone.
+            [[[[ZoomSDK sharedSDK] getSettingService] getAudioSetting] enableMuteMicJoinVoip:YES];
+            [self cancelPendingInitialMediaOptIn];
             self.cloudRecordingStartRequest = nil; [self emit:@"status" object:@"reconnecting"]; break;
         case ZoomSDKMeetingStatus_InMeeting:
             self.hasEnteredMeeting = YES;
             if (self.ending) { [self.meeting leaveMeetingWithCmd:LeaveMeetingCmd_Leave]; break; }
+            [self applyInitialMeetingMedia];
             {
                 // Zoom creates the sharing controller only after admission. The
                 // pre-join authentication callback is too early to set its delegate.
@@ -1446,14 +1527,13 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
             {
                 NSString *invitation = [self.meeting getMeetingProperty:MeetingPropertyCmd_JoinMeetingUrl];
                 if (invitation.length) [self emit:@"invitation" object:invitation];
-                // Connect playback while keeping the input muted through Zoom's join-VoIP setting.
-                ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
-                if (!self.roomShare && [[action getMyself] getAudioType] == ZoomSDKAudioType_None) {
-                    [action actionMeetingWithCmd:ActionMeetingCmd_JoinVoip userID:0 onScreen:ScreenType_First];
-                }
             }
             break;
-        case ZoomSDKMeetingStatus_AudioReady: [self refreshParticipants]; [self emitMediaDevices]; break;
+        case ZoomSDKMeetingStatus_AudioReady:
+            [self applyInitialMeetingMedia];
+            if (self.initialMediaApplied && [[[self.meeting getMeetingActionController] getMyself] getAudioType] == ZoomSDKAudioType_Voip)
+                [[[[ZoomSDK sharedSDK] getSettingService] getAudioSetting] enableMuteMicJoinVoip:YES];
+            [self refreshParticipants]; [self emitMediaDevices]; break;
         default: break;
     }
 }
@@ -1535,7 +1615,9 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         [self logConnection:"avatar-request" code:result status:0 reason:0];
     }
 }
-- (void)onUserJoin:(NSArray *)array { [self refreshParticipants]; }
+- (void)onUserJoin:(NSArray *)array {
+    [self onMain:^{ [self applyInitialMeetingMedia]; [self refreshParticipants]; }];
+}
 - (void)onUserLeft:(NSArray *)array { [self refreshParticipants]; [self refreshShares]; }
 - (void)onUserNamesChanged:(NSArray *)array { [self refreshParticipants]; }
 - (void)onUserAudioStatusChange:(NSArray *)array { [self refreshParticipants]; }
@@ -1565,11 +1647,13 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 - (void)onMeetingCoHostChanged:(unsigned int)userID isCoHost:(BOOL)isCoHost { [self refreshParticipants]; [self refreshCloudRecording]; }
 
 - (NSInteger)setMicrophoneMuted:(BOOL)muted {
+    [self cancelPendingInitialMediaOptIn];
     ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
     if (!action) return ZoomSDKError_WrongUsage;
     return [action actionMeetingWithCmd:muted ? ActionMeetingCmd_MuteAudio : ActionMeetingCmd_UnMuteAudio userID:0 onScreen:ScreenType_First];
 }
 - (NSInteger)setCameraEnabled:(BOOL)enabled {
+    [self cancelPendingInitialMediaOptIn];
     ZoomSDKMeetingActionController *action = [self.meeting getMeetingActionController];
     if (!action) return ZoomSDKError_WrongUsage;
     if (enabled) {

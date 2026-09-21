@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import YapMeetings
 
@@ -16,6 +17,8 @@ struct ZoomManagedAuthenticationTests {
         #expect(try ZoomPublicConfiguration.load(info: [:]) == nil)
         #expect(try ZoomPublicConfiguration.load(info: valid) == managed)
         #expect(managed.oauthTokenURL.absoluteString == "https://signer.example/v1/oauth/token")
+        #expect(managed.oauthSessionURL.absoluteString == "https://signer.example/v1/oauth/session")
+        #expect(managed.oauthRedirectURL.absoluteString == "https://signer.example/oauth/zoom/callback")
         #expect(throws: ZoomAccountError.invalidPublicConfiguration) {
             try ZoomPublicConfiguration.load(info: ["YapZoomOAuthClientID": "only-one-key"])
         }
@@ -51,6 +54,30 @@ struct ZoomManagedAuthenticationTests {
         #expect(try await !client.hasSavedConnection())
         #expect(await store.configuration == nil)
         #expect(await store.tokens == nil)
+    }
+
+    @Test func authorizationURLFromBrokerMustMatchZoomClientCallbackAndOriginalPKCE() throws {
+        let verifier = "v".padding(toLength: 43, withPad: "v", startingAt: 0)
+        let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).zoomBase64URL
+        var valid = URLComponents(string: "https://zoom.us/oauth/authorize")!
+        valid.queryItems = [.init(name: "client_id", value: managed.oauthPublicClientID),
+            .init(name: "response_type", value: "code"), .init(name: "redirect_uri", value: managed.oauthRedirectURL.absoluteString),
+            .init(name: "code_challenge", value: challenge), .init(name: "code_challenge_method", value: "S256"),
+            .init(name: "state", value: "v1.fixture.session")]
+        #expect(ZoomManagedOAuth.validatedAuthorizeURL(valid.string!, configuration: managed, verifier: verifier) != nil)
+        for (key, value) in [("client_id", "another-app"), ("redirect_uri", "http://127.0.0.1:5555/callback"),
+                             ("code_challenge", "another-challenge"), ("code_challenge_method", "plain"), ("state", "unsealed")] {
+            var changed = valid
+            changed.queryItems = valid.queryItems?.map { $0.name == key ? URLQueryItem(name: key, value: value) : $0 }
+            #expect(ZoomManagedOAuth.validatedAuthorizeURL(changed.string!, configuration: managed, verifier: verifier) == nil)
+        }
+        var duplicate = valid; duplicate.queryItems?.append(.init(name: "client_id", value: managed.oauthPublicClientID))
+        var wrongHost = valid; wrongHost.host = "zoom.us.attacker.example"
+        var credentials = valid; credentials.user = "user"
+        var fragment = valid; fragment.fragment = "unexpected"
+        for changed in [duplicate, wrongHost, credentials, fragment] {
+            #expect(ZoomManagedOAuth.validatedAuthorizeURL(changed.string!, configuration: managed, verifier: verifier) == nil)
+        }
     }
 
     @Test func oldStoredTokensDecodeWithoutGrantAndManagedTokensRedactIt() throws {
@@ -157,31 +184,74 @@ struct ZoomManagedAuthenticationTests {
         #expect(signatures.last?.value(forHTTPHeaderField: "X-Signing-Authorization") == "refreshed-signing-grant")
     }
 
-    @Test func productionCodeExchangePreservesBrowserPKCEAndStoresReturnedGrant() async throws {
+    @Test func productionHTTPSExchangeReturnsOnlyBoundHandoffToDesktopAndStoresGrant() async throws {
         let store = ManagedZoomStore()
         let server = ManagedZoomServer()
         let client = makeClient(store, server)
         try await client.connect { url in
             Task {
                 let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-                guard let redirect = query.first(where: { $0.name == "redirect_uri" })?.value,
-                      let state = query.first(where: { $0.name == "state" })?.value,
-                      var callback = URLComponents(string: redirect) else { return }
-                callback.queryItems = [.init(name: "code", value: "fixture-browser-code"), .init(name: "state", value: state)]
+                #expect(query.first(where: { $0.name == "redirect_uri" })?.value == "https://signer.example/oauth/zoom/callback")
+                #expect(query.first(where: { $0.name == "code_challenge_method" })?.value == "S256")
+                guard let state = await server.sessionFields?["state"],
+                      var callback = URLComponents(string: "yap://oauth/zoom") else { return }
+                callback.queryItems = [.init(name: "handoff", value: "v1.fixture.handoff"), .init(name: "state", value: state)]
                 guard let callbackURL = callback.url else { return }
-                _ = try? await URLSession.shared.data(from: callbackURL)
+                #expect(ZoomManagedOAuthCallback.receive(callbackURL))
+                #expect(ZoomManagedOAuthCallback.receive(callbackURL)) // A second delivery is ignored.
             }
         }
-        let request = try #require(await server.requests.first)
+        let request = try #require(await server.requests.first { $0.url?.path == "/v1/oauth/token" })
         #expect(request.url?.absoluteString == "https://signer.example/v1/oauth/token")
         let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
-        #expect(body.contains("grant_type=authorization_code"))
-        #expect(body.contains("code=fixture-browser-code"))
+        #expect(body.contains("grant_type=urn%3Ayap%3Aparams%3Aoauth%3Agrant-type%3Ahandoff"))
+        #expect(body.contains("handoff=v1.fixture.handoff"))
         #expect(body.contains("code_verifier="))
-        #expect(body.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A"))
+        #expect(!body.contains("redirect_uri="))
+        #expect(!body.contains("code="))
         #expect(!body.contains("client_secret"))
         #expect(try await client.hasSavedConnection())
         #expect(await store.tokens?.signingAuthorization == "refreshed-signing-grant")
+        #expect(await server.requests.filter { $0.url?.path == "/v1/oauth/token" }.count == 1)
+    }
+
+    @Test func malformedAndUnsolicitedDesktopCallbacksCannotCompleteSignIn() async throws {
+        let server = ManagedZoomServer()
+        let client = makeClient(ManagedZoomStore(), server)
+        try await client.connect { _ in
+            Task {
+                let state = await server.sessionFields?["state"] ?? ""
+                for raw in ["yap://oauth/zoom?state=unrelated&handoff=v1.fixture.handoff",
+                            "yap://oauth/zoom?state=\(state)&state=\(state)&handoff=v1.fixture.handoff",
+                            "yap://oauth/zoom?state=\(state)&handoff=v1.fixture.handoff&error=access_denied",
+                            "yap://oauth/zoom?state=\(state)&code=plaintext-code",
+                            "yap://oauth/zoom?state=\(state)&handoff=v1.fixture.handoff#fragment",
+                            "yap://oauth/other?state=\(state)&handoff=v1.fixture.handoff"] {
+                    #expect(ZoomManagedOAuthCallback.receive(URL(string: raw)!))
+                }
+                #expect(await server.requests.count == 1)
+                #expect(!ZoomManagedOAuthCallback.receive(URL(string: "yap://join?meeting=123")!))
+                ZoomManagedOAuthCallback.receive(URL(string: "yap://oauth/zoom?state=\(state)&handoff=v1.fixture.handoff")!)
+            }
+        }
+        #expect(await server.requests.filter { $0.url?.path == "/v1/oauth/token" }.count == 1)
+    }
+
+    @Test func cancelledManagedSignInDiscardsLateDesktopCallback() async throws {
+        let server = ManagedZoomServer()
+        let store = ManagedZoomStore()
+        let client = makeClient(store, server)
+        await #expect(throws: CancellationError.self) {
+            try await client.connect { _ in
+                Task {
+                    let state = await server.sessionFields?["state"] ?? ""
+                    try await client.disconnect()
+                    ZoomManagedOAuthCallback.receive(URL(string: "yap://oauth/zoom?state=\(state)&handoff=v1.fixture.handoff")!)
+                }
+            }
+        }
+        #expect(await server.requests.filter { $0.url?.path == "/v1/oauth/token" }.isEmpty)
+        #expect(await store.tokens == nil)
     }
 
     @Test func managedExchangeWithoutBoundGrantCannotSaveUnusableAuthorization() async throws {
@@ -307,6 +377,17 @@ private actor ManagedZoomServer {
         let body: Data
         var status = 200
         switch request.url?.path {
+        case "/v1/oauth/session":
+            let fields = try JSONDecoder().decode([String: String].self, from: request.httpBody ?? Data())
+            let verifier = fields["code_verifier"] ?? ""
+            let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            var authorize = URLComponents(string: "https://zoom.us/oauth/authorize")!
+            authorize.queryItems = [.init(name: "client_id", value: fields["client_id"]),
+                .init(name: "response_type", value: "code"), .init(name: "redirect_uri", value: "https://signer.example/oauth/zoom/callback"),
+                .init(name: "state", value: "v1.fixture.session"), .init(name: "code_challenge", value: challenge),
+                .init(name: "code_challenge_method", value: "S256")]
+            body = try JSONSerialization.data(withJSONObject: ["authorize_url": authorize.url!.absoluteString, "expires_in": 180])
         case "/v1/oauth/token":
             try await Task.sleep(for: .milliseconds(20))
             var response: [String: Any] = ["access_token": "refreshed-access", "refresh_token": "rotated-refresh",
@@ -333,6 +414,9 @@ private actor ManagedZoomServer {
         default: body = Data(#"{"token":"fixture-zak"}"#.utf8)
         }
         return (body, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+    }
+    var sessionFields: [String: String]? {
+        requests.first { $0.url?.path == "/v1/oauth/session" }?.httpBody.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }
     }
     func waitForSignature() async {
         if gate != nil { return }

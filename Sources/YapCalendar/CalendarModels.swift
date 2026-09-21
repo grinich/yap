@@ -65,6 +65,7 @@ public enum GoogleCalendarError: Error, LocalizedError, Equatable, Sendable {
     case notConfigured
     case notConnected
     case signInExpired
+    case authorizationCancelled
     case authorizationDenied
     case invalidCallback
     case authorizationTimedOut
@@ -78,6 +79,7 @@ public enum GoogleCalendarError: Error, LocalizedError, Equatable, Sendable {
         case .notConfigured: "Google Calendar sign-in is unavailable in this copy of Yap. Reinstall the latest Yap build and try again."
         case .notConnected: "Connect your Google Calendar to see upcoming meetings."
         case .signInExpired: "Your Google connection expired. Connect your calendar again."
+        case .authorizationCancelled: "Google sign-in was cancelled."
         case .authorizationDenied: "Google Calendar access wasn’t granted."
         case .invalidCallback: "Google sign-in couldn’t be verified. Please try again."
         case .authorizationTimedOut: "Google sign-in timed out. Please try again."

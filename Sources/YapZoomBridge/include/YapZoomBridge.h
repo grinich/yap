@@ -35,13 +35,17 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSView *)startCameraEffectsPreview;
 - (void)stopCameraEffectsPreview;
 - (void)closeCameraEffects;
+/// Terminal main-thread cleanup after a meeting has ended. Rejects active sessions.
+/// Cancels pending settings authorization and uninitializes the owned SDK once.
+/// NO keeps the owner intact; callers must not discard it or terminate yet.
+- (BOOL)shutdown;
 - (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID NS_SWIFT_NAME(beginRoomShare(jwt:sessionID:));
 - (NSInteger)submitRoomSharingCode:(NSString *)code;
 - (NSInteger)beginWithJWT:(NSString *)jwt zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
                 vanityID:(nullable NSString *)vanityID passcode:(nullable NSString *)passcode
          registrantToken:(nullable NSString *)registrantToken displayName:(NSString *)displayName
-                    host:(BOOL)host sessionID:(NSString *)sessionID
-    NS_SWIFT_NAME(begin(jwt:zak:meetingNumber:vanityID:passcode:registrantToken:displayName:host:sessionID:));
+                    host:(BOOL)host microphoneMuted:(BOOL)microphoneMuted cameraEnabled:(BOOL)cameraEnabled sessionID:(NSString *)sessionID
+    NS_SWIFT_NAME(begin(jwt:zak:meetingNumber:vanityID:passcode:registrantToken:displayName:host:microphoneMuted:cameraEnabled:sessionID:));
 - (void)leaveEndingMeeting:(BOOL)end NS_SWIFT_NAME(leave(endForEveryone:));
 - (NSInteger)setMicrophoneMuted:(BOOL)muted;
 - (NSInteger)setCameraEnabled:(BOOL)enabled;

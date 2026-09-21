@@ -1,5 +1,7 @@
 # Yap: Zoom review submission package
 
+**Historical submission record — 0.1.3.** The dated portal observations, attachment identifiers, installer hashes and acceptance results below describe the September 7 submission. For the current public installer, setup and exact-source evidence, see the [0.1.6 review handoff](ZoomReview-0.1.6.md). Preparing that handoff does not update the portal or establish approval.
+
 Updated September 7, 2026 (Pacific), for **Yap 0.1.3, build 4**, source `b920870e4a4a1f53b31d6f73c818c5aa2f75e5cf`. The current signed/notarized draft passed independent artifacts, exact-tag CodeQL and scoped native managed-account checks. **Submitted to Zoom; in functional review.** The release operator observed successful submission at **04:47:04 UTC on September 8, 2026** (September 7, 21:47 PDT). Approval and public release remain pending. This public document describes the package and test boundaries; do not include credentials, private meeting data or confidential Zoom review results.
 
 ## Current portal and release checkpoint

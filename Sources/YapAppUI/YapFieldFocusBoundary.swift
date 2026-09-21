@@ -1,29 +1,29 @@
 import AppKit
 import SwiftUI
 
-/// Tracks this search box without intercepting its clicks or another control’s
-/// event. The callback only clears the field’s SwiftUI focus, never its query.
+/// Tracks a text field without intercepting its clicks or another control’s
+/// event. The callback clears the field’s SwiftUI focus without changing its text.
 @MainActor
-struct YapSearchFocusBoundary: NSViewRepresentable {
+struct YapFieldFocusBoundary: NSViewRepresentable {
     var onOutsideClick: () -> Void
 
-    func makeNSView(context: Context) -> YapSearchFocusBoundaryView {
-        let view = YapSearchFocusBoundaryView()
+    func makeNSView(context: Context) -> YapFieldFocusBoundaryView {
+        let view = YapFieldFocusBoundaryView()
         view.onOutsideClick = onOutsideClick
         return view
     }
 
-    func updateNSView(_ view: YapSearchFocusBoundaryView, context: Context) {
+    func updateNSView(_ view: YapFieldFocusBoundaryView, context: Context) {
         view.onOutsideClick = onOutsideClick
     }
 
-    static func dismantleNSView(_ view: YapSearchFocusBoundaryView, coordinator: ()) {
+    static func dismantleNSView(_ view: YapFieldFocusBoundaryView, coordinator: ()) {
         view.stop()
     }
 }
 
 @MainActor
-final class YapSearchFocusBoundaryView: NSView {
+final class YapFieldFocusBoundaryView: NSView {
     var onOutsideClick: () -> Void = {}
     private var monitor: Any?
     private var stopped = false

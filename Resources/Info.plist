@@ -9,8 +9,8 @@
     <key>CFBundleName</key><string>Yap</string>
     <key>CFBundleDisplayName</key><string>Yap</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.6</string>
-    <key>CFBundleVersion</key><string>7</string>
+    <key>CFBundleShortVersionString</key><string>0.1.7</string>
+    <key>CFBundleVersion</key><string>17</string>
     <key>CFBundleIconFile</key><string>Yap</string>
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -19,7 +19,7 @@
     <key>NSMicrophoneUsageDescription</key><string>Yap uses your microphone when you choose to speak in a meeting or detect a nearby Zoom Room for screen sharing.</string>
     <key>NSScreenCaptureUsageDescription</key><string>Yap shares the window or display you select with people in your Zoom meeting.</string>
     <key>NSHumanReadableCopyright</key><string>© 2026 Michael Grinich</string>
-    <key>YapZoomOAuthClientID</key><string>_Xz_EnBNS3OPtUmqZ1og3A</string>
+    <key>YapZoomOAuthClientID</key><string>UHoml3aIQpy86gZeijjfpQ</string>
     <key>YapZoomSDKClientID</key><string>UHoml3aIQpy86gZeijjfpQ</string>
     <key>YapZoomSDKSignerURL</key><string>https://meeting-auth.mgrinich.workers.dev/v1/meeting-sdk/signature</string>
     <key>CFBundleURLTypes</key>

@@ -75,12 +75,20 @@ public actor ZoomAccountClient {
         guard operationGeneration == generation else { throw CancellationError() }
         guard connectionTask == nil else { throw ZoomAccountError.authorizationInProgress }
         let task = Task { [weak self] in
-            let authorization = try await ZoomDesktopOAuth.authorize(publicClientID: configuration.oauthPublicClientID, openURL: openURL)
-            try Task.checkCancellation()
             guard let self else { throw CancellationError() }
-            let tokens = try await self.exchange(fields: ["grant_type": "authorization_code",
-                "client_id": configuration.oauthPublicClientID, "code": authorization.code,
-                "redirect_uri": authorization.redirectURI, "code_verifier": authorization.verifier],
+            let fields: [String: String]
+            switch configuration {
+            case .personal:
+                let authorization = try await ZoomDesktopOAuth.authorize(publicClientID: configuration.oauthPublicClientID, openURL: openURL)
+                fields = ["grant_type": "authorization_code", "client_id": configuration.oauthPublicClientID,
+                    "code": authorization.code, "redirect_uri": authorization.redirectURI, "code_verifier": authorization.verifier]
+            case .managed(let managed):
+                let handoff = try await ZoomManagedOAuth.authorize(configuration: managed, transport: self.transport, openURL: openURL)
+                fields = ["grant_type": "urn:yap:params:oauth:grant-type:handoff", "client_id": managed.oauthPublicClientID,
+                    "handoff": handoff.value, "state": handoff.state, "code_verifier": handoff.verifier]
+            }
+            try Task.checkCancellation()
+            let tokens = try await self.exchange(fields: fields,
                 configuration: configuration, previousRefreshToken: nil)
             // The minimal-scope ZAK read verifies that the newly granted connection works.
             _ = try await self.fetchZAK(accessToken: tokens.accessToken)

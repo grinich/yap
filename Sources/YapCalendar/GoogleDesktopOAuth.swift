@@ -2,7 +2,6 @@ import CryptoKit
 import Foundation
 import Network
 import Security
-import YapOAuth
 
 enum GoogleDesktopOAuth {
     struct Authorization: Sendable {
@@ -73,6 +72,7 @@ enum GoogleDesktopOAuth {
         let errors = parameters.filter { $0.name == "error" }
         if !errors.isEmpty {
             guard errors.count == 1, codes.isEmpty, errors[0].value?.isEmpty == false else { throw GoogleCalendarError.invalidCallback }
+            if errors[0].value == "access_denied" { throw GoogleCalendarError.authorizationCancelled }
             throw GoogleCalendarError.authorizationDenied
         }
         guard codes.count == 1, let code = codes[0].value, !code.isEmpty, code.utf8.count <= 8_192,
@@ -90,6 +90,12 @@ private extension Data {
 
 /// The listener is bound to 127.0.0.1, never a LAN interface, and lives for one sign-in attempt.
 private actor OAuthLoopbackListener {
+    private enum CompletionDestination: String {
+        case received = "https://yap.enterprises/connect/google/received/"
+        case cancelled = "https://yap.enterprises/connect/google/cancelled/"
+        case error = "https://yap.enterprises/connect/google/error/"
+    }
+
     private let expectedState: String
     private let queue = DispatchQueue(label: "app.yap.google-oauth-loopback")
     private var listener: NWListener?
@@ -99,6 +105,7 @@ private actor OAuthLoopbackListener {
     private var result: Result<String, Error>?
     private var stopped = false
     private var connections: [UUID: NWConnection] = [:]
+    private var drainingConnections: [UUID: NWConnection] = [:]
 
     init(expectedState: String) { self.expectedState = expectedState }
 
@@ -158,13 +165,17 @@ private actor OAuthLoopbackListener {
     }
 
     private func accept(_ connection: NWConnection) async {
-        guard !stopped, connections.count < 8 else { connection.cancel(); return }
+        guard !stopped, connections.count + drainingConnections.count < 8 else { connection.cancel(); return }
         let connectionID = UUID()
         connections[connectionID] = connection
         defer { connections.removeValue(forKey: connectionID) }
         connection.start(queue: queue)
         // A short deadline also closes clients that connect without sending a request.
-        let timeout = Task { try? await Task.sleep(for: .seconds(5)); connection.cancel() }
+        let timeout = Task {
+            do { try await Task.sleep(for: .seconds(5)) }
+            catch { return }
+            connection.cancel()
+        }
         defer { timeout.cancel() }
         var buffer = Data()
         do {
@@ -191,26 +202,60 @@ private actor OAuthLoopbackListener {
             }
             do {
                 let code = try GoogleDesktopOAuth.callbackCode(target: String(requestParts[1]), expectedState: expectedState)
-                await respond(connection, status: "200 OK", outcome: .received)
+                await respond(connection, id: connectionID, destination: .received)
                 finish(.success(code))
+            } catch GoogleCalendarError.authorizationCancelled {
+                await respond(connection, id: connectionID, destination: .cancelled)
+                finish(.failure(GoogleCalendarError.authorizationCancelled))
             } catch GoogleCalendarError.authorizationDenied {
-                await respond(connection, status: "200 OK", outcome: .denied)
+                await respond(connection, id: connectionID, destination: .error)
                 finish(.failure(GoogleCalendarError.authorizationDenied))
             }
         } catch {
-            await respond(connection, status: "400 Bad Request", outcome: .invalid)
+            await respond(connection, id: connectionID, destination: .error)
         }
     }
 
-    private func respond(_ connection: NWConnection, status: String, outcome: OAuthCompletionPage.Outcome) async {
-        let icon = Bundle.main.url(forResource: "YapIcon", withExtension: "png").flatMap { try? Data(contentsOf: $0) }
-        let page = OAuthCompletionPage(provider: .googleCalendar, outcome: outcome, iconPNG: icon)
-        let reply = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(page.body.utf8.count)\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: \(page.contentSecurityPolicy)\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n\(page.body)"
+    private func respond(_ connection: NWConnection, id: UUID, destination: CompletionDestination) async {
+        // Only these fixed, query-free URLs may leave the Mac. The callback, state, and
+        // provider error are never interpolated into either the headers or fallback page.
+        let body = """
+        <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Continue to Yap</title></head><body><p><a href="\(destination.rawValue)">Continue to Yap</a></p></body></html>
+        """
+        let policy = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        let reply = "HTTP/1.1 303 See Other\r\nLocation: \(destination.rawValue)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: \(policy)\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n\(body)"
         await withCheckedContinuation { continuation in
-            connection.send(content: Data(reply.utf8), completion: .contentProcessed { _ in
-                connection.cancel()
+            connection.send(content: Data(reply.utf8), contentContext: .finalMessage, isComplete: true,
+                            completion: .contentProcessed { _ in
                 continuation.resume()
             })
+        }
+        // Finish writing the response before releasing the code. Normal sign-in cleanup
+        // must not abort this connection while the browser consumes its redirect.
+        connections.removeValue(forKey: id)
+        drainingConnections[id] = connection
+        Task {
+            await Self.closeAfterResponse(connection)
+            drainingConnections.removeValue(forKey: id)
+        }
+    }
+
+    private nonisolated static func closeAfterResponse(_ connection: NWConnection) async {
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(5)) }
+            catch { return }
+            connection.cancel()
+        }
+        defer { deadline.cancel(); connection.cancel() }
+        // The final message closes our write side. Drain the peer independently so
+        // a browser that keeps its socket open cannot delay native authorization.
+        while true {
+            let complete = await withCheckedContinuation { continuation in
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 1_024) { _, _, complete, error in
+                    continuation.resume(returning: complete || error != nil)
+                }
+            }
+            if complete { return }
         }
     }
 }

@@ -52,8 +52,10 @@ final class YapMenuBarActionHandler {
     var displayedMeetingID: String? { primaryAction == .joinMeeting ? eligibleMeeting?.id : nil }
     var primaryActionTitle: String {
         if primaryAction == .joinMeeting, let event = eligibleMeeting { return "Join \(event.title)" }
+        if primaryAction == .returnToMeeting { return model.meeting.displayTitle }
         return primaryAction.title
     }
+    var primaryActionSymbolName: String? { primaryAction == .returnToMeeting ? "video.fill" : nil }
     var nextEligibilityChange: Date? {
         let currentTime = now()
         guard !model.activeCall, let event = AgendaRules.upcoming(model.events, now: currentTime).first else { return nil }
@@ -212,12 +214,13 @@ final class YapMenuBarController: NSObject {
             } else { title = "Yap" }
             let tooltip: String
             if action == .stopSharing { tooltip = "Stop sharing your screen · Right-click for your schedule and meeting controls" }
-            else if action == .returnToMeeting { tooltip = "Show your schedule and meeting controls" }
+            else if action == .returnToMeeting { tooltip = "\(actions.primaryActionTitle) · Show your schedule and meeting controls" }
             else if let summary { tooltip = "\(summary.event.title) · \(summary.relativeTime) · Click for your schedule" }
             else { tooltip = "Show your schedule" }
             let recordingStatus = MeetingCloudRecordingControlsState(meeting: model.meeting).statusLabel
             let fullTooltip = recordingStatus.map { tooltip + " · " + $0 } ?? tooltip
             pill.title = title
+            pill.symbolName = actions.primaryActionSymbolName
             pill.isDestructive = action == .stopSharing
             pill.isEnabled = action != .stopSharing || actions.canPerformPrimaryAction
             statusItem.length = pill.preferredWidth
@@ -449,11 +452,23 @@ private struct CloudRecordingMenuAction {
 @MainActor
 private final class YapMenuBarPill: NSView {
     var title = "Join meeting" { didSet { if title != oldValue { needsDisplay = true } } }
+    var symbolName: String? {
+        didSet {
+            guard symbolName != oldValue else { return }
+            symbol = symbolName.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }?
+                .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold)
+                    .applying(.init(paletteColors: [.white])))
+            symbol?.isTemplate = false
+            needsDisplay = true
+        }
+    }
     var isEnabled = true { didSet { if isEnabled != oldValue { needsDisplay = true } } }
     var isDestructive = false { didSet { if isDestructive != oldValue { needsDisplay = true } } }
+    private var symbol: NSImage?
     private let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
     private var displayTitle: String { title.split(whereSeparator: \.isNewline).joined(separator: " ") }
-    var preferredWidth: CGFloat { min(240, ceil((displayTitle as NSString).size(withAttributes: [.font: font]).width) + 26) }
+    private var symbolLeadingWidth: CGFloat { symbol == nil ? 0 : 19 }
+    var preferredWidth: CGFloat { min(240, ceil((displayTitle as NSString).size(withAttributes: [.font: font]).width) + 26 + symbolLeadingWidth) }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -474,7 +489,15 @@ private final class YapMenuBarPill: NSView {
         paragraph.alignment = .center
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
         let height = ceil(font.ascender - font.descender + font.leading)
-        let textRect = NSRect(x: rect.minX + 9, y: round(rect.midY - height / 2), width: max(0, rect.width - 18), height: height)
+        if let symbol, symbol.size.width > 0, symbol.size.height > 0 {
+            let scale = min(14 / symbol.size.width, 14 / symbol.size.height)
+            let size = NSSize(width: symbol.size.width * scale, height: symbol.size.height * scale)
+            symbol.draw(in: NSRect(x: rect.minX + 9 + (14 - size.width) / 2, y: rect.midY - size.height / 2,
+                                  width: size.width, height: size.height),
+                        from: .zero, operation: .sourceOver, fraction: 1)
+        }
+        let textRect = NSRect(x: rect.minX + 9 + symbolLeadingWidth, y: round(rect.midY - height / 2),
+                             width: max(0, rect.width - 18 - symbolLeadingWidth), height: height)
         (displayTitle as NSString).draw(in: textRect, withAttributes: attributes)
     }
 }

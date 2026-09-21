@@ -12,3 +12,9 @@ These images show Yap's native interface using sample data. They contain no priv
   - These capture bytes are also unchanged: no resizing, recompression, cropping, masking, or compositing. All four corners are fully transparent, and each alpha channel retains the partially transparent native shadow.
 
 The Yap app icon is the original app artwork in `Resources/YapIcon.png`, with the Icon Composer source in `Resources/Yap.icon`. All three screenshots are native captures of the Yap interface. They replace the earlier JPEG previews and demonstrate the interface with sample content; they do not establish live SDK or account acceptance.
+
+## Social link preview
+
+`social-share-v1.png` is the branded Open Graph and X large-image card for public site pages, prepared September 21, 2026. It is a 1734 × 907 opaque PNG, generated with the built-in image-generation tool using Yap’s official icon and the native 0.1.7 sample-meeting capture as inputs. This is a marketing composition, not an untouched native screenshot. Its fictional participants and chat contain no private meeting content. The original native PNG remains a separate artifact.
+
+The card’s copy is “Yap”, “A native Zoom client for Mac.”, “For people who professionally yap for a living.”, and “yap.enterprises”. Keep the versioned filename when replacing the card so social caches can discover a new asset. The static site builder reads the PNG dimensions and publishes matching metadata.

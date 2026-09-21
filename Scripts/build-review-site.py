@@ -13,6 +13,7 @@ import html
 from html.parser import HTMLParser
 from pathlib import Path
 import re
+import struct
 import sys
 from urllib.parse import quote, unquote, urlsplit
 
@@ -20,12 +21,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVICE = Path("Services/zoom-auth")
 REPOSITORY = "https://github.com/grinich/yap"
 CANONICAL_URL = "http://127.0.0.1:8000"
+SOCIAL_IMAGE_SOURCE = "Documentation/Images/social-share-v1.png"
+SOCIAL_IMAGE_PATH = "assets/social-share-v1.png"
+SOCIAL_IMAGE_ALT = "Yap, a native Zoom client for Mac, with a sample four-person meeting and chat."
 ROUTES = {"README.md": "/", "PRIVACY.md": "/privacy/", "TERMS.md": "/terms/",
           "THIRD_PARTY_NOTICES.md": "/notices/", str(SERVICE / "site/guide.md"): "/guide/"}
 ASSETS = {"Resources/YapIcon.png": "assets/icon.png",
           "Documentation/Images/meeting-gallery.png": "assets/meeting-gallery.png",
           "Documentation/Images/recordings.png": "assets/recordings.png",
-          "Documentation/Images/agenda.png": "assets/agenda.png"}
+          "Documentation/Images/agenda.png": "assets/agenda.png",
+          SOCIAL_IMAGE_SOURCE: SOCIAL_IMAGE_PATH}
 TOKEN = re.compile(r"`([^`\n]+)`|(!?)\[([^\]\n]+)\]\(([^\s)]+)\)|\*\*([^*\n]+)\*\*|(?<!\*)\*([^*\n]+)\*(?!\*)")
 
 
@@ -169,7 +174,23 @@ def section(markdown: str, title: str) -> str:
     return match[1].strip()
 
 
-def shell(brand: str, title: str, description: str, body: str, route: str, css_hash: str) -> str:
+def social_metadata(brand: str, title: str, description: str, route: str, image_size: tuple[int, int]) -> str:
+    if route == "/404.html":
+        return ""
+    title = html.escape(brand + " · " + title, quote=True)
+    description = html.escape(description, quote=True)
+    image = f"{CANONICAL_URL}/{SOCIAL_IMAGE_PATH}"
+    alt = html.escape(SOCIAL_IMAGE_ALT, quote=True)
+    width, height = image_size
+    return f'''<meta property="og:title" content="{title}"><meta property="og:description" content="{description}">
+<meta property="og:url" content="{CANONICAL_URL}{route}"><meta property="og:type" content="website">
+<meta property="og:image" content="{image}"><meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="{width}"><meta property="og:image:height" content="{height}"><meta property="og:image:alt" content="{alt}">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{title}"><meta name="twitter:description" content="{description}">
+<meta name="twitter:image" content="{image}"><meta name="twitter:image:alt" content="{alt}">'''
+
+
+def shell(brand: str, title: str, description: str, body: str, route: str, css_hash: str, image_size: tuple[int, int]) -> str:
     def nav(label: str, href: str) -> str:
         current = ' aria-current="page"' if route == href else ""
         return f'<a href="{href}"{current}>{label}</a>'
@@ -178,7 +199,8 @@ def shell(brand: str, title: str, description: str, body: str, route: str, css_h
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(title)} · {html.escape(brand)}</title>
 <meta name="description" content="{html.escape(description, quote=True)}"><meta name="referrer" content="no-referrer">
-{canonical}<meta property="og:title" content="{html.escape(brand + ' · ' + title, quote=True)}"><meta property="og:description" content="{html.escape(description, quote=True)}"><meta property="og:image" content="{CANONICAL_URL}/assets/meeting-gallery.png"><meta property="og:type" content="website">
+{canonical}
+{social_metadata(brand, title, description, route, image_size)}
 <link rel="icon" href="/assets/icon.png" type="image/png"><link rel="stylesheet" href="/assets/site.css?v={css_hash}">
 </head><body><a class="skip" href="#main">Skip to content</a>
 <header class="site-header"><div class="shell topbar"><a class="brand" href="/" aria-label="{html.escape(brand, quote=True)} home"><img src="/assets/icon.png" alt="" width="42" height="42">{html.escape(brand)}</a><nav class="nav" aria-label="Main">{nav("Guide", "/guide/")}{nav("Support", "/support/")}<a href="{REPOSITORY}">Source ↗</a></nav></div></header>
@@ -187,12 +209,12 @@ def shell(brand: str, title: str, description: str, body: str, route: str, css_h
 '''
 
 
-def document(brand: str, title: str, description: str, text: str, source: str, route: str, css_hash: str) -> str:
+def document(brand: str, title: str, description: str, text: str, source: str, route: str, css_hash: str, image_size: tuple[int, int]) -> str:
     renderer = Markdown(source)
     body = renderer.render(text, omit_title=True)
     toc = ''.join(f'<a href="#{identifier}">{html.escape(label)}</a>' for identifier, label in renderer.headings)
     content = f'<header class="page-title"><span class="eyebrow">{html.escape(brand)} / {html.escape(title)}</span><h1>{html.escape(title)}</h1><p>{html.escape(description)}</p></header><div class="document"><nav class="toc" aria-label="On this page"><div class="toc-label">On this page</div>{toc}</nav><article class="markdown">{body}<p class="source-note">Published from the project’s <a href="{REPOSITORY}/blob/main/{quote(source)}">source document</a>.</p></article></div>'
-    return shell(brand, title, description, content, route, css_hash)
+    return shell(brand, title, description, content, route, css_hash, image_size)
 
 
 class PageLinks(HTMLParser):
@@ -215,11 +237,15 @@ class PageLinks(HTMLParser):
         for key in ("href", "src"):
             if key in values:
                 self.links.append(values[key])
+        if tag == "meta" and (values.get("property") in {"og:image", "og:url"} or values.get("name") == "twitter:image"):
+            if "content" in values:
+                self.links.append(values["content"])
         if tag == "img" and "alt" not in values:
             raise ValueError("Missing image alt text")
 
 
 def validate(files: dict[str, bytes]) -> None:
+    origin = urlsplit(CANONICAL_URL)
     pages = {}
     for path, data in files.items():
         if path.endswith(".html"):
@@ -231,7 +257,9 @@ def validate(files: dict[str, bytes]) -> None:
     for path, page in pages.items():
         for link in page.links:
             target = urlsplit(link)
-            if target.scheme in {"https", "mailto"} or (target.scheme == "http" and target.netloc == "127.0.0.1:8000"):
+            if (target.scheme, target.netloc) == (origin.scheme, origin.netloc):
+                target = target._replace(scheme="", netloc="")
+            elif target.scheme in {"https", "mailto"}:
                 continue
             if target.scheme or target.netloc:
                 raise ValueError(f"Unexpected external URL in {path}")
@@ -255,6 +283,12 @@ def build_files(root: Path = ROOT) -> dict[str, bytes]:
     files = {"assets/site.css": css}
     for source, target in ASSETS.items():
         files[target] = (root / source).read_bytes()
+    social_image = files[SOCIAL_IMAGE_PATH]
+    if len(social_image) < 24 or social_image[:8] != b"\x89PNG\r\n\x1a\n" or social_image[12:16] != b"IHDR":
+        raise ValueError("Social share image must be a PNG")
+    image_size = struct.unpack(">II", social_image[16:24])
+    if not all(image_size):
+        raise ValueError("Social share image dimensions must be positive")
     tagline = re.search(r'<p align="center"><strong>(.*?)</strong></p>', readme)
     deck = re.search(r'<p align="center">([^<]+)</p>', readme)
     status = re.search(r'^> (.+)$', readme, re.M)
@@ -274,24 +308,24 @@ def build_files(root: Path = ROOT) -> dict[str, bytes]:
 <section class="section agenda"><h2>Less between you and your next meeting</h2>{renderer.render(agenda_section)}</section>
 <section class="section shortcut-area"><h2>A few keys worth knowing</h2><div class="markdown">{renderer.render(shortcuts)}</div></section>
 <section class="source-card"><h2>Try {html.escape(brand)}</h2>{renderer.render(try_section)}<div class="actions"><a class="button" href="{REPOSITORY}#try-{slug(brand)}">Installation and setup ↗</a><a class="button secondary" href="/support/">Get in touch</a></div></section>'''
-    files["index.html"] = shell(brand, tagline[1], deck[1], content, "/", css_hash).encode()
+    files["index.html"] = shell(brand, tagline[1], deck[1], content, "/", css_hash, image_size).encode()
     documents = [("privacy", "Privacy", "How the app and its authorization service handle your data.", "PRIVACY.md"),
                  ("terms", "Terms for the free preview", "The terms and current publication status of the preview.", "TERMS.md"),
                  ("notices", "Third-party notices", "The components and licenses behind the app.", "THIRD_PARTY_NOTICES.md")]
     for route, title, description, source in documents:
-        files[f"{route}/index.html"] = document(brand, title, description, (root / source).read_text(), source, f"/{route}/", css_hash).encode()
+        files[f"{route}/index.html"] = document(brand, title, description, (root / source).read_text(), source, f"/{route}/", css_hash, image_size).encode()
     guide_source = str(SERVICE / "site/guide.md")
     guide = (root / guide_source).read_text().replace("{{brand}}", brand).replace("{{shortcuts}}", shortcuts)
-    files["guide/index.html"] = document(brand, "User guide", "Connect your account, join a meeting, and find your way through recordings.", guide, guide_source, "/guide/", css_hash).encode()
+    files["guide/index.html"] = document(brand, "User guide", "Connect your account, join a meeting, and find your way through recordings.", guide, guide_source, "/guide/", css_hash, image_size).encode()
     privacy = (root / "PRIVACY.md").read_text()
     email = re.search(r'\[([^\]]+)\]\((mailto:[^)]+)\)', privacy)
     if not email:
         raise ValueError("Privacy policy must provide a private contact")
     support = "# Support\n\n## Report a problem\n\n" + section(readme, "Support and feedback")
     support += f"\n\n## Privacy and security\n\nFor private account, privacy, or security matters, contact [{email[1]}]({email[2]}). Include only the information needed to explain the issue. Do not post credentials, tokens, meeting passcodes, or private transcripts in public Issues.\n\n## Before you write\n\nCheck the [user guide](/guide/) for connection, recordings, and removal instructions. Include the app version and macOS version, what you expected, what happened, and the steps needed to reproduce it. Screenshots with sample content are helpful.\n\n## Availability\n\n" + try_section
-    files["support/index.html"] = document(brand, "Support", "Questions, bug reports, and a private route for sensitive matters.", support, "README.md", "/support/", css_hash).encode()
+    files["support/index.html"] = document(brand, "Support", "Questions, bug reports, and a private route for sensitive matters.", support, "README.md", "/support/", css_hash, image_size).encode()
     missing = '<section class="not-found"><span class="eyebrow">404</span><h1>This page isn’t here.</h1><p>Try the <a href="/guide/">user guide</a>, or head back to the <a href="/">homepage</a>.</p></section>'
-    files["404.html"] = shell(brand, "Page not found", "This page could not be found.", missing, "/404.html", css_hash).encode()
+    files["404.html"] = shell(brand, "Page not found", "This page could not be found.", missing, "/404.html", css_hash, image_size).encode()
     files["_headers"] = b"/*\n  Content-Security-Policy: default-src 'none'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n  X-Frame-Options: DENY\n"
     files["robots.txt"] = f"User-agent: *\nAllow: /\nDisallow: /v1/\nSitemap: {CANONICAL_URL}/sitemap.xml\n".encode()
     urls = ("/", "/guide/", "/support/", "/privacy/", "/terms/", "/notices/")

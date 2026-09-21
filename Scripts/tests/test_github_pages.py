@@ -20,11 +20,16 @@ class GitHubPagesTests(unittest.TestCase):
             self.assertIn(f'<meta name="google-site-verification" content="{token}">', home)
         self.assertIn('href="https://yap.enterprises/privacy/"', home)
         self.assertIn('src="https://yap.enterprises/assets/meeting-gallery.png"', home)
+        self.assertIn('property="og:image" content="https://yap.enterprises/assets/social-share-v1.png"', home)
+        self.assertIn('name="twitter:image" content="https://yap.enterprises/assets/social-share-v1.png"', home)
         for name, content in files.items():
             if name.endswith('.html'):
                 self.assertNotIn(b'href="/', content)
                 self.assertNotIn(b'src="/', content)
                 self.assertNotIn(b'127.0.0.1', content)
+                if name != '404.html' and not name.startswith('connect/'):
+                    route = '/' + name.removesuffix('index.html')
+                    self.assertIn(f'property="og:url" content="https://yap.enterprises{route}"'.encode(), content)
         self.assertIn(b'https://yap.enterprises/privacy/', files['sitemap.xml'])
 
     def test_source_artwork_is_unchanged(self):
@@ -43,6 +48,8 @@ class GitHubPagesTests(unittest.TestCase):
                 self.assertEqual(parsed.links.count('yap://open'), 1)
                 self.assertIn('name="referrer" content="no-referrer"', text)
                 self.assertIn('name="robots" content="noindex, nofollow"', text)
+                self.assertNotIn('property="og:', text)
+                self.assertNotIn('name="twitter:', text)
                 self.assertIn("default-src 'none'", text)
                 self.assertIn("base-uri 'none'; form-action 'none'", text)
                 for link in parsed.links:

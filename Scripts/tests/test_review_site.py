@@ -30,6 +30,7 @@ class ReviewSiteTests(unittest.TestCase):
         renderer = site.Markdown("README.md")
         self.assertIn('src="/assets/meeting-gallery.png"', renderer.render("![Gallery](Documentation/Images/meeting-gallery.png)"))
         self.assertIn('src="/assets/recordings.png"', renderer.render("![Sample](Documentation/Images/recordings.png)"))
+        self.assertIn('src="/assets/social-share-v1.png"', renderer.render("![Yap](Documentation/Images/social-share-v1.png)"))
         for target in ("https://tracker.invalid/pixel.png", "Resources/ZoomSDK.lock.json", "../../private.png"):
             with self.subTest(target=target), self.assertRaises(ValueError):
                 renderer.render(f"![Image]({target})")
@@ -56,13 +57,13 @@ class ReviewSiteTests(unittest.TestCase):
         expected = {"index.html", "guide/index.html", "privacy/index.html", "terms/index.html",
                     "support/index.html", "notices/index.html", "404.html", "assets/site.css",
                     "assets/icon.png", "assets/meeting-gallery.png", "assets/recordings.png",
-                    "assets/agenda.png", "_headers",
+                    "assets/agenda.png", "assets/social-share-v1.png", "_headers",
                     "robots.txt", "sitemap.xml"}
         self.assertEqual(set(files), expected)
         site.validate(files)
         for source, target in site.ASSETS.items():
             self.assertEqual(files[target], (ROOT / source).read_bytes())
-            if source.startswith("Documentation/Images/"):
+            if source.startswith("Documentation/Images/") and source != site.SOCIAL_IMAGE_SOURCE:
                 # Preserve original Retina window captures, including their alpha channel.
                 capture = files[target]
                 self.assertEqual(capture[:8], b"\x89PNG\r\n\x1a\n")
@@ -71,11 +72,19 @@ class ReviewSiteTests(unittest.TestCase):
                 self.assertGreaterEqual(width, 2400)
                 self.assertGreaterEqual(height, 1500)
                 self.assertEqual((depth, color_type), (8, 6))
+        image_width, image_height = struct.unpack(">II", files["assets/social-share-v1.png"][16:24])
         for path, data in files.items():
             if path.endswith(".html"):
                 self.assertNotIn(b"<script", data)
                 self.assertNotIn(b"ZOOM_SDK_CLIENT_SECRET=", data)
                 self.assertNotIn(b"/Users/mg/", data)
+                if path == "404.html":
+                    self.assertNotIn(b'property="og:', data)
+                    self.assertNotIn(b'name="twitter:', data)
+                else:
+                    self.assertIn(f'property="og:image:width" content="{image_width}"'.encode(), data)
+                    self.assertIn(f'property="og:image:height" content="{image_height}"'.encode(), data)
+                    self.assertIn(b'name="twitter:card" content="summary_large_image"', data)
         for route, source in (("privacy", "PRIVACY.md"), ("terms", "TERMS.md"), ("notices", "THIRD_PARTY_NOTICES.md")):
             # Every rendered source paragraph remains present, including draft notices.
             full_body = site.Markdown(source).render((ROOT / source).read_text(), omit_title=True)
@@ -85,6 +94,9 @@ class ReviewSiteTests(unittest.TestCase):
         for link in ("/missing/", "#missing", "/assets/missing.jpg"):
             with self.subTest(link=link), self.assertRaises(ValueError):
                 site.validate({"index.html": f'<h1>Page</h1><a href="{link}">Link</a>'.encode()})
+        for attribute in ('property="og:image"', 'name="twitter:image"', 'property="og:url"'):
+            with self.subTest(attribute=attribute), self.assertRaises(ValueError):
+                site.validate({"index.html": f'<h1>Page</h1><meta {attribute} content="{site.CANONICAL_URL}/missing.png">'.encode()})
 
     def test_cli_check_detects_stale_output_and_unexpected_private_files(self):
         with tempfile.TemporaryDirectory(prefix="review-site-test-") as directory:

@@ -19,8 +19,8 @@ struct MeetingChatView: View {
     @FocusState private var focusedMessageAction: MessageActionFocus?
     @State private var expandedThreads: Set<UUID> = []
     @State private var scrollPolicy = MeetingChatScrollPolicy()
-    @State private var scrollTarget: MeetingChatThread.ScrollTarget?
-    @State private var fileScrollTarget: String?
+    @State private var isUserScrolling = false
+    @State private var resizeSettlementID: UUID?
     @State private var scrollRequestID = UUID()
     @State private var isChatComposerFocused = false
     @State private var searchQuery = ""
@@ -67,16 +67,19 @@ struct MeetingChatView: View {
             chatToolbar
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        ForEach(entries) { entry in
-                            switch entry {
-                            case .thread(let thread): threadRow(thread)
-                            case .attachment(let file): attachmentRow(file).id("file:\(file.id)")
+                    VStack(spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: 18) {
+                            ForEach(entries) { entry in
+                                switch entry {
+                                case .thread(let thread): threadRow(thread)
+                                case .attachment(let file): attachmentRow(file).id("file:\(file.id)")
+                                }
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14).padding(.vertical, 16)
+                        Color.clear.frame(height: 1).id("meeting-chat-bottom")
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14).padding(.vertical, 16)
                 }
                 .overlay {
                     if entries.isEmpty {
@@ -98,17 +101,48 @@ struct MeetingChatView: View {
                     }
                 }
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .accessibilityLabel("Chat messages")
+                .defaultScrollAnchor(scrollPolicy.followsLatest && !isUserScrolling && searchQuery.isEmpty ? .bottom : nil, for: .sizeChanges)
+                .onScrollPhaseChange { _, phase, context in
+                    let wasUserScrolling = isUserScrolling
+                    isUserScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                    if isUserScrolling { resizeSettlementID = nil }
+                    if wasUserScrolling && phase == .idle {
+                        scrollPolicy.userScrolled(to: MeetingChatScrollGeometry(contentHeight: context.geometry.contentSize.height,
+                            visibleMinY: context.geometry.visibleRect.minY, visibleMaxY: context.geometry.visibleRect.maxY,
+                        contentWidth: context.geometry.contentSize.width, viewportWidth: context.geometry.containerSize.width))
+                    }
+                }
                 .onScrollGeometryChange(for: MeetingChatScrollGeometry.self) { geometry in
                     MeetingChatScrollGeometry(contentHeight: geometry.contentSize.height,
-                        visibleMinY: geometry.visibleRect.minY, visibleMaxY: geometry.visibleRect.maxY)
+                        visibleMinY: geometry.visibleRect.minY, visibleMaxY: geometry.visibleRect.maxY,
+                        contentWidth: geometry.contentSize.width, viewportWidth: geometry.containerSize.width)
                 } action: { old, new in
-                    scrollPolicy.geometryChanged(from: old, to: new)
+                    let viewportChanged = old.viewportWidth != new.viewportWidth ||
+                        old.visibleMaxY - old.visibleMinY != new.visibleMaxY - new.visibleMinY
+                    if isUserScrolling { scrollPolicy.userScrolled(to: new) }
+                    else if resizeSettlementID != nil || (scrollPolicy.followsLatest && viewportChanged) {
+                        // A resize can report corrected offsets several layout
+                        // passes after its dimensions changed. Wait for those
+                        // passes to settle before treating an offset as input.
+                        resizeSettlementID = UUID()
+                    }
+                    else { scrollPolicy.geometryChanged(from: old, to: new) }
+                    if scrollPolicy.followsLatest, !isUserScrolling, searchQuery.isEmpty,
+                       (old.contentHeight != new.contentHeight || old.contentWidth != new.contentWidth ||
+                        viewportChanged || (resizeSettlementID != nil && new.contentHeight - new.visibleMaxY > 1)) {
+                        // The lazy stack may finish measuring after the message
+                        // callback. Follow its final extent, not the old layout.
+                        scrollRequestID = UUID()
+                    }
                 }
                 .onChange(of: meeting.chatMessages.map(\.id)) { previousIDs, _ in
                     let previous = Set(previousIDs)
                     // Removing a message is not an incoming message, even when it was last.
                     guard let last = meeting.chatMessages.last(where: { !previous.contains($0.id) }) else { return }
-                    if scrollPolicy.receivedMessage(isFromSelf: last.isFromSelf), searchQuery.isEmpty {
+                    // Sending a reply while reading an older thread should keep
+                    // that thread in view. New top-level sends return to the end.
+                    if scrollPolicy.receivedMessage(isFromSelf: last.isFromSelf, isReply: last.isReply), searchQuery.isEmpty {
                         scrollToLatest()
                     }
                 }
@@ -121,15 +155,24 @@ struct MeetingChatView: View {
                     presentation.synchronize(sessionID: sessionID)
                     expandedThreads.removeAll(); resetMessageHover(); pendingDelete = nil
                     searchQuery = ""; showsSearch = false
+                    isUserScrolling = false
+                    resizeSettlementID = nil
                     scrollPolicy.reopen(sessionID: sessionID)
                     scrollToLatest()
                 }
                 .task(id: scrollRequestID) {
-                    // Let the expanded reply rows enter the view tree before targeting one.
+                    // Target the physical bottom: the newest arrival can be a
+                    // reply in an older thread above the end of the conversation.
                     await Task.yield()
+                    guard !Task.isCancelled, scrollPolicy.followsLatest, !isUserScrolling, searchQuery.isEmpty else { return }
+                    proxy.scrollTo("meeting-chat-bottom", anchor: .bottom)
+                }
+                .task(id: resizeSettlementID) {
+                    guard resizeSettlementID != nil else { return }
+                    do { try await Task.sleep(for: .milliseconds(150)) }
+                    catch { return }
                     guard !Task.isCancelled else { return }
-                    if let fileScrollTarget { proxy.scrollTo(fileScrollTarget, anchor: .bottom) }
-                    else if let scrollTarget { proxy.scrollTo(scrollTarget.messageID, anchor: .bottom) }
+                    resizeSettlementID = nil
                 }
                 .overlay(alignment: .bottom) {
                     if scrollPolicy.hasNewMessages {
@@ -205,7 +248,7 @@ struct MeetingChatView: View {
             .padding(.horizontal, 12).padding(.vertical, isCompact ? 8 : 12)
         }
         .onAppear { presentation.chatFocusRequest = UUID() }
-        .onDisappear { resetMessageHover() }
+        .onDisappear { resetMessageHover(); resizeSettlementID = nil }
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { notification in
             guard let menu = notification.object as? NSMenu else { return }
             let candidates = Set([hoveredMessage, focusedMessageAction?.messageID].compactMap { $0 })
@@ -245,14 +288,9 @@ struct MeetingChatView: View {
     }
 
     private func scrollToLatest() {
-        if let file = meeting.chatAttachments.last, file.date >= (meeting.chatMessages.last?.date ?? .distantPast) {
-            fileScrollTarget = "file:\(file.id)"; scrollTarget = nil
-            scrollRequestID = UUID()
-            return
+        if let threadID = MeetingChatThread.latestScrollTarget(in: meeting.chatMessages)?.expandedThreadID {
+            expandedThreads.insert(threadID)
         }
-        fileScrollTarget = nil
-        scrollTarget = MeetingChatThread.latestScrollTarget(in: meeting.chatMessages)
-        if let threadID = scrollTarget?.expandedThreadID { expandedThreads.insert(threadID) }
         scrollRequestID = UUID()
     }
 
@@ -262,13 +300,14 @@ struct MeetingChatView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func messageRow(_ message: MeetingChatMessage) -> some View {
+    private func messageRow(_ message: MeetingChatMessage, isThreadReply: Bool = false) -> some View {
+        let alignsTrailing = message.isFromSelf && !isThreadReply
         let showsActions = hoveredMessage == message.id || messagesWithOpenMenus.contains(message.id) ||
             focusedMessageAction?.messageID == message.id
         let reservesReply = canReply(message) || menuReplySlots.contains(message.id)
         return HStack(alignment: .top, spacing: 0) {
-            if message.isFromSelf { Spacer(minLength: 18) }
-            VStack(alignment: message.isFromSelf ? .trailing : .leading, spacing: 5) {
+            if alignsTrailing { Spacer(minLength: 18) }
+            VStack(alignment: alignsTrailing ? .trailing : .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(message.isFromSelf ? "You" : message.senderName)
                         .font(.system(size: 11, weight: .medium))
@@ -278,7 +317,9 @@ struct MeetingChatView: View {
                         .font(.system(size: 10)).foregroundStyle(.tertiary)
                         .fixedSize()
                 }
-                .padding(message.isFromSelf ? .leading : .trailing, reservesReply ? 66 : 40)
+                .padding(alignsTrailing ? .leading : .trailing, reservesReply ? 66 : 40)
+                // Plain replies still need room above their first line for the hover strip.
+                .frame(minHeight: isThreadReply ? 22 : nil, alignment: .bottom)
                 if message.recipient.kind != .everyone {
                     Label(message.recipient.label, systemImage: message.recipient.kind == .participant ? "lock.fill" : "person.2")
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
@@ -288,27 +329,31 @@ struct MeetingChatView: View {
                 // Actions live opposite the sender, so the timestamp stays readable.
                 MeetingChatMessageText(message: message, actions: textActions(for: message))
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 11).padding(.vertical, 9)
+                    .padding(.horizontal, isThreadReply ? 0 : 11).padding(.vertical, isThreadReply ? 0 : 9)
                     .background {
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .fill(message.isFromSelf ?
-                                  Color.accentColor.opacity(colorScheme == .dark ? 0.20 : 0.10) :
-                                  Color.primary.opacity(colorScheme == .dark ? 0.075 : 0.045))
+                        if !isThreadReply {
+                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .fill(message.isFromSelf ?
+                                      Color.accentColor.opacity(colorScheme == .dark ? 0.20 : 0.10) :
+                                      Color.primary.opacity(colorScheme == .dark ? 0.075 : 0.045))
+                        }
                     }
                     .overlay {
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.4 : 0.045),
-                                          lineWidth: contrast == .increased ? 1 : 0.5)
-                            .allowsHitTesting(false)
+                        if !isThreadReply {
+                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.4 : 0.045),
+                                              lineWidth: contrast == .increased ? 1 : 0.5)
+                                .allowsHitTesting(false)
+                        }
                     }
             }
-            if !message.isFromSelf { Spacer(minLength: 18) }
+            if !alignsTrailing { Spacer(minLength: isThreadReply ? 0 : 18) }
         }
-        .frame(maxWidth: .infinity, alignment: message.isFromSelf ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: alignsTrailing ? .trailing : .leading)
         // The strip used to protrude above the region that kept it visible.
         // Reserve that space permanently so entering a button never leaves its row.
         .padding(.top, 6)
-        .overlay(alignment: message.isFromSelf ? .topLeading : .topTrailing) {
+        .overlay(alignment: alignsTrailing ? .topLeading : .topTrailing) {
             HStack(spacing: 2) {
                 if reservesReply {
                     Button("Reply", systemImage: "bubble.left.and.bubble.right") { beginReply(message) }
@@ -479,17 +524,51 @@ struct MeetingChatView: View {
     }
 
     private func threadRow(_ thread: MeetingChatThread) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let isExpanded = expandedThreads.contains(thread.id)
+        let replyCount = "\(thread.replies.count) \(thread.replies.count == 1 ? "reply" : "replies")"
+        return VStack(alignment: .leading, spacing: 6) {
             messageRow(thread.root).id(thread.root.id)
             if !thread.replies.isEmpty {
-                Button(expandedThreads.contains(thread.id) ? "Collapse replies" : "\(thread.replies.count) \(thread.replies.count == 1 ? "reply" : "replies")",
-                       systemImage: expandedThreads.contains(thread.id) ? "chevron.up" : "chevron.down") {
-                    if !expandedThreads.insert(thread.id).inserted { expandedThreads.remove(thread.id) }
-                }.buttonStyle(.plain).foregroundStyle(.tint).font(.caption)
-                if expandedThreads.contains(thread.id) {
-                    VStack(spacing: 16) { ForEach(thread.replies) { message in messageRow(message).id(message.id) } }
-                        .padding(.leading, 12).overlay(alignment: .leading) { Rectangle().fill(.quaternary).frame(width: 1) }
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        if !expandedThreads.insert(thread.id).inserted { expandedThreads.remove(thread.id) }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            Text(replyCount).font(.system(size: 11, weight: .medium))
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .accessibilityLabel(replyCount)
+                    .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                    .accessibilityHint(isExpanded ? "Hide replies" : "Show replies")
+                    .accessibilityIdentifier("meeting-chat-thread-toggle-\(thread.id)")
+                    if isExpanded {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(thread.replies) { message in
+                                messageRow(message, isThreadReply: true).id(message.id)
+                            }
+                        }
+                    }
                 }
+                .padding(.horizontal, 11).padding(.vertical, 7)
+                .background {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Color.primary.opacity(colorScheme == .dark ? 0.035 : 0.025))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.4 : 0.08),
+                                      lineWidth: contrast == .increased ? 1 : 0.5)
+                        .allowsHitTesting(false)
+                }
+                // Follow the parent's inset. Replies share one reading edge, including your own.
+                .padding(thread.root.isFromSelf ? .leading : .trailing, 18)
             }
         }.accessibilityElement(children: .contain)
     }

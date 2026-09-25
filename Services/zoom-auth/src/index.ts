@@ -212,14 +212,37 @@ function productionConfiguration(env: Env): URL {
       !credential(env.ZOOM_SDK_CLIENT_SECRET, 1024)) {
     throw new RequestFailure(503, "not_configured");
   }
+  return configuredRedirect(env.ZOOM_OAUTH_REDIRECT_URI);
+}
+
+function configuredRedirect(value: unknown): URL {
+  if (typeof value !== "string" || value.length > 2048) throw new RequestFailure(503, "not_configured");
   let redirect: URL;
-  try { redirect = new URL(env.ZOOM_OAUTH_REDIRECT_URI); }
+  try { redirect = new URL(value); }
   catch { throw new RequestFailure(503, "not_configured"); }
   if (redirect.protocol !== "https:" || !redirect.hostname.includes(".") ||
       redirect.username || redirect.password || redirect.port || redirect.search || redirect.hash ||
       redirect.pathname !== CALLBACK_PATH || redirect.hostname === "127.0.0.1") {
     throw new RequestFailure(503, "not_configured");
   }
+  return redirect;
+}
+
+function redirectForRequest(url: URL, env: Env): URL {
+  const canonical = productionConfiguration(env);
+  let legacy: unknown;
+  try { legacy = JSON.parse(env.ZOOM_OAUTH_LEGACY_REDIRECT_URIS); }
+  catch { throw new RequestFailure(503, "not_configured"); }
+  if (!Array.isArray(legacy) || legacy.length > 4) throw new RequestFailure(503, "not_configured");
+  const redirects = [canonical, ...legacy.map(configuredRedirect)];
+  if (new Set(redirects.map(redirect => redirect.origin)).size !== redirects.length) {
+    throw new RequestFailure(503, "not_configured");
+  }
+  // Older signed apps pin their service origin and reject HTTP redirects. Keep
+  // their exact callback available; never construct one from an untrusted Host
+  // or forwarding header, or fall back to the canonical URL for unknown hosts.
+  const redirect = redirects.find(redirect => redirect.origin === url.origin);
+  if (!redirect) throw new RequestFailure(400, "invalid_service_origin");
   return redirect;
 }
 
@@ -269,8 +292,7 @@ async function unseal(value: unknown, env: Env, purpose: string, now: number): P
   } catch { throw fail(); }
 }
 
-async function createSession(request: Request, env: Env, deps: Dependencies): Promise<Response> {
-  const redirect = productionConfiguration(env);
+async function createSession(request: Request, redirect: URL, env: Env, deps: Dependencies): Promise<Response> {
   const input = await parameters(request);
   if (input.client_id !== env.ZOOM_OAUTH_CLIENT_ID || !verifier(input.code_verifier) || !nonce(input.state) ||
       Object.keys(input).some(key => !["client_id", "code_verifier", "state"].includes(key))) {
@@ -297,8 +319,7 @@ function completionPage(returnURL?: URL, denied = false, status = 200): Response
   }});
 }
 
-async function completeAuthorization(request: Request, env: Env, deps: Dependencies): Promise<Response> {
-  const redirect = productionConfiguration(env);
+async function completeAuthorization(request: Request, redirect: URL, env: Env, deps: Dependencies): Promise<Response> {
   const url = new URL(request.url);
   if (url.origin !== redirect.origin || url.pathname !== redirect.pathname) return completionPage(undefined, false, 400);
   const query = url.searchParams;
@@ -393,11 +414,12 @@ export async function handleRequest(request: Request, env: Env, deps = liveDepen
     if (!credential(env.ZOOM_PUBLIC_CLIENT_ID, 1024) || !credential(env.ZOOM_SDK_CLIENT_ID, 1024) ||
         !credential(env.ZOOM_SDK_CLIENT_SECRET, 1024) || !credential(env.SIGNING_GRANT_SECRET, 1024) ||
         env.SIGNING_GRANT_SECRET.length < 43) throw new RequestFailure(503, "not_configured");
+    const redirect = redirectForRequest(url, env);
     const source = request.headers.get("CF-Connecting-IP") ?? "local";
     const key = await digest(source);
     if (!(await env.REQUEST_LIMITER.limit({key})).success) throw new RequestFailure(429, "rate_limited");
-    if (url.pathname === SESSION_PATH) return await createSession(request, env, deps);
-    if (url.pathname === CALLBACK_PATH) return await completeAuthorization(request, env, deps);
+    if (url.pathname === SESSION_PATH) return await createSession(request, redirect, env, deps);
+    if (url.pathname === CALLBACK_PATH) return await completeAuthorization(request, redirect, env, deps);
     return url.pathname === TOKEN_PATH ? await exchange(request, env, deps) : await signature(request, env, deps);
   } catch (error) {
     if (error instanceof RequestFailure) return json({error: error.code}, error.status);

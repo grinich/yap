@@ -8,6 +8,7 @@ function environment(): Env {
   return {
     ZOOM_PUBLIC_CLIENT_ID: "test-public-client", ZOOM_SDK_CLIENT_ID: "test-sdk-client",
     ZOOM_OAUTH_CLIENT_ID: "test-sdk-client", ZOOM_OAUTH_REDIRECT_URI: "https://auth.example.test/oauth/zoom/callback",
+    ZOOM_OAUTH_LEGACY_REDIRECT_URIS: "[]",
     ZOOM_SDK_CLIENT_SECRET: "fake-test-sdk-secret", SIGNING_GRANT_SECRET: "fake-test-grant-secret-with-at-least-43-characters",
     REQUEST_LIMITER: {limit: async () => ({success: true})},
     SIGNATURE_LIMITER: {limit: async () => ({success: true})}

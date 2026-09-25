@@ -2,6 +2,15 @@
 
 Prepared September 14, 2026 (Pacific). This English test plan covers Yap's native Mac integration, each requested OAuth scope, and the roles and sample data needed to exercise them. **These are test instructions and expected results, not a record of completed tests.** Use synthetic content and keep account credentials, meeting invitations, passcodes, tokens and private evidence in the review portal's private fields.
 
+## Domain migration addendum — September 25, 2026
+
+The current source configuration moves the authorization service to `https://auth.yap.enterprises` and its Zoom redirect to `https://auth.yap.enterprises/oauth/zoom/callback`. It keeps the same OAuth client and scopes. The build comparison below records the earlier review candidate; it is not the identity or test record of a newly packaged migration build. Record the new version/build, source commit, installer hash, service deployment and saved Zoom redirect configuration before running these checks.
+
+1. Run Z01 and X01–X03 on the newly packaged app. Confirm its session, token and SDK-signature requests stay on `auth.yap.enterprises`, Zoom returns to the exact new callback, and the native `yap://oauth/zoom` handoff completes. Record only public origin/path information, never codes, handoffs, tokens or state.
+2. Repeat fresh sign-in and token refresh using an existing signed app that contains `meeting-auth.mgrinich.workers.dev`. Its requests must continue working on that origin, with its original HTTPS callback; the service must not substitute the new callback or require an application update to finish sign-in.
+3. Confirm cancellation, an expired handoff, and an authorization response containing the other build's callback do not connect the app. The native tests cover strict callback matching independently of these live checks.
+4. Verify Google Calendar still uses the canonical bundled Google desktop client and its existing flow. The Zoom domain migration must not introduce Google developer configuration or alter Google scopes.
+
 ## Choose and record the exact test build
 
 The next review target is **Yap 0.1.7, build 8**, with the revised managed HTTPS authorization flow. Its final source commit, installer hash and completed acceptance results must be supplied with the packaged candidate; they are not established by this plan. The released baseline remains **Yap 0.1.6, build 7**, tag `v0.1.6`, source `d418d646f03311bf8aa7826a46aab30f03cc9888`. The [0.1.6 handoff](ZoomReview-0.1.6.md) documents that earlier installer's hashes and validation only. The [user guide](../Services/zoom-auth/site/guide.md) supplies baseline feature instructions; the [managed setup](Zoom-Setup.md#upcoming-managed-authorization-flow) explains the revised sign-in. The earlier [0.1.3 submission](ZoomReview.md) is historical evidence for different bytes.

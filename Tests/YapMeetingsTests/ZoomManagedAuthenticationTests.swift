@@ -10,6 +10,54 @@ struct ZoomManagedAuthenticationTests {
     private let personal = ZoomPersonalConfiguration(sdkClientID: "personal-sdk", sdkClientSecret: "personal-secret-fixture",
                                                      oauthPublicClientID: "personal-public")
 
+    @Test func packagedConfigurationKeepsEveryManagedEndpointOnYapDomain() throws {
+        let configuration = try packagedConfiguration()
+        #expect(configuration.sdkSignerURL.absoluteString == "https://auth.yap.enterprises/v1/meeting-sdk/signature")
+        #expect(configuration.oauthSessionURL.absoluteString == "https://auth.yap.enterprises/v1/oauth/session")
+        #expect(configuration.oauthTokenURL.absoluteString == "https://auth.yap.enterprises/v1/oauth/token")
+        #expect(configuration.oauthRedirectURL.absoluteString == "https://auth.yap.enterprises/oauth/zoom/callback")
+    }
+
+    @Test func domainMigrationPreservesExactCallbackValidationForNewAndInstalledApps() throws {
+        let current = try packagedConfiguration()
+        let installed = ZoomPublicConfiguration(oauthPublicClientID: current.oauthPublicClientID,
+            sdkClientID: current.sdkClientID,
+            sdkSignerURL: URL(string: "https://meeting-auth.mgrinich.workers.dev/v1/meeting-sdk/signature")!)
+        let verifier = String(repeating: "v", count: 43)
+        let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).zoomBase64URL
+        for configuration in [current, installed] {
+            var authorization = URLComponents(string: "https://zoom.us/oauth/authorize")!
+            authorization.queryItems = [.init(name: "client_id", value: configuration.oauthPublicClientID),
+                .init(name: "response_type", value: "code"),
+                .init(name: "redirect_uri", value: configuration.oauthRedirectURL.absoluteString),
+                .init(name: "code_challenge", value: challenge), .init(name: "code_challenge_method", value: "S256"),
+                .init(name: "state", value: "v1.fixture.session")]
+            #expect(ZoomManagedOAuth.validatedAuthorizeURL(authorization.string!, configuration: configuration, verifier: verifier) != nil)
+
+            let other = configuration == current ? installed : current
+            #expect(ZoomManagedOAuth.validatedAuthorizeURL(authorization.string!, configuration: other, verifier: verifier) == nil)
+            for callback in ["https://auth.yap.enterprises.attacker.example/oauth/zoom/callback",
+                             "https://auth.yap.enterprises/oauth/zoom/callback?redirect=elsewhere",
+                             "https://auth.yap.enterprises/oauth/zoom/callback#fragment",
+                             "http://auth.yap.enterprises/oauth/zoom/callback"] {
+                var changed = authorization
+                changed.queryItems = authorization.queryItems?.map {
+                    $0.name == "redirect_uri" ? URLQueryItem(name: "redirect_uri", value: callback) : $0
+                }
+                #expect(ZoomManagedOAuth.validatedAuthorizeURL(changed.string!, configuration: configuration, verifier: verifier) == nil)
+            }
+        }
+    }
+
+    private func packagedConfiguration() throws -> ZoomPublicConfiguration {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let data = try Data(contentsOf: root.appendingPathComponent("Resources/Info.plist"))
+        let propertyList = try PropertyListSerialization.propertyList(from: data, format: nil)
+        let info = try #require(propertyList as? [String: Any])
+        let configuration = try ZoomPublicConfiguration.load(info: info)
+        return try #require(configuration)
+    }
+
     @Test func publicBundleConfigurationNeedsNoSecretAndRejectsPartialOrRedirectableSetup() throws {
         let valid: [String: Any] = ["YapZoomOAuthClientID": managed.oauthPublicClientID,
                                    "YapZoomSDKClientID": managed.sdkClientID,

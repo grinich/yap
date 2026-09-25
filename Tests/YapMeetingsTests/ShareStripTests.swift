@@ -10,7 +10,7 @@ struct ShareStripTests {
         await meeting.host(displayName: "Me")
         let session = try #require(meeting.sessionID)
         driver.onEvent?(session, .participants([
-            MeetingParticipant(id: "me", name: "Me", isSelf: true),
+            MeetingParticipant(id: "me", name: "Me", isSelf: true, isCameraEnabled: true),
             MeetingParticipant(id: "quiet", name: "Quiet", isCameraEnabled: true),
             MeetingParticipant(id: "room", name: "Room", isCameraEnabled: true, isConferenceRoom: true),
             MeetingParticipant(id: "speaker", name: "Speaker", isMuted: false, isCameraEnabled: true, isSpeaking: true)
@@ -68,7 +68,7 @@ struct ShareStripTests {
         let meeting = MeetingCoordinator(driver: driver)
         await meeting.host(displayName: "Me")
         let session = try #require(meeting.sessionID)
-        var people = [MeetingParticipant(id: "me", name: "Me", isSelf: true),
+        var people = [MeetingParticipant(id: "me", name: "Me", isSelf: true, isCameraEnabled: true),
                       MeetingParticipant(id: "quiet", name: "Quiet", isCameraEnabled: true),
                       MeetingParticipant(id: "room", name: "Room", isCameraEnabled: true, isConferenceRoom: true),
                       MeetingParticipant(id: "speaker", name: "Speaker", isMuted: false, isCameraEnabled: true, isSpeaking: true),

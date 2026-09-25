@@ -27,8 +27,10 @@ public final class DemoMeetingDriver: MeetingDriver, MeetingMediaDriver {
     public var rejectNextControl = false
     public var onMediaDevicesChanged: (@MainActor (MeetingMediaState) -> Void)?
     private var mediaState = MeetingMediaState(isReady: true,
-        microphones: [.init(id: "demo-mic", name: "Built-in Microphone (preview)", selected: true), .init(id: "demo-usb-mic", name: "USB Microphone (preview)")],
-        speakers: [.init(id: "demo-speaker", name: "Built-in Speakers (preview)", selected: true), .init(id: "demo-headphones", name: "Headphones (preview)")],
+        microphones: [.init(id: "yap.system-default", name: "Same as System (Built-in Microphone)", selected: true),
+                      .init(id: "demo-mic", name: "Built-in Microphone (preview)"), .init(id: "demo-usb-mic", name: "USB Microphone (preview)")],
+        speakers: [.init(id: "yap.system-default", name: "Same as System (Built-in Speakers)", selected: true),
+                   .init(id: "demo-speaker", name: "Built-in Speakers (preview)"), .init(id: "demo-headphones", name: "Headphones (preview)")],
         cameras: [.init(id: "demo-camera", name: "Built-in Camera (preview)", selected: true), .init(id: "demo-usb-camera", name: "USB Camera (preview)")],
         microphoneVolume: 70, speakerVolume: 50, canSetMicrophoneVolume: true, canSetSpeakerVolume: true)
 
@@ -394,8 +396,12 @@ public final class DemoMeetingDriver: MeetingDriver, MeetingMediaDriver {
     }
 
     public func simulateFixtureDeviceDisconnect() {
-        mediaState.microphones = [.init(id: "demo-mic", name: "Built-in Microphone (preview)", selected: true)]
-        mediaState.speakers = [.init(id: "demo-speaker", name: "Built-in Speakers (preview)", selected: true)]
+        let followsMicrophone = mediaState.microphones.contains { $0.id == "yap.system-default" && $0.selected }
+        let followsSpeaker = mediaState.speakers.contains { $0.id == "yap.system-default" && $0.selected }
+        mediaState.microphones = [.init(id: "yap.system-default", name: "Same as System (Built-in Microphone)", selected: followsMicrophone),
+                                  .init(id: "demo-mic", name: "Built-in Microphone (preview)", selected: !followsMicrophone)]
+        mediaState.speakers = [.init(id: "yap.system-default", name: "Same as System (Built-in Speakers)", selected: followsSpeaker),
+                              .init(id: "demo-speaker", name: "Built-in Speakers (preview)", selected: !followsSpeaker)]
         mediaState.cameras = [.init(id: "demo-camera", name: "Built-in Camera (preview)", selected: true)]
         stopMediaTests()
     }

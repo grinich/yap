@@ -5,7 +5,7 @@ YAP_CHAT_SDK="${YAP_ZOOM_SDK_PATH:-$YAP_CHAT_ROOT/Vendor/Zoom/zoom-sdk-macos-7.1
 YAP_CHAT_WORK="$(mktemp -d "${TMPDIR:-/tmp}/yap-chat-tests.XXXXXX")"
 trap 'rm -rf "$YAP_CHAT_WORK"' EXIT
 xcrun clang -fobjc-arc -fmodules -mmacosx-version-min=26.0 \
-    -F "$YAP_CHAT_SDK" -Wl,-rpath,"$YAP_CHAT_SDK" -framework ZoomSDK -framework AppKit -framework AVFoundation \
+    -F "$YAP_CHAT_SDK" -Wl,-rpath,"$YAP_CHAT_SDK" -framework ZoomSDK -framework AppKit -framework AVFoundation -framework CoreAudio \
     -I "$YAP_CHAT_ROOT/Sources/YapZoomBridge" -I "$YAP_CHAT_ROOT/Sources/YapZoomBridge/include" \
     "$YAP_CHAT_ROOT/Sources/YapZoomBridge/YapZoomBridge.m" \
     "$YAP_CHAT_ROOT/Sources/YapZoomBridge/WHZoomRenderHost.m" \

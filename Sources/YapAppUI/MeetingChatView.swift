@@ -20,6 +20,7 @@ struct MeetingChatView: View {
     @State private var expandedThreads: Set<UUID> = []
     @State private var scrollPolicy = MeetingChatScrollPolicy()
     @State private var isUserScrolling = false
+    @State private var jumpAfterScrolling = false
     @State private var resizeSettlementID: UUID?
     @State private var scrollRequestID = UUID()
     @State private var isChatComposerFocused = false
@@ -107,10 +108,16 @@ struct MeetingChatView: View {
                     let wasUserScrolling = isUserScrolling
                     isUserScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                     if isUserScrolling { resizeSettlementID = nil }
-                    if wasUserScrolling && phase == .idle {
-                        scrollPolicy.userScrolled(to: MeetingChatScrollGeometry(contentHeight: context.geometry.contentSize.height,
-                            visibleMinY: context.geometry.visibleRect.minY, visibleMaxY: context.geometry.visibleRect.maxY,
-                        contentWidth: context.geometry.contentSize.width, viewportWidth: context.geometry.containerSize.width))
+                    if phase == .idle && (wasUserScrolling || jumpAfterScrolling) {
+                        if jumpAfterScrolling {
+                            jumpAfterScrolling = false
+                            scrollPolicy.jumpToLatest()
+                            scrollToLatest()
+                        } else {
+                            scrollPolicy.userScrolled(to: MeetingChatScrollGeometry(contentHeight: context.geometry.contentSize.height,
+                                visibleMinY: context.geometry.visibleRect.minY, visibleMaxY: context.geometry.visibleRect.maxY,
+                                contentWidth: context.geometry.contentSize.width, viewportWidth: context.geometry.containerSize.width))
+                        }
                     }
                 }
                 .onScrollGeometryChange(for: MeetingChatScrollGeometry.self) { geometry in
@@ -156,6 +163,7 @@ struct MeetingChatView: View {
                     expandedThreads.removeAll(); resetMessageHover(); pendingDelete = nil
                     searchQuery = ""; showsSearch = false
                     isUserScrolling = false
+                    jumpAfterScrolling = false
                     resizeSettlementID = nil
                     scrollPolicy.reopen(sessionID: sessionID)
                     scrollToLatest()
@@ -178,8 +186,13 @@ struct MeetingChatView: View {
                     if scrollPolicy.hasNewMessages {
                         Button("New messages", systemImage: "arrow.down") {
                             searchQuery = ""
-                            scrollPolicy.jumpToLatest()
-                            scrollToLatest()
+                            // Keep a click made during trackpad momentum until
+                            // idle; the normal scroll task ignores active gestures.
+                            if isUserScrolling { jumpAfterScrolling = true }
+                            else {
+                                scrollPolicy.jumpToLatest()
+                                scrollToLatest()
+                            }
                         }
                         .buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.small)
                         .accessibilityHint("Scrolls to the latest chat message")
@@ -248,7 +261,7 @@ struct MeetingChatView: View {
             .padding(.horizontal, 12).padding(.vertical, isCompact ? 8 : 12)
         }
         .onAppear { presentation.chatFocusRequest = UUID() }
-        .onDisappear { resetMessageHover(); resizeSettlementID = nil }
+        .onDisappear { resetMessageHover(); resizeSettlementID = nil; jumpAfterScrolling = false }
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { notification in
             guard let menu = notification.object as? NSMenu else { return }
             let candidates = Set([hoveredMessage, focusedMessageAction?.messageID].compactMap { $0 })

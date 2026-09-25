@@ -20,19 +20,28 @@ struct MeetingGalleryView<Tile: View>: View {
     var body: some View {
         GeometryReader { geometry in
             let people = meeting.visibleParticipants
+            let share = meeting.galleryReceivedShare
             let sessionID = meeting.sessionID
-            let spacing: CGFloat = people.count > 25 ? 6 : 10
-            let frames = MeetingTileArrangement.frames(aspectRatios: people.map(\.tileAspectRatio),
+            let fixedLeadingTileCount = share == nil ? 0 : 1
+            let aspectRatios = (share == nil ? [] : [16.0 / 9]) + people.map(\.tileAspectRatio)
+            let spacing: CGFloat = aspectRatios.count > 25 ? 6 : 10
+            let frames = MeetingTileArrangement.frames(aspectRatios: aspectRatios,
                                                        size: geometry.size, spacing: spacing)
             let destination = drag.flatMap { validDrag in
-                validDrag.sessionID == sessionID ? MeetingGalleryDropTarget.index(at: validDrag.location, frames: frames) : nil
+                validDrag.sessionID == sessionID
+                    ? MeetingGalleryDropTarget.index(at: validDrag.location, frames: frames,
+                                                      fixedLeadingTileCount: fixedLeadingTileCount) : nil
             }
-            MeetingTileLayout(aspectRatios: people.map(\.tileAspectRatio), spacing: spacing) {
+            MeetingTileLayout(aspectRatios: aspectRatios, spacing: spacing) {
+                if let share {
+                    ReceivedShareTile(meeting: meeting, share: share)
+                        .id(share.id)
+                }
                 ForEach(Array(people.enumerated()), id: \.element.id) { index, person in
                     let isDragging = drag?.participantID == person.id && drag?.sessionID == sessionID
                     tile(person)
                         .overlay {
-                            RoundedRectangle(cornerRadius: frames[index].height < 90 ? 7 : 12)
+                            RoundedRectangle(cornerRadius: frames[index + fixedLeadingTileCount].height < 90 ? 7 : 12)
                                 .strokeBorder(.blue.opacity(destination == index && !isDragging ? 0.9 : 0), lineWidth: 2)
                                 .allowsHitTesting(false)
                         }
@@ -47,7 +56,8 @@ struct MeetingGalleryView<Tile: View>: View {
                             }
                             .onEnded { value in
                                 guard let sessionID,
-                                      let target = MeetingGalleryDropTarget.index(at: value.location, frames: frames),
+                                      let target = MeetingGalleryDropTarget.index(at: value.location, frames: frames,
+                                                                                 fixedLeadingTileCount: fixedLeadingTileCount),
                                       people.indices.contains(target) else { return }
                                 move(person.id, to: people[target].id, sessionID: sessionID)
                             })
@@ -83,8 +93,11 @@ struct MeetingGalleryView<Tile: View>: View {
 }
 
 enum MeetingGalleryDropTarget {
-    static func index(at location: CGPoint, frames: [CGRect]) -> Int? {
-        guard location.x.isFinite, location.y.isFinite else { return nil }
-        return frames.firstIndex { $0.width > 0 && $0.height > 0 && $0.contains(location) }
+    /// Returns a participant index, excluding any fixed content before the people.
+    static func index(at location: CGPoint, frames: [CGRect], fixedLeadingTileCount: Int = 0) -> Int? {
+        guard location.x.isFinite, location.y.isFinite, fixedLeadingTileCount >= 0,
+              let tileIndex = frames.firstIndex(where: { $0.width > 0 && $0.height > 0 && $0.contains(location) }),
+              tileIndex >= fixedLeadingTileCount else { return nil }
+        return tileIndex - fixedLeadingTileCount
     }
 }

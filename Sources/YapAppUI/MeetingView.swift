@@ -37,8 +37,9 @@ struct MeetingView: View {
         !meeting.isConnected && meeting.participants.isEmpty && meeting.selectedReceivedShare == nil
     }
     private var showsControls: Bool {
+        // Unread chat uses badges and toasts; it must not pin the meeting chrome.
         !meeting.isTakingGroupPhoto && (isPointerInside || keyboardControlsActive || voiceOverEnabled || isTrackingMenu ||
-        showShareChooser || model.showLeaveConfirmation || !meeting.isConnected || !meeting.unreadChatMessageIDs.isEmpty)
+        showShareChooser || model.showLeaveConfirmation || !meeting.isConnected)
     }
 
     private func copyInvitation(_ invitation: URL) {

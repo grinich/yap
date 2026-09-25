@@ -182,7 +182,7 @@ struct MeetingCoordinatorTests {
         let driver = DemoMeetingDriver(participantCount: 144)
         let coordinator = MeetingCoordinator(driver: driver)
         coordinator.showNonVideoParticipants = true
-        await coordinator.host(displayName: "Test")
+        await coordinator.host(displayName: "Test", joinQuietly: false)
         #expect(coordinator.pageSize == 100)
         #expect(coordinator.participants.count == 144)
         #expect(coordinator.visibleParticipants.count == 100)
@@ -207,7 +207,7 @@ struct MeetingCoordinatorTests {
         let driver = DemoMeetingDriver(participantCount: 144)
         let coordinator = MeetingCoordinator(driver: driver)
         coordinator.showNonVideoParticipants = true
-        await coordinator.host(displayName: "Test")
+        await coordinator.host(displayName: "Test", joinQuietly: false)
         coordinator.setPage(1)
         coordinator.showAllParticipants()
         #expect(coordinator.showsAllParticipants)
@@ -239,7 +239,7 @@ struct MeetingCoordinatorTests {
         let driver = DemoMeetingDriver(participantCount: 240)
         let coordinator = MeetingCoordinator(driver: driver)
         coordinator.showNonVideoParticipants = true
-        await coordinator.host(displayName: "Test")
+        await coordinator.host(displayName: "Test", joinQuietly: false)
         coordinator.showAllParticipants()
         coordinator.setPageSize(size)
         #expect(!coordinator.showsAllParticipants)
@@ -258,7 +258,7 @@ struct MeetingCoordinatorTests {
         coordinator.showNonVideoParticipants = true
         coordinator.showAllParticipants()
         #expect(coordinator.pageSize == 1)
-        await coordinator.host(displayName: "Test")
+        await coordinator.host(displayName: "Test", joinQuietly: false)
         let oldSession = try #require(coordinator.sessionID)
         // Model a provider roster larger than the demo driver's sample cap.
         let largeRoster = (0..<1_205).map { MeetingParticipant(id: "fixture-\($0)", name: "Person \($0)") }
@@ -271,7 +271,7 @@ struct MeetingCoordinatorTests {
         #expect(coordinator.showsAllParticipants)
         #expect(coordinator.pageIndex == 0)
         #expect(driver.visibleParticipantIDs.isEmpty)
-        await coordinator.host(displayName: "Test")
+        await coordinator.host(displayName: "Test", joinQuietly: false)
         driver.onEvent?(oldSession, .participants(largeRoster))
         #expect(coordinator.visibleParticipants.count == 144)
         #expect(driver.visibleParticipantIDs.count == 144)

@@ -42,6 +42,8 @@ struct OneToOneMeetingTests {
 
     @Test func thirdPersonRestoresCustomGalleryAndTheirDepartureRestoresThePair() async throws {
         let (meeting, driver, session) = try await fixture()
+        var local = self.local
+        local.isCameraEnabled = true
         let third = MeetingParticipant(id: "third", name: "Third")
         driver.onEvent?(session, .participants([local, remote, third]))
         meeting.moveGalleryParticipant(remote.id, to: local.id, sessionID: session)

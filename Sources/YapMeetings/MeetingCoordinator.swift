@@ -100,7 +100,7 @@ public final class MeetingCoordinator {
         person.isConferenceRoom || markedRoomIDs.contains(person.id)
     }
     private func isVisible(_ person: MeetingParticipant) -> Bool {
-        if person.isSelf { return !hideSelfView }
+        if person.isSelf { return !hideSelfView && person.isCameraEnabled }
         return showNonVideoParticipants || person.isCameraEnabled
     }
     public var shareStripParticipants: [MeetingParticipant] {

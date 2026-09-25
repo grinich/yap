@@ -52,19 +52,19 @@ struct MeetingGalleryView<Tile: View>: View {
                                 move(person.id, to: people[target].id, sessionID: sessionID)
                             })
                         .contextMenu {
-                            Button("Move earlier", systemImage: "arrow.left") {
+                            Button("Move backward", systemImage: "arrow.left") {
                                 if index > 0, let sessionID { move(person.id, to: people[index - 1].id, sessionID: sessionID) }
                             }.disabled(index == 0)
-                            Button("Move later", systemImage: "arrow.right") {
+                            Button("Move forward", systemImage: "arrow.right") {
                                 if index + 1 < people.count, let sessionID { move(person.id, to: people[index + 1].id, sessionID: sessionID) }
                             }.disabled(index == people.count - 1)
                             Divider()
                             Button("Focus on \(person.name)", systemImage: "pin") { meeting.setPinnedParticipant(person.id) }
                         }
-                        .accessibilityAction(named: "Move earlier") {
+                        .accessibilityAction(named: "Move backward") {
                             if index > 0, let sessionID { move(person.id, to: people[index - 1].id, sessionID: sessionID) }
                         }
-                        .accessibilityAction(named: "Move later") {
+                        .accessibilityAction(named: "Move forward") {
                             if index + 1 < people.count, let sessionID { move(person.id, to: people[index + 1].id, sessionID: sessionID) }
                         }
                         .accessibilityHint("Drag to reorder in gallery")

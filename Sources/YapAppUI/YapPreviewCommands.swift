@@ -29,6 +29,8 @@ public struct YapPreviewCommands: Commands {
                     .disabled(!model.meeting.isConnected)
                 Button("Receive chat thread") { model.meeting.demoDriver?.receiveFixtureThread() }
                     .disabled(!model.meeting.isConnected)
+                Button("Receive chat history") { model.meeting.demoDriver?.receiveFixtureChatHistory() }
+                    .disabled(!model.meeting.isConnected)
                 Button("Receive private message") { model.meeting.demoDriver?.receiveFixturePrivateMessage() }
                     .disabled(!model.meeting.isConnected)
                 Button("Receive formatted message") { model.meeting.demoDriver?.receiveFixtureFormatting() }

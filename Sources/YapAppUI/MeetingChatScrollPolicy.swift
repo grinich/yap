@@ -4,6 +4,8 @@ struct MeetingChatScrollGeometry: Equatable {
     var contentHeight: CGFloat
     var visibleMinY: CGFloat
     var visibleMaxY: CGFloat
+    var contentWidth: CGFloat = 0
+    var viewportWidth: CGFloat = 0
 }
 
 /// Content growth alone must not turn a bottom-pinned reader into a history reader.
@@ -24,14 +26,24 @@ struct MeetingChatScrollPolicy {
     }
 
     mutating func geometryChanged(from old: MeetingChatScrollGeometry, to new: MeetingChatScrollGeometry) {
-        let viewportUnchanged = abs(new.visibleMinY - old.visibleMinY) < 0.5 &&
-            abs(new.visibleMaxY - old.visibleMaxY) < 0.5
-        if new.contentHeight > old.contentHeight && viewportUnchanged { return }
-        followsLatest = new.contentHeight - new.visibleMaxY <= 48
+        let layoutChanged = abs(new.contentHeight - old.contentHeight) > 0.5 ||
+            abs(new.contentWidth - old.contentWidth) > 0.5 ||
+            abs(new.viewportWidth - old.viewportWidth) > 0.5 ||
+            abs((new.visibleMaxY - new.visibleMinY) - (old.visibleMaxY - old.visibleMinY)) > 0.5
+        guard !layoutChanged, abs(new.visibleMinY - old.visibleMinY) > 0.5 else { return }
+        userScrolled(to: new)
+    }
+
+    /// A real scroll gesture wins over simultaneous lazy-row remeasurement.
+    mutating func userScrolled(to geometry: MeetingChatScrollGeometry) {
+        followsLatest = geometry.contentHeight - geometry.visibleMaxY <= 48
         if followsLatest { hasNewMessages = false }
     }
 
-    mutating func receivedMessage(isFromSelf: Bool) -> Bool {
+    mutating func receivedMessage(isFromSelf: Bool, isReply: Bool = false) -> Bool {
+        // A reply sent from a historical thread stays with that conversation,
+        // and the sender's own message is never marked as unread.
+        if isFromSelf && isReply && !followsLatest { return false }
         if followsLatest || isFromSelf {
             jumpToLatest()
             return true

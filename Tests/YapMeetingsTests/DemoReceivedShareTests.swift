@@ -25,7 +25,7 @@ struct DemoReceivedShareTests {
         await meeting.leave()
     }
 
-    @Test func switchingAndHidingSourcesUsesTheProductionSelectionAndOneRendererPerSource() async throws {
+    @Test func switchingAndUnfocusingSourcesKeepsOneRendererPerSource() async throws {
         let driver = DemoMeetingDriver()
         let meeting = MeetingCoordinator(driver: driver)
         await meeting.host(displayName: "Preview")
@@ -46,13 +46,52 @@ struct DemoReceivedShareTests {
         host.addSubview(portrait)
         meeting.toggleSharedContent()
         #expect(meeting.selectedReceivedShare == nil)
-        #expect(portrait.superview == nil)
+        #expect(meeting.activeReceivedShare?.id == portraitID)
+        #expect(meeting.nativeShareView(for: portraitID) === portrait)
+        #expect(portrait.superview === host)
         meeting.toggleSharedContent()
         #expect(meeting.selectedReceivedShareID == portraitID)
         #expect(meeting.nativeShareView(for: portraitID) === portrait)
         meeting.selectReceivedShare(landscapeID)
         #expect(meeting.nativeShareView(for: landscapeID) === landscape)
         await meeting.leave()
+    }
+
+    @Test func galleryAndFocusedShareReparentTheSameLiveRendererInATwoPersonMeeting() async throws {
+        let driver = DemoMeetingDriver(participantCount: 2)
+        let meeting = MeetingCoordinator(driver: driver)
+        await meeting.host(displayName: "Preview")
+        #expect(meeting.oneToOneParticipants != nil)
+        driver.receiveFixtureScreenShares()
+        let sourceID = "demo-received-landscape"
+        let renderer = try #require(meeting.nativeShareView(for: sourceID))
+        let focusHost = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 600))
+        let galleryHost = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        focusHost.addSubview(renderer)
+
+        for _ in 0..<3 {
+            meeting.setLayout(.gallery)
+            #expect(meeting.selectedReceivedShare == nil)
+            #expect(meeting.galleryReceivedShare?.id == sourceID)
+            #expect(meeting.oneToOneParticipants == nil)
+            #expect(meeting.nativeShareView(for: sourceID) === renderer)
+            #expect(renderer.superview === focusHost)
+            galleryHost.addSubview(renderer)
+            #expect(renderer.superview === galleryHost)
+
+            meeting.toggleSharedContent()
+            #expect(meeting.selectedReceivedShareID == sourceID)
+            #expect(meeting.galleryReceivedShare == nil)
+            #expect(meeting.nativeShareView(for: sourceID) === renderer)
+            #expect(renderer.superview === galleryHost)
+            focusHost.addSubview(renderer)
+        }
+
+        meeting.setLayout(.gallery)
+        galleryHost.addSubview(renderer)
+        await meeting.leave()
+        #expect(renderer.superview == nil)
+        #expect(meeting.nativeShareView(for: sourceID) == nil)
     }
 
     @Test func stoppingAndLeavingDetachRenderersAndNeverCarrySharingIntoTheNextSession() async throws {
@@ -68,6 +107,8 @@ struct DemoReceivedShareTests {
         driver.stopFixtureScreenShares()
         #expect(meeting.receivedShares.isEmpty)
         #expect(meeting.selectedReceivedShareID == nil)
+        #expect(meeting.activeReceivedShare == nil)
+        #expect(meeting.galleryReceivedShare == nil)
         #expect(driver.nativeShareView(for: sourceID) == nil)
         #expect(original.superview == nil)
         #expect(meeting.isConnected)
@@ -79,6 +120,7 @@ struct DemoReceivedShareTests {
         await meeting.leave()
         #expect(replacement.superview == nil)
         #expect(meeting.receivedShares.isEmpty)
+        #expect(meeting.activeReceivedShare == nil)
         #expect(driver.nativeShareView(for: sourceID) == nil)
         driver.receiveFixtureScreenShares()
         #expect(meeting.receivedShares.isEmpty)

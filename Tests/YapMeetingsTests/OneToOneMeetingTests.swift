@@ -66,6 +66,9 @@ struct OneToOneMeetingTests {
         driver.onEvent?(session, .receivedShares([ReceivedMeetingShare(id: "share", ownerID: remote.id, ownerName: remote.name)]))
         #expect(meeting.oneToOneParticipants == nil)
         meeting.selectReceivedShare(nil)
+        #expect(meeting.galleryReceivedShare?.id == "share")
+        #expect(meeting.oneToOneParticipants == nil)
+        driver.onEvent?(session, .receivedShares([]))
         #expect(meeting.oneToOneParticipants?.remote.id == remote.id)
     }
 }

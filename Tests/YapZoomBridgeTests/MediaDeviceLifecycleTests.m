@@ -528,6 +528,17 @@ int main(void) {
         Check(![Snapshot(bridge)[@"isReady"] boolValue] && audio.systemMicrophoneSelections == systemMicrophoneSelections,
               @"teardown reentered while stopping a test prevents the subsequent default-device SDK call");
         audio.microphone.onRecordingStop = nil;
+        Check([bridge prepareCameraEffectsWithJWT:@"inert-manual-switch-auth" completion:^(NSInteger result, NSString *message) {
+            Check(result == 0, @"manual-switch shutdown fixture authorizes");
+        }] == 0, @"settings reopen for a manual-switch shutdown test");
+        [bridge onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
+        Check([bridge setMediaTest:@"microphone" running:YES] == 0, @"manual-switch shutdown fixture starts a local test");
+        audio.microphone.onRecordingStop = ^{ [weakBridge closeCameraEffects]; };
+        systemMicrophoneSelections = audio.systemMicrophoneSelections;
+        Check([bridge selectMediaDevice:@"yap.system-default" kind:@"microphone"] != 0 &&
+              audio.systemMicrophoneSelections == systemMicrophoneSelections && ![Snapshot(bridge)[@"isReady"] boolValue],
+              @"manual system selection also avoids a closed SDK when stopping a test reenters teardown");
+        audio.microphone.onRecordingStop = nil;
         [preferences removePersistentDomainForName:preferenceSuite];
         method_setImplementation(authorization, originalAuthorization); method_setImplementation(shared, originalShared);
         puts("PASS: inert media devices, local audio test lifecycle, camera-switch effect gate, and raise-hand readback");

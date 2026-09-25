@@ -250,6 +250,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (ZoomSDKError)selectSystemAudioDevice:(BOOL)microphone audio:(ZoomSDKAudioSetting *)audio {
+    if (![self mediaControlsReady]) return ZoomSDKError_WrongUsage;
     if (!audio) return ZoomSDKError_ServiceFailed;
     NSUUID *generation = self.mediaGeneration;
     // This selects Zoom's following mode, not the current physical device ID.

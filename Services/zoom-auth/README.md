@@ -34,12 +34,13 @@ The current source configuration uses:
 | --- | --- |
 | `ZOOM_OAUTH_CLIENT_ID` | Production OAuth client: `UHoml3aIQpy86gZeijjfpQ` |
 | `ZOOM_SDK_CLIENT_ID` | Production SDK client: `UHoml3aIQpy86gZeijjfpQ` |
-| `ZOOM_OAUTH_REDIRECT_URI` | `https://meeting-auth.mgrinich.workers.dev/oauth/zoom/callback`; must exactly match the registered Zoom callback and signed app's service origin |
+| `ZOOM_OAUTH_REDIRECT_URI` | `https://auth.yap.enterprises/oauth/zoom/callback`; must exactly match the registered Zoom callback and signed app's service origin |
+| `ZOOM_OAUTH_LEGACY_REDIRECT_URIS` | JSON array containing `https://meeting-auth.mgrinich.workers.dev/oauth/zoom/callback`, retained for existing signed apps |
 | `ZOOM_PUBLIC_CLIENT_ID` | Legacy public-client compatibility only: `_Xz_EnBNS3OPtUmqZ1og3A` |
 | `ZOOM_SDK_CLIENT_SECRET` | Server secret used for SDK signing and confidential OAuth only when the production OAuth and SDK client IDs match |
 | `SIGNING_GRANT_SECRET` | Independent random server secret of at least 43 characters for signed grants and purpose-separated envelope keys |
 
-Production configuration fails closed unless the OAuth and SDK IDs match and the callback is a fixed HTTPS URL with a fully qualified hostname and `/oauth/zoom/callback` path. No user info, arbitrary port, query or fragment is accepted. Verify the provider's saved production credentials and callback against the packaged candidate; identifiers in source alone are not proof of provider configuration or approval.
+Production configuration fails closed unless the OAuth and SDK IDs match and every callback is a fixed HTTPS URL with a fully qualified hostname and `/oauth/zoom/callback` path. No user info, arbitrary port, query or fragment is accepted. The explicit legacy list accepts at most four entries with distinct origins; malformed configuration fails closed. Authentication routes accept only the canonical and listed legacy origins. Verify the provider's saved production credentials and callbacks against the packaged candidate; identifiers in source alone are not proof of provider configuration or approval.
 
 The legacy `authorization_code` request is accepted only for `ZOOM_PUBLIC_CLIENT_ID`, with its PKCE verifier and an `http://127.0.0.1:<ephemeral-port>/callback` redirect. Legacy refresh and signing grants remain tied to that legacy client ID. This preserves the old managed installer; it does not make loopback the production confidential-client callback. Personal developer mode is different again: its Mac communicates directly with Zoom and signs locally, without this service.
 
@@ -47,7 +48,7 @@ Both managed flows require the same user-level scopes: `user:read:zak`, `meeting
 
 ## Development environment
 
-The named Wrangler environment `development` uses a separate Worker, `meeting-auth-development`, and the Zoom app's development credential pair. Its fixed callback is `https://meeting-auth-development.mgrinich.workers.dev/oauth/zoom/callback`. Register that exact HTTPS URL in Zoom's **Development** OAuth configuration; the production callback remains on `meeting-auth.mgrinich.workers.dev`.
+The named Wrangler environment `development` uses a separate Worker, `meeting-auth-development`, and the Zoom app's development credential pair. Its canonical callback is `https://auth-dev.yap.enterprises/oauth/zoom/callback`. Register that exact HTTPS URL in Zoom's **Development** OAuth configuration and retain `https://meeting-auth-development.mgrinich.workers.dev/oauth/zoom/callback` for older development apps. Production uses `auth.yap.enterprises` and its separate legacy hostname. Neither environment accepts the other's hosts.
 
 Development OAuth and SDK identifiers are both `ZA20iVuUSmSKMGVmx7tDyA`; its legacy public-client identifier is `l_yJBHqMTnOAnq2TdzeceQ`. The environment repeats all non-inherited bindings, uses separate rate-limit namespaces, and keeps the same restrictions on invocation logging and traces. Provision its own `ZOOM_SDK_CLIENT_SECRET` from the matching development credentials and a different random `SIGNING_GRANT_SECRET`. Production secrets must not be copied into this environment.
 
@@ -57,7 +58,22 @@ For development operations, pass `--env development` explicitly. The root config
 WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler deploy --env development --dry-run --outdir .wrangler/dry-run-development
 ```
 
-A development app must use the development client IDs and `https://meeting-auth-development.mgrinich.workers.dev/v1/meeting-sdk/signature` in its Zoom configuration. This selects the separate session, callback, token and signing endpoints. The released app and production review candidate keep the production IDs and service origin; Google Calendar configuration is unchanged. Configuring this environment does not provision its secrets or deploy it, and a successful dry run does not establish that its live Zoom authorization works.
+A newly packaged development app must use the development client IDs and `https://auth-dev.yap.enterprises/v1/meeting-sdk/signature` in its Zoom configuration. This selects the separate session, callback, token and signing endpoints. Production builds use the production IDs and `https://auth.yap.enterprises/v1/meeting-sdk/signature`; existing signed releases and frozen review installers continue using their bundled legacy origin. Google Calendar configuration is unchanged. Configuring this environment does not provision its secrets or deploy it, and a successful dry run does not establish that its live Zoom authorization works.
+
+## Domain migration
+
+The Worker custom domains are `auth.yap.enterprises` for production and `auth-dev.yap.enterprises` for development. The `yap.enterprises` website remains independently hosted. `workers_dev` stays enabled for compatibility with previously signed apps; do not replace these endpoints with HTTP redirects. Native requests refuse redirects and validate the callback against the origin bundled in the app.
+
+For session creation and callback completion, the Worker selects an exact configured callback whose origin matches the request URL. It never builds a callback from `Host`, forwarding headers or a native-supplied redirect. The encrypted state retains that selected callback, so moving a valid state to another allowed hostname fails before any Zoom exchange. Existing in-flight sessions remain valid on their original callback while the existing signing-grant secret and client IDs remain unchanged. Refresh and signing grants continue to work across the two trusted production origins.
+
+Migration order:
+
+1. Register the new exact production and development callbacks in the corresponding Zoom configuration, retaining each environment's old exact callback in its allowlist.
+2. Add/deploy the custom domains and the explicit legacy configuration together. Preserve each environment's existing secrets and client IDs. Never copy production secrets into development.
+3. Verify new and legacy origins directly: session response, browser consent/cancellation, callback/native return, refresh and SDK signature. Also verify that unrelated hosts and cross-host callback/state combinations are rejected.
+4. Package and distribute the native app with the new signer URL only after that service and provider configuration is ready. Update Zoom's integration landing link to `https://auth.yap.enterprises/connect`.
+
+Keeping source configuration, DNS/TLS, deployed Worker configuration and Zoom's saved allowlists in sync is required. The health route does not prove this acceptance, and passing synthetic tests does not establish a live migration. Remove legacy hosts only after all supported releases and review installers have moved away from them. This domain change does not alter the token API contract or resolve Zoom's separate token-response review finding.
 
 ## Local checks
 

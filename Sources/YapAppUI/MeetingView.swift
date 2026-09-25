@@ -477,6 +477,10 @@ struct MeetingView: View {
             // Share content reaches the window edge. Meeting chrome floats
             // above it instead of reserving a second header and a share card.
             .padding(.bottom, compactHeight ? 76 : (meeting.pageCount > 1 ? 138 : 96))
+        } else if meeting.galleryReceivedShare != nil {
+            MeetingGalleryView(meeting: meeting) { participant in participantTileContent(participant) }
+                .id(meeting.sessionID)
+                .padding(6)
         } else if meeting.participants.isEmpty {
             VStack(spacing: 16) {
                 Image(systemName: "video").font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)

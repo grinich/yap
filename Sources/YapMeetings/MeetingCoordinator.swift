@@ -245,12 +245,22 @@ public final class MeetingCoordinator {
     public var selectedReceivedShare: ReceivedMeetingShare? {
         receivedShares.first { $0.id == selectedReceivedShareID }
     }
+    /// Viewing a share in the gallery is still receiving it. Only a source
+    /// change or the end of sharing should tear down Zoom's share stream.
+    public var activeReceivedShare: ReceivedMeetingShare? {
+        selectedReceivedShare ?? receivedShares.first(where: { $0.id == lastViewedReceivedShareID }) ?? receivedShares.first
+    }
+    public var galleryReceivedShare: ReceivedMeetingShare? {
+        guard layout == .gallery, selectedReceivedShare == nil,
+              pinnedParticipantID == nil, !isTakingGroupPhoto else { return nil }
+        return activeReceivedShare
+    }
     public var presentationParticipant: MeetingParticipant? {
         let identifier = pinnedParticipantID ?? (layout == .activeSpeaker ? activeSpeakerID : nil)
         return participants.first { $0.id == identifier && (!$0.isSelf || !hideSelfView) }
     }
     public var oneToOneParticipants: (local: MeetingParticipant, remote: MeetingParticipant)? {
-        guard selectedReceivedShareID == nil, participants.count == 2,
+        guard selectedReceivedShareID == nil, galleryReceivedShare == nil, participants.count == 2,
               let local = participants.first(where: \.isSelf),
               let remote = participants.first(where: { !$0.isSelf }),
               pinnedParticipantID != local.id else { return nil }
@@ -726,12 +736,19 @@ public final class MeetingCoordinator {
         await applyControl { driver, id in try await driver.admitParticipant(participantID, sessionID: id) }
     }
 
+    /// Focus a share, or return to the meeting layout without stopping its stream.
     public func selectReceivedShare(_ sourceID: String?) {
         guard sourceID == nil || (status == .inMeeting && receivedShares.contains { $0.id == sourceID }) else { return }
         selectedReceivedShareID = sourceID
         if let sourceID { lastViewedReceivedShareID = sourceID }
-        driver.setSelectedReceivedShare(sourceID)
+        updateReceivedShareSubscription()
         updateVisibleSubscriptions()
+    }
+
+    private func updateReceivedShareSubscription() {
+        let sourceID = activeReceivedShare?.id
+        if let sourceID { lastViewedReceivedShareID = sourceID }
+        driver.setSelectedReceivedShare(sourceID)
     }
 
     public func toggleSharedContent() {
@@ -745,7 +762,7 @@ public final class MeetingCoordinator {
     }
 
     public func nativeShareView(for sourceID: String) -> NSView? {
-        guard status == .inMeeting, sourceID == selectedReceivedShareID,
+        guard status == .inMeeting, sourceID == activeReceivedShare?.id,
               receivedShares.contains(where: { $0.id == sourceID }) else { return nil }
         return driver.nativeShareView(for: sourceID)
     }
@@ -969,8 +986,8 @@ public final class MeetingCoordinator {
             if selectedSourceDisappeared || (hadNoShares && !receivedShares.isEmpty) {
                 selectedReceivedShareID = receivedShares.first?.id
                 if let selectedReceivedShareID { lastViewedReceivedShareID = selectedReceivedShareID }
-                driver.setSelectedReceivedShare(selectedReceivedShareID)
             }
+            updateReceivedShareSubscription()
             updateVisibleSubscriptions()
         case .waitingRoomParticipants(let updated):
             var seen: Set<String> = []

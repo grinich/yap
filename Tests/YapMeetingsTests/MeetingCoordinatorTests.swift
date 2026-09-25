@@ -486,7 +486,7 @@ struct MeetingCoordinatorTests {
         #expect(coordinator.sessionID == nil)
     }
 
-    @Test func toolbarToggleReturnsToTheLastSharedScreenAndReleasesTheRenderer() async {
+    @Test func toolbarToggleReturnsToTheLastSharedScreenAndKeepsItsSubscription() async {
         let driver = MeetingExtrasDriver()
         let coordinator = MeetingCoordinator(driver: driver)
         coordinator.showNonVideoParticipants = true
@@ -498,7 +498,9 @@ struct MeetingCoordinatorTests {
         coordinator.selectReceivedShare(second.id)
         coordinator.toggleSharedContent()
         #expect(coordinator.selectedReceivedShare == nil)
-        #expect(driver.selectedShare == nil)
+        #expect(coordinator.activeReceivedShare == second)
+        #expect(coordinator.galleryReceivedShare == second)
+        #expect(driver.selectedShare == second.id)
         driver.onEvent?(id, .receivedShares([first, second]))
         #expect(coordinator.selectedReceivedShare == nil)
         coordinator.toggleSharedContent()
@@ -506,6 +508,9 @@ struct MeetingCoordinatorTests {
         #expect(driver.selectedShare == second.id)
         coordinator.toggleSharedContent()
         driver.onEvent?(id, .receivedShares([first]))
+        #expect(coordinator.selectedReceivedShare == nil)
+        #expect(coordinator.galleryReceivedShare == first)
+        #expect(driver.selectedShare == first.id)
         coordinator.toggleSharedContent()
         #expect(coordinator.selectedReceivedShare == first)
         driver.onEvent?(id, .receivedShares([]))
@@ -537,8 +542,12 @@ struct MeetingCoordinatorTests {
         coordinator.selectReceivedShare(nil)
         driver.onEvent?(id, .receivedShares([first, second]))
         #expect(coordinator.selectedReceivedShare == nil)
-        #expect(driver.selectedShare == nil)
+        #expect(coordinator.activeReceivedShare == first)
+        #expect(driver.selectedShare == first.id)
         driver.onEvent?(id, .receivedShares([]))
+        #expect(coordinator.activeReceivedShare == nil)
+        #expect(coordinator.galleryReceivedShare == nil)
+        #expect(driver.selectedShare == nil)
         driver.onEvent?(id, .receivedShares([second]))
         #expect(coordinator.selectedReceivedShare == second)
         await coordinator.leave()
@@ -546,6 +555,85 @@ struct MeetingCoordinatorTests {
         #expect(driver.selectedShare == nil)
         driver.onEvent?(id, .receivedShares([second]))
         #expect(coordinator.receivedShares.isEmpty)
+    }
+
+    @Test func galleryFocusPinAndPhotoTransitionsNeverUnsubscribeAnActiveShare() async throws {
+        let driver = MeetingExtrasDriver()
+        let coordinator = MeetingCoordinator(driver: driver)
+        await coordinator.host(displayName: "Test")
+        let id = try #require(coordinator.sessionID)
+        driver.onEvent?(id, .participants([
+            MeetingParticipant(id: "me", name: "Me", isSelf: true, isCameraEnabled: true),
+            MeetingParticipant(id: "presenter", name: "Presenter", isCameraEnabled: true)
+        ]))
+        #expect(coordinator.oneToOneParticipants != nil)
+        let share = ReceivedMeetingShare(id: "11", ownerID: "presenter", ownerName: "Presenter")
+        driver.onEvent?(id, .receivedShares([share]))
+        driver.shareSelections.removeAll()
+
+        coordinator.setLayout(.gallery)
+        #expect(coordinator.selectedReceivedShare == nil)
+        #expect(coordinator.activeReceivedShare == share)
+        #expect(coordinator.galleryReceivedShare == share)
+        #expect(coordinator.oneToOneParticipants == nil)
+        coordinator.toggleSharedContent()
+        #expect(coordinator.selectedReceivedShare == share)
+        #expect(coordinator.galleryReceivedShare == nil)
+        coordinator.setPinnedParticipant("presenter")
+        #expect(coordinator.selectedReceivedShare == nil)
+        #expect(coordinator.galleryReceivedShare == nil)
+        #expect(driver.selectedShare == share.id)
+
+        let renamed = ReceivedMeetingShare(id: share.id, ownerID: share.ownerID, ownerName: "New name")
+        driver.onEvent?(id, .receivedShares([renamed]))
+        #expect(coordinator.activeReceivedShare == renamed)
+        #expect(coordinator.selectedReceivedShare == nil)
+        coordinator.setPinnedParticipant(nil)
+        #expect(coordinator.galleryReceivedShare == renamed)
+        coordinator.setLayout(.activeSpeaker)
+        #expect(coordinator.galleryReceivedShare == nil)
+        #expect(driver.selectedShare == share.id)
+        coordinator.setLayout(.gallery)
+        try coordinator.beginGroupPhoto(sessionID: id)
+        #expect(coordinator.galleryReceivedShare == nil)
+        #expect(coordinator.activeReceivedShare == renamed)
+        coordinator.endGroupPhoto(sessionID: id)
+        #expect(coordinator.galleryReceivedShare == renamed)
+        #expect(driver.selectedShare == share.id)
+        #expect(driver.shareSelections.allSatisfy { $0 == share.id })
+
+        await coordinator.leave()
+        #expect(coordinator.activeReceivedShare == nil)
+        #expect(coordinator.galleryReceivedShare == nil)
+        #expect(driver.selectedShare == nil)
+    }
+
+    @Test func removingTheActiveShareSelectsAFallbackWithoutLeavingGallery() async throws {
+        let driver = MeetingExtrasDriver()
+        let coordinator = MeetingCoordinator(driver: driver)
+        await coordinator.host(displayName: "Test")
+        let id = try #require(coordinator.sessionID)
+        let first = ReceivedMeetingShare(id: "11", ownerID: "1", ownerName: "First")
+        let second = ReceivedMeetingShare(id: "22", ownerID: "2", ownerName: "Second")
+        driver.onEvent?(id, .receivedShares([first, second]))
+        coordinator.selectReceivedShare(second.id)
+        coordinator.setLayout(.gallery)
+        driver.shareSelections.removeAll()
+
+        driver.onEvent?(id, .receivedShares([first]))
+        #expect(coordinator.layout == .gallery)
+        #expect(coordinator.selectedReceivedShare == nil)
+        #expect(coordinator.activeReceivedShare == first)
+        #expect(coordinator.galleryReceivedShare == first)
+        #expect(driver.selectedShare == first.id)
+        #expect(driver.shareSelections == [first.id])
+
+        driver.onEvent?(id, .receivedShares([]))
+        #expect(coordinator.activeReceivedShare == nil)
+        #expect(coordinator.galleryReceivedShare == nil)
+        #expect(driver.selectedShare == nil)
+        #expect(driver.shareSelections == [first.id, nil])
+        await coordinator.leave()
     }
 
     @Test func admissionRequiresConfirmedHostAndRemainsPendingUntilCallback() async {
@@ -590,6 +678,7 @@ private final class MeetingExtrasDriver: MeetingDriver {
                                           canReceiveShare: true, canEnumerateShareTargets: true)
     var onEvent: (@MainActor (UUID, MeetingDriverEvent) -> Void)?
     var selectedShare: String?
+    var shareSelections: [String?] = []
     var admittedIDs: [String] = []
     var endDuringEnumeration = false
     func connect(_ request: MeetingRequest, sessionID: UUID) async throws { onEvent?(sessionID, .status(.inMeeting)) }
@@ -599,7 +688,10 @@ private final class MeetingExtrasDriver: MeetingDriver {
     func sendChat(text: String, sessionID: UUID) async throws { throw MeetingError.noMeeting }
     func startShare(_ target: ShareTarget, sessionID: UUID) async throws { throw MeetingError.noMeeting }
     func stopShare(sessionID: UUID) async throws { throw MeetingError.noMeeting }
-    func setSelectedReceivedShare(_ sourceID: String?) { selectedShare = sourceID }
+    func setSelectedReceivedShare(_ sourceID: String?) {
+        selectedShare = sourceID
+        shareSelections.append(sourceID)
+    }
     func admitParticipant(_ participantID: String, sessionID: UUID) async throws { admittedIDs.append(participantID) }
     func availableShareTargets(sessionID: UUID) async throws -> [ShareTarget] {
         if endDuringEnumeration { onEvent?(sessionID, .status(.idle)) }

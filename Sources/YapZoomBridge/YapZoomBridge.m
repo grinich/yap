@@ -9,9 +9,17 @@
 #import "WHPhotoShutterAudio.h"
 #import "WHZoomChatSupport.h"
 #import <AVFoundation/AVFoundation.h>
+#import <CoreAudio/CoreAudio.h>
 
 // Zoom owns one SDK per process, including pre-meeting camera settings.
 static __weak WHZoomSDKBridge *WHZoomNativeOwner;
+
+// Yap owns this menu identifier; it must never be passed to Zoom as hardware.
+static NSString * const WHSystemAudioDeviceID = @"yap.system-default";
+static NSString * const WHSystemAudioSelectionError = @"Zoom couldn’t follow your Mac’s audio device. Try choosing Same as System again.";
+static NSString *WHAudioDevicePreferenceKey(BOOL microphone) {
+    return microphone ? @"audio.microphoneDeviceID" : @"audio.speakerDeviceID";
+}
 
 // A fresh observer per authorization/test lets queued SDK callbacks retain
 // their original generation instead of acting on a later meeting or test.
@@ -99,6 +107,12 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 @property(nonatomic, copy) NSString *mediaMicrophoneTestDeviceID;
 @property(nonatomic, copy) NSString *mediaSpeakerTestDeviceID;
 @property(nonatomic, copy) NSString *mediaDevicesError;
+@property(nonatomic, strong) NSUserDefaults *mediaDevicePreferences;
+@property(nonatomic) BOOL mediaMicrophoneFollowsSystem;
+@property(nonatomic) BOOL mediaSpeakerFollowsSystem;
+@property(nonatomic, copy) AudioObjectPropertyListenerBlock systemAudioDeviceListener;
+@property(nonatomic) BOOL observesSystemMicrophone;
+@property(nonatomic) BOOL observesSystemSpeaker;
 @property(nonatomic) BOOL mediaMicrophoneStopFailed;
 @property(nonatomic) BOOL mediaSpeakerStopFailed;
 @property(nonatomic) BOOL mediaMicrophoneNeedsRecordingStop;
@@ -182,8 +196,13 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         _preferredCameraBackground = @"none";
         _microphoneMutedOnEntry = YES;
         _cameraImageAliases = [NSMutableDictionary dictionary];
+        _mediaDevicePreferences = NSUserDefaults.standardUserDefaults;
     }
     return self;
+}
+
+- (void)dealloc {
+    [self stopSystemAudioDeviceObservation];
 }
 
 - (void)setPreferredCameraBackground:(NSString *)background imagePath:(NSString *)path autoFraming:(BOOL)autoFraming {
@@ -213,6 +232,116 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     return nil;
 }
 
+- (NSArray *)audioDeviceItems:(NSArray *)devices microphone:(BOOL)microphone available:(BOOL)available {
+    if (!available) return @[];
+    BOOL followsSystem = microphone ? self.mediaMicrophoneFollowsSystem : self.mediaSpeakerFollowsSystem;
+    NSString *name = followsSystem ? [[self selectedMediaDevice:devices] getDeviceName] : nil;
+    NSMutableArray *items = [NSMutableArray arrayWithObject:@{
+        @"id":WHSystemAudioDeviceID,
+        @"name":name.length ? [NSString stringWithFormat:@"Same as System (%@)", name] : @"Same as System",
+        @"selected":[NSNumber numberWithBool:followsSystem]
+    }];
+    for (NSDictionary *device in [self mediaDeviceItems:devices]) {
+        NSMutableDictionary *item = [device mutableCopy];
+        if (followsSystem) item[@"selected"] = @NO;
+        [items addObject:item];
+    }
+    return items;
+}
+
+- (ZoomSDKError)selectSystemAudioDevice:(BOOL)microphone audio:(ZoomSDKAudioSetting *)audio {
+    if (![self mediaControlsReady]) return ZoomSDKError_WrongUsage;
+    if (!audio) return ZoomSDKError_ServiceFailed;
+    NSUUID *generation = self.mediaGeneration;
+    // This selects Zoom's following mode, not the current physical device ID.
+    ZoomSDKError result = [audio selectSameAudioDeviceAsSystem:microphone];
+    if (![self mediaControlsReady] || self.mediaGeneration != generation) return ZoomSDKError_WrongUsage;
+    if (result == ZoomSDKError_Success) {
+        if (microphone) self.mediaMicrophoneFollowsSystem = YES;
+        else self.mediaSpeakerFollowsSystem = YES;
+    }
+    return result;
+}
+
+- (void)stopSystemAudioDeviceObservation {
+    AudioObjectPropertyListenerBlock listener = self.systemAudioDeviceListener;
+    if (!listener) return;
+    AudioObjectPropertyAddress input = { kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    AudioObjectPropertyAddress output = { kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    if (self.observesSystemMicrophone)
+        AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &input, dispatch_get_main_queue(), listener);
+    if (self.observesSystemSpeaker)
+        AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &output, dispatch_get_main_queue(), listener);
+    self.systemAudioDeviceListener = nil;
+    self.observesSystemMicrophone = NO; self.observesSystemSpeaker = NO;
+}
+
+- (void)startSystemAudioDeviceObservation {
+    [self stopSystemAudioDeviceObservation];
+    NSUUID *generation = self.mediaGeneration;
+    __weak typeof(self) weakSelf = self;
+    AudioObjectPropertyListenerBlock listener = ^(UInt32 count, const AudioObjectPropertyAddress *addresses) {
+        typeof(self) self = weakSelf;
+        if (![self mediaControlsReady] || self.mediaGeneration != generation) return;
+        BOOL inputChanged = NO, outputChanged = NO;
+        for (UInt32 index = 0; index < count; index++) {
+            inputChanged |= addresses[index].mSelector == kAudioHardwarePropertyDefaultInputDevice;
+            outputChanged |= addresses[index].mSelector == kAudioHardwarePropertyDefaultOutputDevice;
+        }
+        BOOL refreshMicrophone = inputChanged && self.mediaMicrophoneFollowsSystem;
+        BOOL refreshSpeaker = outputChanged && self.mediaSpeakerFollowsSystem;
+        if (!refreshMicrophone && !refreshSpeaker) return;
+        ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
+        NSInteger result = ZoomSDKError_Success;
+        for (NSNumber *kind in @[@YES, @NO]) {
+            BOOL microphone = kind.boolValue;
+            if (microphone ? !refreshMicrophone : !refreshSpeaker) continue;
+            // A test records/plays on its old device, so stop it before switching.
+            NSInteger selected = [self stopMediaTestKind:microphone ? @"microphone" : @"speaker"];
+            if (![self mediaControlsReady] || self.mediaGeneration != generation) return;
+            if (selected == ZoomSDKError_Success) selected = [self selectSystemAudioDevice:microphone audio:audio];
+            if (![self mediaControlsReady] || self.mediaGeneration != generation) return;
+            if (selected != ZoomSDKError_Success) result = selected;
+        }
+        if (result != ZoomSDKError_Success) self.mediaDevicesError = WHSystemAudioSelectionError;
+        else if ([self.mediaDevicesError isEqualToString:WHSystemAudioSelectionError]) self.mediaDevicesError = nil;
+        [self emitMediaDevices];
+    };
+    self.systemAudioDeviceListener = listener;
+    AudioObjectPropertyAddress input = { kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    AudioObjectPropertyAddress output = { kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    self.observesSystemMicrophone = AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &input, dispatch_get_main_queue(), listener) == noErr;
+    self.observesSystemSpeaker = AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &output, dispatch_get_main_queue(), listener) == noErr;
+    if (!self.observesSystemMicrophone || !self.observesSystemSpeaker)
+        self.mediaDevicesError = @"Yap couldn’t watch for system audio changes. You can still choose a device from the Microphone or Speaker menu.";
+}
+
+- (void)restoreAudioDevicePreferences:(ZoomSDKAudioSetting *)audio {
+    self.mediaMicrophoneFollowsSystem = NO; self.mediaSpeakerFollowsSystem = NO;
+    if (!audio) return;
+    for (NSNumber *kind in @[@YES, @NO]) {
+        BOOL microphone = kind.boolValue;
+        NSString *identifier = [self.mediaDevicePreferences stringForKey:WHAudioDevicePreferenceKey(microphone)];
+        SDKDeviceInfo *preferred = nil;
+        for (SDKDeviceInfo *device in [audio getAudioDeviceList:microphone]) {
+            if (identifier.length && [[device getDeviceID] isEqualToString:identifier]) { preferred = device; break; }
+        }
+        ZoomSDKError result;
+        if (preferred && ![identifier isEqualToString:WHSystemAudioDeviceID]) {
+            result = [audio selectAudioDevice:microphone DeviceID:identifier DeviceName:[preferred getDeviceName] ?: @""];
+            if (result == ZoomSDKError_Success &&
+                ![[[self selectedMediaDevice:[audio getAudioDeviceList:microphone]] getDeviceID] isEqualToString:identifier])
+                result = ZoomSDKError_ServiceFailed;
+        } else {
+            // Fresh installs follow macOS. An unplugged preferred device also
+            // falls back to the system, without overwriting the saved choice.
+            result = [self selectSystemAudioDevice:microphone audio:audio];
+        }
+        if (result != ZoomSDKError_Success)
+            self.mediaDevicesError = @"Zoom couldn’t apply your audio device choice. Choose a device from the Microphone or Speaker menu.";
+    }
+}
+
 - (NSData *)meetingMediaSnapshot {
     NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
     BOOL ready = [self mediaControlsReady];
@@ -227,7 +356,8 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     float speakerVolume = hasSpeaker ? [audio getAudioDeviceVolume:NO] : NAN;
     NSDictionary *snapshot = @{
         @"isReady":[NSNumber numberWithBool:ready], @"isInMeeting":[NSNumber numberWithBool:ready && self.sessionID && self.hasEnteredMeeting],
-        @"microphones":[self mediaDeviceItems:microphones], @"speakers":[self mediaDeviceItems:speakers],
+        @"microphones":[self audioDeviceItems:microphones microphone:YES available:audio != nil],
+        @"speakers":[self audioDeviceItems:speakers microphone:NO available:audio != nil],
         @"cameras":[self mediaDeviceItems:[[settings getVideoSetting] getCameraList]],
         @"microphoneVolume":isfinite(micVolume) && micVolume >= 0 && micVolume <= 100 ? @(lroundf(micVolume)) : NSNull.null,
         @"speakerVolume":isfinite(speakerVolume) && speakerVolume >= 0 && speakerVolume <= 100 ? @(lroundf(speakerVolume)) : NSNull.null,
@@ -337,7 +467,10 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
         }];
     };
     self.mediaDeviceObserver = observer;
-    [[[[ZoomSDK sharedSDK] getSettingService] getAudioSetting] setDelegate:observer];
+    ZoomSDKAudioSetting *audio = [[[ZoomSDK sharedSDK] getSettingService] getAudioSetting];
+    if (audio) [self startSystemAudioDeviceObservation];
+    [self restoreAudioDevicePreferences:audio];
+    [audio setDelegate:observer];
     [self emitMediaDevices];
 }
 
@@ -354,11 +487,24 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     ZoomSDKSettingService *settings = [[ZoomSDK sharedSDK] getSettingService];
     ZoomSDKAudioSetting *audio = [settings getAudioSetting];
     ZoomSDKVideoSetting *video = [settings getVideoSetting];
+    if (!camera && [deviceID isEqualToString:WHSystemAudioDeviceID]) {
+        NSInteger stopped = [self stopMediaTestKind:kind];
+        if (stopped != ZoomSDKError_Success) return stopped;
+        ZoomSDKError result = [self selectSystemAudioDevice:microphone audio:audio];
+        if (result == ZoomSDKError_Success)
+            [self.mediaDevicePreferences setObject:WHSystemAudioDeviceID forKey:WHAudioDevicePreferenceKey(microphone)];
+        return [self mediaControlResult:result message:WHSystemAudioSelectionError];
+    }
     NSArray *devices = camera ? [video getCameraList] : [audio getAudioDeviceList:microphone];
     SDKDeviceInfo *selected = nil;
     for (SDKDeviceInfo *device in devices) if (deviceID.length && [[device getDeviceID] isEqualToString:deviceID]) { selected = device; break; }
     if (!selected) return ZoomSDKError_InvalidParameter;
-    if ([selected isSelectedDevice]) return ZoomSDKError_Success;
+    // Choosing the current physical device must still leave following mode.
+    BOOL followsSystem = microphone ? self.mediaMicrophoneFollowsSystem : self.mediaSpeakerFollowsSystem;
+    if ([selected isSelectedDevice] && (camera || !followsSystem)) {
+        if (!camera) [self.mediaDevicePreferences setObject:deviceID forKey:WHAudioDevicePreferenceKey(microphone)];
+        return ZoomSDKError_Success;
+    }
     BOOL resumeCamera = camera && self.sessionID && self.hasEnteredMeeting && [[[self.meeting getMeetingActionController] getMyself] isVideoOn];
     if (camera) {
         [self stopCameraEffectsPreview];
@@ -375,7 +521,16 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     ZoomSDKError result = camera ? [video selectCamera:deviceID] : [audio selectAudioDevice:microphone DeviceID:deviceID DeviceName:[selected getDeviceName] ?: @""];
     if (result == ZoomSDKError_Success) {
         NSArray *current = camera ? [video getCameraList] : [audio getAudioDeviceList:microphone];
-        if (![[[self selectedMediaDevice:current] getDeviceID] isEqualToString:deviceID]) result = ZoomSDKError_ServiceFailed;
+        if (![[[self selectedMediaDevice:current] getDeviceID] isEqualToString:deviceID]) {
+            result = ZoomSDKError_ServiceFailed;
+            // A failed pin must not silently cancel system following.
+            if (!camera && followsSystem) [self selectSystemAudioDevice:microphone audio:audio];
+        }
+    }
+    if (!camera && result == ZoomSDKError_Success) {
+        if (microphone) self.mediaMicrophoneFollowsSystem = NO;
+        else self.mediaSpeakerFollowsSystem = NO;
+        [self.mediaDevicePreferences setObject:deviceID forKey:WHAudioDevicePreferenceKey(microphone)];
     }
     if (camera && result == ZoomSDKError_Success) {
         result = (ZoomSDKError)(resumeCamera ? [self setCameraEnabled:YES] :
@@ -1373,6 +1528,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (void)resetNative {
+    [self stopSystemAudioDeviceObservation];
     [self stopMediaTests];
     if (self.initialized && WHZoomNativeOwner == self)
         [[[[ZoomSDK sharedSDK] getSettingService] getAudioSetting] setDelegate:nil];

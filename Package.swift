@@ -10,7 +10,7 @@ let meetingDependencies: [Target.Dependency] = hasZoomSDK ? ["YapCredentials", "
 let zoomTargets: [Target] = hasZoomSDK ? [
     .target(name: "YapZoomBridge", publicHeadersPath: "include",
         cSettings: [.unsafeFlags(["-fobjc-arc", "-F", zoomSDKPath])],
-        linkerSettings: [.linkedFramework("ZoomSDK"), .linkedFramework("AppKit"),
+        linkerSettings: [.linkedFramework("ZoomSDK"), .linkedFramework("AppKit"), .linkedFramework("CoreAudio"),
             .unsafeFlags(["-F", zoomSDKPath,
                 "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
                 "-Xlinker", "-rpath", "-Xlinker", zoomSDKPath])])

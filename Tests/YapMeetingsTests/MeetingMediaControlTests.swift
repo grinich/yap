@@ -48,6 +48,62 @@ struct MeetingMediaControlTests {
         #expect(active.mediaDevices.microphones.isEmpty)
     }
 
+    @Test func systemAudioChoiceUsesObservedReadbackAndKeepsChannelsIndependent() async {
+        let driver = MediaControlFixtureDriver()
+        driver.state.microphones.insert(.init(id: "yap.system-default", name: "Same as System (Fixture microphone)"), at: 0)
+        driver.state.speakers.insert(.init(id: "yap.system-default", name: "Same as System (Fixture speaker)"), at: 0)
+        let active = MeetingCoordinator(driver: driver)
+        await active.prepareMediaDevices()
+        let originalSpeakers = active.mediaDevices.speakers
+
+        // Selecting the observed system entry is allowed, but the UI waits for
+        // confirmed readback instead of claiming the physical route already changed.
+        await active.selectMediaDevice("yap.system-default", kind: .microphone)
+        #expect(driver.selectionRequests == ["yap.system-default"])
+        #expect(active.mediaDevices.microphones.first?.selected == false)
+        var changed = driver.state
+        changed.microphones = [.init(id: "yap.system-default", name: "Same as System (USB microphone)", selected: true),
+                               .init(id: "mic", name: "Fixture microphone"), .init(id: "usb", name: "USB microphone")]
+        driver.onMediaDevicesChanged?(changed)
+        #expect(active.mediaDevices.microphones.first?.name == "Same as System (USB microphone)")
+        #expect(active.mediaDevices.microphones.filter(\.selected).map(\.id) == ["yap.system-default"])
+        #expect(active.mediaDevices.speakers == originalSpeakers)
+    }
+
+    @Test func previewCanPinMicrophoneThenRestoreSystemWithoutChangingSpeakerOrCamera() async {
+        let driver = DemoMeetingDriver()
+        let active = MeetingCoordinator(driver: driver)
+        await active.prepareMediaDevices()
+        #expect(active.mediaDevices.microphones.filter(\.selected).map(\.id) == ["yap.system-default"])
+        #expect(active.mediaDevices.speakers.filter(\.selected).map(\.id) == ["yap.system-default"])
+        let originalSpeakers = active.mediaDevices.speakers
+        let originalCameras = active.mediaDevices.cameras
+
+        await active.selectMediaDevice("demo-usb-mic", kind: .microphone)
+        #expect(active.mediaDevices.microphones.filter(\.selected).map(\.id) == ["demo-usb-mic"])
+        #expect(active.mediaDevices.speakers == originalSpeakers)
+        await active.selectMediaDevice("yap.system-default", kind: .microphone)
+        #expect(active.mediaDevices.microphones.filter(\.selected).map(\.id) == ["yap.system-default"])
+        #expect(active.mediaDevices.microphones.first?.name == "Same as System (Built-in Microphone)")
+        #expect(active.mediaDevices.speakers == originalSpeakers)
+        #expect(active.mediaDevices.cameras == originalCameras)
+        #expect(active.mediaDevicesError == nil)
+    }
+
+    @Test func previewRetainsSystemChoiceAfterUsbDevicesDisconnect() async {
+        let driver = DemoMeetingDriver()
+        let active = MeetingCoordinator(driver: driver)
+        await active.prepareMediaDevices()
+        driver.simulateFixtureDeviceDisconnect()
+        #expect(active.mediaDevices.microphones.filter(\.selected).map(\.id) == ["yap.system-default"])
+        #expect(active.mediaDevices.speakers.filter(\.selected).map(\.id) == ["yap.system-default"])
+        #expect(!active.mediaDevices.microphones.contains { $0.id == "demo-usb-mic" })
+        #expect(!active.mediaDevices.speakers.contains { $0.id == "demo-headphones" })
+        await active.selectMediaDevice("demo-mic", kind: .microphone)
+        #expect(active.mediaDevices.microphones.filter(\.selected).map(\.id) == ["demo-mic"])
+        #expect(active.mediaDevices.speakers.filter(\.selected).map(\.id) == ["yap.system-default"])
+    }
+
     @Test func stoppingTestsRejectsLateCompletion() async throws {
         let driver = MediaControlFixtureDriver()
         let active = MeetingCoordinator(driver: driver)

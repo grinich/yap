@@ -48,7 +48,7 @@ native_flags=(
 )
 native_link_flags=(
     -Wl,-rpath,"$YAP_ZOOM_SDK_PATH"
-    -framework ZoomSDK -framework AppKit -framework AVFoundation
+    -framework ZoomSDK -framework AppKit -framework AVFoundation -framework CoreAudio
 )
 
 # Compile the shared bridge once for fixtures that exercise it. Header-only

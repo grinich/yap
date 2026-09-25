@@ -13,7 +13,7 @@ trap 'rm -rf "$YAP_CAMERA_TEST_WORK"' EXIT
 
 xcrun clang -fobjc-arc -fmodules -mmacosx-version-min=26.0 \
     -F "$YAP_CAMERA_TEST_SDK" -Wl,-rpath,"$YAP_CAMERA_TEST_SDK" \
-    -framework ZoomSDK -framework AppKit -framework AVFoundation \
+    -framework ZoomSDK -framework AppKit -framework AVFoundation -framework CoreAudio \
     -I "$YAP_ROOT/Sources/YapZoomBridge/include" -I "$YAP_ROOT/Sources/YapZoomBridge" \
     "$YAP_ROOT/Sources/YapZoomBridge/YapZoomBridge.m" \
     "$YAP_ROOT/Sources/YapZoomBridge/WHZoomRenderHost.m" \

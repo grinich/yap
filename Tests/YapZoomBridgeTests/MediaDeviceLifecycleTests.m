@@ -1,4 +1,5 @@
 #import "CameraEffectsFixture.h"
+#import <CoreAudio/CoreAudio.h>
 
 @interface WHZoomSDKBridge (MediaFixture)
 - (void)finishMediaMicrophoneRecording:(NSUUID *)token;
@@ -98,6 +99,9 @@
 @property(nonatomic) BOOL automatic, ignoreSelection, ignoreVolume, ignoreGain;
 @property(nonatomic) NSUInteger selections, volumeSets, gainSets;
 @property(nonatomic) ZoomSDKError volumeResult;
+@property(nonatomic) ZoomSDKError systemSelectionResult;
+@property(nonatomic, copy) NSString *systemMicrophoneID, *systemSpeakerID;
+@property(nonatomic) NSUInteger systemMicrophoneSelections, systemSpeakerSelections;
 @end
 @implementation MediaAudio
 - (NSArray *)getAudioDeviceList:(BOOL)microphone { return microphone ? self.microphones : self.speakers; }
@@ -112,6 +116,13 @@
 - (ZoomSDKError)selectAudioDevice:(BOOL)microphone DeviceID:(NSString *)identifier DeviceName:(NSString *)name {
     self.selections++;
     if (!self.ignoreSelection) for (CameraDevice *device in [self getAudioDeviceList:microphone]) device.selected = [device.identifier isEqualToString:identifier];
+    return ZoomSDKError_Success;
+}
+- (ZoomSDKError)selectSameAudioDeviceAsSystem:(BOOL)microphone {
+    if (microphone) self.systemMicrophoneSelections++; else self.systemSpeakerSelections++;
+    if (self.systemSelectionResult != 0) return self.systemSelectionResult;
+    NSString *identifier = microphone ? self.systemMicrophoneID : self.systemSpeakerID;
+    for (CameraDevice *device in [self getAudioDeviceList:microphone]) device.selected = [device.identifier isEqualToString:identifier];
     return ZoomSDKError_Success;
 }
 - (id)getSettingMicrophoneTestHelper { return self.microphone; }
@@ -183,6 +194,12 @@ static CameraDevice *Device(NSString *identifier, BOOL selected) {
     CameraDevice *device = [CameraDevice new]; device.identifier = identifier; device.selected = selected; return device;
 }
 
+static void SystemDeviceChanged(AudioObjectPropertyListenerBlock listener, BOOL microphone) {
+    AudioObjectPropertyAddress address = { microphone ? kAudioHardwarePropertyDefaultInputDevice : kAudioHardwarePropertyDefaultOutputDevice,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    listener(1, &address);
+}
+
 int main(void) {
     @autoreleasepool {
         MediaSettings *settings = [MediaSettings new];
@@ -193,6 +210,7 @@ int main(void) {
         audio.microphone.startupCallbacks = YES; audio.speaker.startupCallbacks = YES;
         audio.microphones = @[Device(@"mic-a", YES), Device(@"mic-b", NO), Device(@"", NO)];
         audio.speakers = @[Device(@"speaker-a", YES), Device(@"speaker-b", NO)];
+        audio.systemMicrophoneID = @"mic-a"; audio.systemSpeakerID = @"speaker-a";
         audio.micVolume = 0; audio.speakerVolume = 75;
         settings.video.cameras = @[Device(@"camera-a", YES), Device(@"camera-b", NO)];
         fixtureSDK = [CameraSDK new]; fixtureSDK.settings = settings; fixtureSDK.auth = [CameraAuth new];
@@ -203,6 +221,9 @@ int main(void) {
         Method authorization = class_getClassMethod(AVCaptureDevice.class, @selector(authorizationStatusForMediaType:));
         IMP originalAuthorization = method_setImplementation(authorization, (IMP)FixtureCameraAuthorization);
         MediaBridge *bridge = [MediaBridge new]; bridge.operations = [NSMutableArray array];
+        NSString *preferenceSuite = [@"app.yap.tests.audio." stringByAppendingString:NSUUID.UUID.UUIDString];
+        NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:preferenceSuite];
+        [bridge setValue:preferences forKey:@"mediaDevicePreferences"];
         CheckBooleanSnapshot(Snapshot(bridge));
         __block NSDictionary *lastSnapshot;
         __block NSUInteger snapshots = 0;
@@ -217,17 +238,68 @@ int main(void) {
         }] == 0, @"settings-only media acquires the inert SDK");
         [bridge onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
         Check([lastSnapshot[@"isReady"] boolValue] && ![lastSnapshot[@"isInMeeting"] boolValue] &&
-              [lastSnapshot[@"microphones"] count] == 2 && [lastSnapshot[@"microphoneVolume"] integerValue] == 0 &&
+              [lastSnapshot[@"microphones"] count] == 3 && [lastSnapshot[@"microphoneVolume"] integerValue] == 0 &&
               fixtureSDK.meeting.joins == 0 && action.commands == 0 && audio.microphone.recordings == 0 && audio.speaker.starts == 0,
               @"authorization publishes real SDK device choices and a valid zero gain without joining or testing media");
+        Check(audio.systemMicrophoneSelections == 1 && audio.systemSpeakerSelections == 1 &&
+              [lastSnapshot[@"microphones"][0][@"id"] isEqual:@"yap.system-default"] &&
+              [lastSnapshot[@"microphones"][0][@"selected"] boolValue] && ![lastSnapshot[@"microphones"][1][@"selected"] boolValue] &&
+              [lastSnapshot[@"speakers"][0][@"selected"] boolValue],
+              @"fresh audio settings follow macOS independently and expose exactly one selected menu choice per channel");
+        AudioObjectPropertyListenerBlock systemListener = [bridge valueForKey:@"systemAudioDeviceListener"];
+        Check(systemListener != nil && [[bridge valueForKey:@"observesSystemMicrophone"] boolValue] &&
+              [[bridge valueForKey:@"observesSystemSpeaker"] boolValue], @"both macOS default device listeners are installed");
         Check([bridge selectMediaDevice:@"missing" kind:@"microphone"] != 0 && audio.selections == 0,
               @"unknown device identifiers never reach SDK selection");
+        audio.ignoreSelection = YES;
+        Check([bridge selectMediaDevice:@"mic-b" kind:@"microphone"] != 0 && audio.microphones[0].selected &&
+              [Snapshot(bridge)[@"microphones"][0][@"selected"] boolValue] &&
+              [preferences stringForKey:@"audio.microphoneDeviceID"] == nil,
+              @"an unconfirmed hardware selection cannot silently disable or overwrite system following");
+        audio.ignoreSelection = NO;
         Check([bridge selectMediaDevice:@"mic-b" kind:@"microphone"] == 0 && audio.microphones[1].selected,
               @"device selection resolves identifiers and verifies the SDK selected-device getter");
         audio.ignoreSelection = YES;
         Check([bridge selectMediaDevice:@"mic-a" kind:@"microphone"] != 0 && audio.microphones[1].selected,
               @"setter success with stale device readback does not claim selection succeeded");
         audio.ignoreSelection = NO;
+        [bridge setValue:@"audio-switch-fixture" forKey:@"sessionID"]; [bridge setValue:@YES forKey:@"hasEnteredMeeting"];
+        NSUInteger systemMicrophoneSelections = audio.systemMicrophoneSelections;
+        SystemDeviceChanged(systemListener, YES);
+        Check(audio.microphones[1].selected && audio.systemMicrophoneSelections == systemMicrophoneSelections &&
+              [preferences stringForKey:@"audio.microphoneDeviceID"] != nil,
+              @"an explicit microphone stays pinned through macOS input changes during a call");
+        audio.systemSpeakerID = @"speaker-b";
+        SystemDeviceChanged(systemListener, NO);
+        Check(audio.speakers[1].selected && audio.systemSpeakerSelections == 2 && audio.microphones[1].selected &&
+              [Snapshot(bridge)[@"speakers"][0][@"selected"] boolValue] && action.commands == 0,
+              @"a macOS output change switches the running SDK without rejoining, unmuting, or changing the pinned microphone");
+        Check([bridge selectMediaDevice:@"yap.system-default" kind:@"microphone"] == 0 && audio.microphones[0].selected &&
+              [[preferences stringForKey:@"audio.microphoneDeviceID"] isEqual:@"yap.system-default"],
+              @"Same as System restores input following and persists that preference");
+        audio.systemMicrophoneID = @"mic-b";
+        SystemDeviceChanged(systemListener, YES);
+        Check(audio.microphones[1].selected && audio.systemMicrophoneSelections == systemMicrophoneSelections + 2 &&
+              [Snapshot(bridge)[@"microphones"][0][@"selected"] boolValue] && action.commands == 0,
+              @"a macOS input change reaches the running SDK while preserving the muted call state");
+        NSUInteger pinnedSelections = audio.selections;
+        Check([bridge selectMediaDevice:@"mic-b" kind:@"microphone"] == 0 && audio.selections == pinnedSelections + 1 &&
+              ![Snapshot(bridge)[@"microphones"][0][@"selected"] boolValue],
+              @"pinning the currently active physical device exits following mode instead of taking the old no-op path");
+        [preferences removeObjectForKey:@"audio.microphoneDeviceID"];
+        Check([bridge selectMediaDevice:@"mic-b" kind:@"microphone"] == 0 &&
+              [[preferences stringForKey:@"audio.microphoneDeviceID"] isEqual:@"mic-b"],
+              @"an already-selected physical device still persists the explicit user choice");
+        audio.systemMicrophoneID = @"mic-a";
+        SystemDeviceChanged(systemListener, YES);
+        Check(audio.microphones[1].selected, @"later system changes cannot override the pinned current microphone");
+        audio.systemSelectionResult = ZoomSDKError_ServiceFailed;
+        Check([bridge selectMediaDevice:@"yap.system-default" kind:@"microphone"] != 0 &&
+              ![Snapshot(bridge)[@"microphones"][0][@"selected"] boolValue] &&
+              [[preferences stringForKey:@"audio.microphoneDeviceID"] isEqual:@"mic-b"],
+              @"a failed default-device selection does not claim following mode or overwrite the saved hardware choice");
+        audio.systemSelectionResult = ZoomSDKError_Success;
+        [bridge setValue:nil forKey:@"sessionID"]; [bridge setValue:@NO forKey:@"hasEnteredMeeting"];
         Check([bridge setMediaVolume:-1 kind:@"speaker"] != 0 && [bridge setMediaVolume:101 kind:@"speaker"] != 0 && audio.volumeSets == 0,
               @"volume range validation prevents out-of-range SDK writes");
         Check([bridge setMicrophoneAutoGain:YES] == 0 && ![Snapshot(bridge)[@"canSetMicrophoneVolume"] boolValue] &&
@@ -405,20 +477,69 @@ int main(void) {
         Check(![lastSnapshot[@"isReady"] boolValue] && [lastSnapshot[@"microphones"] count] == 0 && audio.microphone.status == testMic_Normal,
               @"settings close stops recording and publishes an unavailable empty device snapshot");
         NSUInteger snapshotsAfterClose = snapshots, playsAfterClose = audio.microphone.plays;
+        NSUInteger selectionsAfterClose = audio.systemSpeakerSelections;
+        Check([bridge valueForKey:@"systemAudioDeviceListener"] == nil && ![[bridge valueForKey:@"observesSystemSpeaker"] boolValue],
+              @"teardown removes macOS audio listeners before releasing the SDK");
+        SystemDeviceChanged(systemListener, NO);
+        Check(audio.systemSpeakerSelections == selectionsAfterClose && snapshots == snapshotsAfterClose,
+              @"a queued macOS callback cannot use a closed SDK");
         [oldTestObserver onMicTestStatusChanged:testMic_RecrodingStopped];
         [oldDeviceObserver onSelectedMicDeviceChanged];
         Check(snapshots == snapshotsAfterClose && audio.microphone.plays == playsAfterClose && [bridge setHandRaised:YES] != 0,
               @"callbacks retained by a closed SDK cannot publish stale devices, replay recordings, or raise a hand");
+        audio.microphones[0].selected = YES; audio.microphones[1].selected = NO;
         Check([bridge prepareCameraEffectsWithJWT:@"inert-media-reauth" completion:^(NSInteger result, NSString *message) {
             Check(result == 0, @"a new settings generation authorizes independently");
         }] == 0, @"media settings can reopen after cleanup");
         [bridge onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
+        Check(audio.microphones[1].selected && ![Snapshot(bridge)[@"microphones"][0][@"selected"] boolValue] &&
+              [Snapshot(bridge)[@"speakers"][0][@"selected"] boolValue],
+              @"a recreated SDK restores the fixed input preference and default output independently");
         NSUInteger snapshotsAfterReopen = snapshots;
+        selectionsAfterClose = audio.systemSpeakerSelections;
+        SystemDeviceChanged(systemListener, NO);
+        Check(audio.systemSpeakerSelections == selectionsAfterClose && snapshots == snapshotsAfterReopen,
+              @"a callback from the previous authorization cannot change devices in the new SDK generation");
         [oldTestObserver onMicTestStatusChanged:testMic_RecrodingStopped];
         [oldDeviceObserver onSelectedMicDeviceChanged];
         Check(snapshots == snapshotsAfterReopen && audio.microphone.plays == playsAfterClose,
               @"old SDK observer generations remain inert even after the same bridge becomes ready again");
         [bridge closeCameraEffects];
+
+        audio.microphones = @[Device(@"mic-a", YES)];
+        Check([bridge prepareCameraEffectsWithJWT:@"inert-unplugged-media-auth" completion:^(NSInteger result, NSString *message) {
+            Check(result == 0, @"unplugged-device fixture authorizes");
+        }] == 0, @"settings can reopen after the preferred microphone is unplugged");
+        [bridge onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
+        Check([Snapshot(bridge)[@"microphones"][0][@"selected"] boolValue] &&
+              [[preferences stringForKey:@"audio.microphoneDeviceID"] isEqual:@"mic-b"],
+              @"an unavailable preferred microphone falls back to macOS without erasing the saved preference");
+        AudioObjectPropertyListenerBlock currentSystemListener = [bridge valueForKey:@"systemAudioDeviceListener"];
+        audio.systemSelectionResult = ZoomSDKError_ServiceFailed;
+        SystemDeviceChanged(currentSystemListener, NO);
+        Check(bridge.mediaDevicesError.length > 0, @"an asynchronous default-device failure is visible in the audio menu");
+        audio.systemSelectionResult = ZoomSDKError_Success;
+        SystemDeviceChanged(currentSystemListener, NO);
+        Check(bridge.mediaDevicesError == nil, @"a later successful system device update clears its previous failure");
+        Check([bridge setMediaTest:@"microphone" running:YES] == 0, @"system-switch cancellation fixture starts a local test");
+        audio.microphone.onRecordingStop = ^{ [weakBridge closeCameraEffects]; };
+        systemMicrophoneSelections = audio.systemMicrophoneSelections;
+        SystemDeviceChanged(currentSystemListener, YES);
+        Check(![Snapshot(bridge)[@"isReady"] boolValue] && audio.systemMicrophoneSelections == systemMicrophoneSelections,
+              @"teardown reentered while stopping a test prevents the subsequent default-device SDK call");
+        audio.microphone.onRecordingStop = nil;
+        Check([bridge prepareCameraEffectsWithJWT:@"inert-manual-switch-auth" completion:^(NSInteger result, NSString *message) {
+            Check(result == 0, @"manual-switch shutdown fixture authorizes");
+        }] == 0, @"settings reopen for a manual-switch shutdown test");
+        [bridge onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
+        Check([bridge setMediaTest:@"microphone" running:YES] == 0, @"manual-switch shutdown fixture starts a local test");
+        audio.microphone.onRecordingStop = ^{ [weakBridge closeCameraEffects]; };
+        systemMicrophoneSelections = audio.systemMicrophoneSelections;
+        Check([bridge selectMediaDevice:@"yap.system-default" kind:@"microphone"] != 0 &&
+              audio.systemMicrophoneSelections == systemMicrophoneSelections && ![Snapshot(bridge)[@"isReady"] boolValue],
+              @"manual system selection also avoids a closed SDK when stopping a test reenters teardown");
+        audio.microphone.onRecordingStop = nil;
+        [preferences removePersistentDomainForName:preferenceSuite];
         method_setImplementation(authorization, originalAuthorization); method_setImplementation(shared, originalShared);
         puts("PASS: inert media devices, local audio test lifecycle, camera-switch effect gate, and raise-hand readback");
     }

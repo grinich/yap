@@ -9,6 +9,7 @@ const HANDOFF_GRANT = "urn:yap:params:oauth:grant-type:handoff";
 function environment(): Env {
   return {ZOOM_PUBLIC_CLIENT_ID: "legacy-public", ZOOM_OAUTH_CLIENT_ID: "production-client", ZOOM_SDK_CLIENT_ID: "production-client",
     ZOOM_OAUTH_REDIRECT_URI: "https://auth.example.test/oauth/zoom/callback", ZOOM_SDK_CLIENT_SECRET: "fixture-secret",
+    ZOOM_OAUTH_LEGACY_REDIRECT_URIS: "[]",
     SIGNING_GRANT_SECRET: "independent-fixture-key-with-at-least-43-characters",
     REQUEST_LIMITER: {limit: async () => ({success: true})}, SIGNATURE_LIMITER: {limit: async () => ({success: true})}};
 }

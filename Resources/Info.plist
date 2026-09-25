@@ -21,7 +21,7 @@
     <key>NSHumanReadableCopyright</key><string>© 2026 Michael Grinich</string>
     <key>YapZoomOAuthClientID</key><string>UHoml3aIQpy86gZeijjfpQ</string>
     <key>YapZoomSDKClientID</key><string>UHoml3aIQpy86gZeijjfpQ</string>
-    <key>YapZoomSDKSignerURL</key><string>https://meeting-auth.mgrinich.workers.dev/v1/meeting-sdk/signature</string>
+    <key>YapZoomSDKSignerURL</key><string>https://auth.yap.enterprises/v1/meeting-sdk/signature</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

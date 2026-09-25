@@ -7,12 +7,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
-  "routes": [],
+  "routes": [{"pattern": "auth.yap.enterprises", "custom_domain": true}],
   "secrets": {"required": ["ZOOM_SDK_CLIENT_SECRET", "SIGNING_GRANT_SECRET"]},
   "vars": {
     "ZOOM_PUBLIC_CLIENT_ID": "_Xz_EnBNS3OPtUmqZ1og3A",
     "ZOOM_OAUTH_CLIENT_ID": "UHoml3aIQpy86gZeijjfpQ",
-    "ZOOM_OAUTH_REDIRECT_URI": "https://meeting-auth.mgrinich.workers.dev/oauth/zoom/callback",
+    "ZOOM_OAUTH_REDIRECT_URI": "https://auth.yap.enterprises/oauth/zoom/callback",
+    "ZOOM_OAUTH_LEGACY_REDIRECT_URIS": "[\"https://meeting-auth.mgrinich.workers.dev/oauth/zoom/callback\"]",
     "ZOOM_SDK_CLIENT_ID": "UHoml3aIQpy86gZeijjfpQ"
   },
   "ratelimits": [
@@ -31,12 +32,13 @@
       "name": "meeting-auth-development",
       "workers_dev": true,
       "preview_urls": false,
-      "routes": [],
+      "routes": [{"pattern": "auth-dev.yap.enterprises", "custom_domain": true}],
       "secrets": {"required": ["ZOOM_SDK_CLIENT_SECRET", "SIGNING_GRANT_SECRET"]},
       "vars": {
         "ZOOM_PUBLIC_CLIENT_ID": "l_yJBHqMTnOAnq2TdzeceQ",
         "ZOOM_OAUTH_CLIENT_ID": "ZA20iVuUSmSKMGVmx7tDyA",
-        "ZOOM_OAUTH_REDIRECT_URI": "https://meeting-auth-development.mgrinich.workers.dev/oauth/zoom/callback",
+        "ZOOM_OAUTH_REDIRECT_URI": "https://auth-dev.yap.enterprises/oauth/zoom/callback",
+        "ZOOM_OAUTH_LEGACY_REDIRECT_URIS": "[\"https://meeting-auth-development.mgrinich.workers.dev/oauth/zoom/callback\"]",
         "ZOOM_SDK_CLIENT_ID": "ZA20iVuUSmSKMGVmx7tDyA"
       },
       "ratelimits": [

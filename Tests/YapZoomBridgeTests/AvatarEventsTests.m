@@ -18,6 +18,9 @@
 - (NSString *)getAvatarPath { return self.path; }
 - (BOOL)isMySelf { return YES; }
 - (BOOL)isHost { return YES; }
+- (UserRole)getUserRole { return UserRole_Host; }
+- (BOOL)isRaisingHand { return NO; }
+- (BOOL)isH323User { return NO; }
 - (BOOL)isVideoOn { return NO; }
 - (BOOL)isTalking { return NO; }
 - (ZoomSDKAudioStatus)getAudioStatus { return ZoomSDKAudioStatus_Muted; }
@@ -33,6 +36,9 @@
 @implementation AvatarAction
 - (NSArray *)getParticipantsList { return self.identifiers; }
 - (id)getUserByUserID:(unsigned int)identifier { return identifier == 7 ? self.user : nil; }
+- (id)getMyself { return self.user; }
+// Roster refresh also reads chat policy; this avatar fixture has no chat state.
+- (ZoomSDKChatStatus *)getChatStatus { return nil; }
 - (BOOL)isParticipantProfilePicturesHidden { return self.hidden; }
 - (ZoomSDKError)requestAvatarForUser:(unsigned int)identifier {
     self.requests += 1;
@@ -47,6 +53,8 @@
 @end
 @implementation AvatarMeeting
 - (id)getMeetingActionController { return self.action; }
+- (ZoomSDKMeetingChatController *)getMeetingChatController { return nil; }
+- (ZoomSDKWaitingRoomController *)getWaitingRoomController { return nil; }
 @end
 
 static void Check(BOOL condition, NSString *message) {

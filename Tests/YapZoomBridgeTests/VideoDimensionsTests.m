@@ -16,6 +16,8 @@
 - (NSString *)getUserName { return @"Phone fixture"; }
 - (BOOL)isMySelf { return NO; }
 - (BOOL)isHost { return NO; }
+- (BOOL)isRaisingHand { return NO; }
+- (BOOL)isH323User { return NO; }
 - (BOOL)isVideoOn { return self.cameraOn; }
 - (BOOL)isTalking { return NO; }
 - (ZoomSDKAudioStatus)getAudioStatus { return ZoomSDKAudioStatus_Muted; }
@@ -29,6 +31,10 @@
 - (NSArray *)getParticipantsList { return self.identifiers; }
 - (id)getUserByUserID:(unsigned int)identifier { return identifier == 7 ? self.user : nil; }
 - (BOOL)isParticipantProfilePicturesHidden { return YES; }
+// The fixture contains a remote camera only; no local identity or chat policy
+// is available. Roster refresh must still reach the video-size assertions.
+- (ZoomSDKUserInfo *)getMyself { return nil; }
+- (ZoomSDKChatStatus *)getChatStatus { return nil; }
 @end
 
 @interface DimensionsMeeting : NSObject
@@ -37,6 +43,8 @@
 @end
 @implementation DimensionsMeeting
 - (id)getMeetingActionController { return self.action; }
+- (ZoomSDKMeetingChatController *)getMeetingChatController { return nil; }
+- (ZoomSDKWaitingRoomController *)getWaitingRoomController { return nil; }
 - (CGSize)getUserVideoSize:(unsigned int)identifier { return self.videoSize; }
 @end
 

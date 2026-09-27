@@ -5,7 +5,10 @@ import {handleRequest} from "../src/index.ts";
 
 const ORIGIN = "https://auth.example.test";
 const NOW = 1_800_000_000;
-const OAUTH_VERIFIER = "v".repeat(43);
+// RFC 7636 Appendix B: an independent S256 vector, not a password-storage hash.
+// https://www.rfc-editor.org/rfc/rfc7636#appendix-B
+const OAUTH_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const OAUTH_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 const HANDOFF_VERIFIER = "h".repeat(43);
 const STATE = "n".repeat(43);
 const CODE = "authorization-code-for-native-only";
@@ -29,7 +32,7 @@ async function local(request: Request, env = environment(), now = NOW): Promise<
 }
 async function start(changes: Record<string, unknown> = {}): Promise<URL> {
   const response = await local(post("/v1/oauth/session", {client_id: environment().ZOOM_PUBLIC_CLIENT_ID,
-    code_challenge: hash(OAUTH_VERIFIER), code_challenge_method: "S256", handoff_challenge: hash(HANDOFF_VERIFIER), state: STATE, ...changes}));
+    code_challenge: OAUTH_CHALLENGE, code_challenge_method: "S256", handoff_challenge: hash(HANDOFF_VERIFIER), state: STATE, ...changes}));
   assert.equal(response.status, 200);
   const body = await response.json() as {authorize_url: string; expires_in: number};
   assert.equal(body.expires_in, 180);
@@ -103,7 +106,7 @@ test("the authorization URL pins the public app, S256 proof and callback without
   assert.equal(authorize.pathname, "/oauth/authorize");
   assert.deepEqual([...authorize.searchParams.keys()].sort(), ["client_id", "code_challenge", "code_challenge_method", "redirect_uri", "response_type", "state"]);
   assert.equal(authorize.searchParams.get("client_id"), environment().ZOOM_PUBLIC_CLIENT_ID);
-  assert.equal(authorize.searchParams.get("code_challenge"), hash(OAUTH_VERIFIER));
+  assert.equal(authorize.searchParams.get("code_challenge"), OAUTH_CHALLENGE);
   assert.equal(authorize.searchParams.get("code_challenge_method"), "S256");
   assert.equal(authorize.searchParams.get("redirect_uri"), environment().ZOOM_OAUTH_REDIRECT_URI);
   assert.equal(authorize.searchParams.get("response_type"), "code");

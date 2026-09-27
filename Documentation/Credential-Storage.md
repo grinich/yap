@@ -6,9 +6,13 @@ Yap reads and writes only its consolidated Keychain item, `app.yap.credentials` 
 
 Packaged builds get the Google desktop client ID and secret from their signed bundle. These public desktop-client credentials identify Yap; user access and refresh tokens stay in Keychain. There is no credential import step in packaged builds. See [Google Calendar](GoogleCalendar.md).
 
-The app no longer imports or deletes credentials from older app names or separate pre-consolidation Keychain items. This removes legacy access prompts and cleanup errors. An installation that only has old credentials must sign in again. Existing records already in Yap's consolidated vault remain usable. Keychain protection, signing requirements, and normal macOS prompts remain in effect.
+The app no longer imports or deletes credentials from older app names or separate pre-consolidation Keychain items. This removes legacy access prompts and cleanup errors. An installation that only has old credentials must sign in again. Existing records already in Yap's consolidated vault remain usable subject to the Zoom authorization upgrade below. Keychain protection, signing requirements, and normal macOS prompts remain in effect.
 
 Tests cover cached reads, absence of legacy reads/deletions, failed reads and writes, atomic disconnect, preservation of the other account, concurrent saves, and rejection of malformed active vault data.
+
+**Zoom 0.1.8 authorization upgrade:** packaged Yap exchanges and refreshes public-client PKCE tokens directly with Zoom. Original user access/refresh tokens are intentionally held by the native client and saved in the existing consolidated Keychain vault; the branded HTTPS service relays only a short-lived authorization code. No OAuth/SDK client secret or remote signing grant is needed by the packaged native flow. This is Zoom's supported native public-client model, not a claim that tokens are inaccessible to the user controlling the Mac. [Zoom native PKCE](https://developers.zoom.us/docs/meeting-sdk/macos/start-join-mtg-webinar/pkce/), [public SDK authentication](https://developers.zoom.us/blog/public-pkce/).
+
+Earlier managed Zoom records require a fresh sign-in, even when they are already in the current vault. The app checks both the configured public client ID and the `nativePKCEv1` provenance marker. It does not reuse or refresh confidential-client or earlier proxy-issued credentials through the new flow. The old record is replaced only after the new exchange, ZAK validation, and Keychain save succeed, or removed on disconnect; an unsuccessful new attempt does not claim a connected state. Google records and explicit personal developer configuration are separate and remain unchanged. This upgrade changes which Zoom authorization records are accepted, not Keychain permissions, signing requirements, or macOS security prompts. See [Zoom setup](Zoom-Setup.md).
 
 ## Historical migration and signing evidence
 

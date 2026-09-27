@@ -33,23 +33,42 @@ public struct ZoomOAuthTokens: Codable, Sendable, CustomStringConvertible, Custo
     public let accessToken: String
     public let refreshToken: String
     public let expiresAt: Date
-    /// Service-issued authorization bound to this exact access token. Not an SDK secret.
+    /// Legacy service-issued grant, decoded only so older connections can migrate safely.
     public let signingAuthorization: String?
+    /// Missing on old confidential/proxied connections, which require a new native sign-in.
+    public let authorizationMethod: String?
 
     public init(clientID: String, accessToken: String, refreshToken: String, expiresAt: Date,
-                signingAuthorization: String? = nil) {
+                signingAuthorization: String? = nil, authorizationMethod: String? = nil) {
         self.clientID = clientID
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.signingAuthorization = signingAuthorization
+        self.authorizationMethod = authorizationMethod
     }
     public var description: String { "ZoomOAuthTokens(redacted)" }
+    public var debugDescription: String { description }
+
+    static func validToken(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.count <= 16_384 &&
+            value.unicodeScalars.allSatisfy { $0.value >= 0x21 && $0.value <= 0x7e }
+    }
+}
+
+public enum ZoomSDKAuthorization: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
+    case publicClientID(String)
+    /// Only used by an explicit private developer configuration.
+    case jwt(String)
+
+    var publicAppKey: String? { if case .publicClientID(let value) = self { value } else { nil } }
+    var jwt: String? { if case .jwt(let value) = self { value } else { nil } }
+    public var description: String { "ZoomSDKAuthorization(redacted)" }
     public var debugDescription: String { description }
 }
 
 public struct ZoomMeetingCredentials: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
-    public let sdkJWT: String
+    public let sdkAuthorization: ZoomSDKAuthorization
     public let zak: String
     public let zakExpiresAt: Date
     public var description: String { "ZoomMeetingCredentials(redacted)" }

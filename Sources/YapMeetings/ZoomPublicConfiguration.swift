@@ -1,56 +1,52 @@
 import Foundation
 
-/// Public identifiers and the trusted service URL, safe to include in a signed app.
-/// SDK secrets and signing-service credentials are never part of this configuration.
+/// Native public-client configuration, safe to include in a signed app.
+/// The same public client ID authorizes OAuth and ZoomSDKAuthContext.publicAppKey.
 public struct ZoomPublicConfiguration: Sendable, Equatable {
     public let oauthPublicClientID: String
-    public let sdkClientID: String
-    public let sdkSignerURL: URL
+    public let oauthRedirectURL: URL
 
-    public init(oauthPublicClientID: String, sdkClientID: String, sdkSignerURL: URL) {
+    public init(oauthPublicClientID: String, oauthRedirectURL: URL) {
         self.oauthPublicClientID = oauthPublicClientID.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.sdkClientID = sdkClientID.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.sdkSignerURL = sdkSignerURL
+        self.oauthRedirectURL = oauthRedirectURL
     }
 
     public var isValid: Bool {
-        [oauthPublicClientID, sdkClientID].allSatisfy {
+        [oauthPublicClientID].allSatisfy {
             !$0.isEmpty && $0.count <= 1_024 && !$0.contains(where: \.isWhitespace)
-        } && sdkSignerURL.scheme?.lowercased() == "https"
-            && !(sdkSignerURL.host?.isEmpty ?? true)
-            && sdkSignerURL.user == nil && sdkSignerURL.password == nil
-            && (sdkSignerURL.port == nil || sdkSignerURL.port == 443)
-            && sdkSignerURL.query == nil && sdkSignerURL.fragment == nil
-            && sdkSignerURL.path == "/v1/meeting-sdk/signature"
+        } && oauthRedirectURL.scheme == "https"
+            && !(oauthRedirectURL.host?.isEmpty ?? true)
+            && oauthRedirectURL.user == nil && oauthRedirectURL.password == nil
+            && oauthRedirectURL.port == nil
+            && oauthRedirectURL.query == nil && oauthRedirectURL.fragment == nil
+            && oauthRedirectURL.path == "/oauth/zoom/callback"
     }
 
-    /// Both endpoints belong to the same origin fixed by the signed bundle.
+    /// OAuth tokens travel only between the native app and Zoom.
     public var oauthTokenURL: URL {
-        var components = URLComponents(url: sdkSignerURL, resolvingAgainstBaseURL: false)!
-        components.path = "/v1/oauth/token"
-        return components.url!
+        URL(string: "https://zoom.us/oauth/token")!
     }
 
     public var oauthSessionURL: URL {
-        var components = URLComponents(url: sdkSignerURL, resolvingAgainstBaseURL: false)!
+        var components = URLComponents(url: oauthRedirectURL, resolvingAgainstBaseURL: false)!
         components.path = "/v1/oauth/session"
         return components.url!
     }
 
-    public var oauthRedirectURL: URL {
-        var components = URLComponents(url: sdkSignerURL, resolvingAgainstBaseURL: false)!
-        components.path = "/oauth/zoom/callback"
+    public var oauthHandoffURL: URL {
+        var components = URLComponents(url: oauthRedirectURL, resolvingAgainstBaseURL: false)!
+        components.path = "/v1/oauth/handoff"
         return components.url!
     }
 
     public static func load(info: [String: Any]) throws -> Self? {
-        let keys = ["YapZoomOAuthClientID", "YapZoomSDKClientID", "YapZoomSDKSignerURL"]
+        let keys = ["YapZoomOAuthClientID", "YapZoomOAuthRedirectURL"]
         guard keys.contains(where: { info[$0] != nil }) else { return nil }
-        guard let oauth = info[keys[0]] as? String, let sdk = info[keys[1]] as? String,
-              let rawURL = info[keys[2]] as? String, let url = URL(string: rawURL) else {
+        guard let oauth = info[keys[0]] as? String,
+              let rawURL = info[keys[1]] as? String, let url = URL(string: rawURL) else {
             throw ZoomAccountError.invalidPublicConfiguration
         }
-        let configuration = Self(oauthPublicClientID: oauth, sdkClientID: sdk, sdkSignerURL: url)
+        let configuration = Self(oauthPublicClientID: oauth, oauthRedirectURL: url)
         guard configuration.isValid else { throw ZoomAccountError.invalidPublicConfiguration }
         return configuration
     }

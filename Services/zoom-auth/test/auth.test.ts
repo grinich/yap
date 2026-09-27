@@ -1,218 +1,175 @@
 import assert from "node:assert/strict";
-import {test} from "node:test";
+import {createHash} from "node:crypto";
+import test from "node:test";
 import {handleRequest} from "../src/index.ts";
 
+const ORIGIN = "https://auth.example.test";
 const NOW = 1_800_000_000;
-const SCOPES = "user:read:zak meeting:write:meeting cloud_recording:read:list_user_recordings";
+const hash = (value: string) => createHash("sha256").update(value).digest("base64url");
 function environment(): Env {
   return {
-    ZOOM_PUBLIC_CLIENT_ID: "test-public-client", ZOOM_SDK_CLIENT_ID: "test-sdk-client",
-    ZOOM_OAUTH_CLIENT_ID: "test-sdk-client", ZOOM_OAUTH_REDIRECT_URI: "https://auth.example.test/oauth/zoom/callback",
-    ZOOM_SDK_CLIENT_SECRET: "fake-test-sdk-secret", SIGNING_GRANT_SECRET: "fake-test-grant-secret-with-at-least-43-characters",
-    REQUEST_LIMITER: {limit: async () => ({success: true})},
-    SIGNATURE_LIMITER: {limit: async () => ({success: true})}
+    ZOOM_PUBLIC_CLIENT_ID: "test-public-client",
+    ZOOM_OAUTH_REDIRECT_URI: `${ORIGIN}/oauth/zoom/callback`,
+    ZOOM_OAUTH_LEGACY_REDIRECT_URIS: "[]",
+    SIGNING_GRANT_SECRET: "test-only-envelope-secret-which-is-at-least-43-characters",
+    REQUEST_LIMITER: {limit: async () => ({success: true})}
   };
 }
-const codeBody = () => ({grant_type: "authorization_code", client_id: "test-public-client",
-  code: "fake-authorization-code", code_verifier: "v".repeat(43), redirect_uri: "http://127.0.0.1:53421/callback"});
-const providerTokens = () => ({access_token: "fake-access", refresh_token: "fake-refresh", token_type: "bearer",
-  expires_in: 3600, scope: SCOPES});
-function post(path: string, body: unknown = {}, headers: Record<string, string> = {}): Request {
-  return new Request(`https://auth.example.test${path}`, {method: "POST", headers: {"Content-Type": "application/json", ...headers}, body: JSON.stringify(body)});
+function sessionBody(): Record<string, unknown> {
+  return {client_id: environment().ZOOM_PUBLIC_CLIENT_ID, code_challenge: hash("v".repeat(43)),
+    code_challenge_method: "S256", handoff_challenge: hash("h".repeat(43)), state: "n".repeat(43)};
 }
-function dependency(responder: (url: string, init: RequestInit) => Response | Promise<Response>, now = NOW) {
-  return {now: () => now, fetch: (async (url: RequestInfo | URL, init?: RequestInit) => responder(String(url), init ?? {})) as typeof fetch};
+function post(path: string, body: unknown, headers: Record<string, string> = {}): Request {
+  return new Request(`${ORIGIN}${path}`, {method: "POST", headers: {"Content-Type": "application/json", ...headers}, body: JSON.stringify(body)});
 }
-const noNetwork = dependency(() => { assert.fail("must not contact Zoom"); });
-async function obtainGrant(env = environment()): Promise<string> {
-  const response = await handleRequest(post("/v1/oauth/token", codeBody()), env,
-    dependency(() => Response.json(providerTokens())));
-  assert.equal(response.status, 200);
-  return ((await response.json()) as {signing_authorization: string}).signing_authorization;
+async function local(request: Request, env = environment()): Promise<Response> {
+  let calls = 0;
+  const response = await handleRequest(request, env, {now: () => NOW, fetch: (async () => {
+    calls++;
+    return Response.json({access_token: "must-never-be-returned", refresh_token: "must-never-be-returned"});
+  }) as typeof fetch});
+  // Check after the handler returns, so its exception handling cannot hide an outbound call.
+  assert.equal(calls, 0, "the code-only service must never call an upstream service");
+  return response;
 }
-function signatureRequest(grant: string, token = "fake-access") {
-  return post("/v1/meeting-sdk/signature", {}, {Authorization: `Bearer ${token}`, "X-Signing-Authorization": grant});
-}
-
-test("PKCE exchange pins the public client, preserves verifier/redirect, and returns a bound grant", async () => {
-  const response = await handleRequest(post("/v1/oauth/token", codeBody()), environment(), dependency((url, init) => {
-    assert.equal(url, "https://zoom.us/oauth/token");
-    assert.equal(init.method, "POST"); assert.equal(init.redirect, "manual");
-    const body = new URLSearchParams(String(init.body));
-    assert.deepEqual(Object.fromEntries(body), codeBody());
-    assert.equal(new Headers(init.headers).get("Authorization"), null);
-    return Response.json(providerTokens());
-  }));
-  assert.equal(response.status, 200);
+async function expectError(response: Response, status: number, error?: string): Promise<void> {
+  assert.equal(response.status, status);
+  const body = await response.json() as {error: string};
+  assert.deepEqual(Object.keys(body), ["error"]);
+  if (error) assert.equal(body.error, error);
   assert.equal(response.headers.get("Cache-Control"), "no-store");
-  const body = await response.json() as Record<string, unknown>;
-  assert.equal(body.access_token, "fake-access");
-  assert.equal(typeof body.signing_authorization, "string");
-  assert.equal(JSON.stringify(body).includes(environment().ZOOM_SDK_CLIENT_SECRET), false);
-});
-
-test("refresh exchange forwards only allowed fields and issues a fresh grant", async () => {
-  const response = await handleRequest(post("/v1/oauth/token", {grant_type: "refresh_token", refresh_token: "old-refresh"}),
-    environment(), dependency((url, init) => {
-      assert.equal(url, "https://zoom.us/oauth/token");
-      assert.deepEqual(Object.fromEntries(new URLSearchParams(String(init.body))), {
-        client_id: "test-public-client", grant_type: "refresh_token", refresh_token: "old-refresh"
-      });
-      return Response.json({...providerTokens(), access_token: "rotated-access", refresh_token: "rotated-refresh"});
-    }));
-  assert.equal(response.status, 200);
-  assert.equal((await response.json() as {refresh_token: string}).refresh_token, "rotated-refresh");
-});
-
-test("form-encoded native exchange is supported; duplicates are rejected", async () => {
-  const form = new URLSearchParams(codeBody());
-  const request = () => new Request("https://auth.example.test/v1/oauth/token", {method: "POST",
-    headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: form.toString()});
-  assert.equal((await handleRequest(request(), environment(), dependency(() => Response.json(providerTokens())))).status, 200);
-  form.append("client_id", "another-client");
-  assert.equal((await handleRequest(request(), environment(), noNetwork)).status, 400);
-});
-
-for (const change of [
-  {client_id: "other-app"}, {grant_type: "account_credentials"}, {client_secret: "injected"},
-  {redirect_uri: "https://attacker.example/callback"}, {redirect_uri: "http://127.0.0.1.attacker.test:1234/callback"},
-  {redirect_uri: "http://127.0.0.1:53421/callback?next=secret"}, {redirect_uri: "http://127.0.0.1:80/callback"},
-  {redirect_uri: "http://127.0.0.1:65536/callback"}, {code_verifier: "short"}, {code: ""}
-]) {
-  test(`rejects malformed or cross-client exchange: ${Object.keys(change)[0]} ${Object.values(change)[0]}`, async () => {
-    assert.equal((await handleRequest(post("/v1/oauth/token", {...codeBody(), ...change}), environment(), noNetwork)).status, 400);
-  });
+  assert.equal(response.headers.get("Location"), null);
 }
 
-test("signer requires a grant issued for exactly this access token and app", async () => {
-  const env = environment(); const grant = await obtainGrant(env);
-  assert.equal((await handleRequest(signatureRequest(grant, "another-token"), env, noNetwork)).status, 401);
-  assert.equal((await handleRequest(signatureRequest(grant), {...env, ZOOM_PUBLIC_CLIENT_ID: "another-app"}, noNetwork)).status, 401);
-  assert.equal((await handleRequest(signatureRequest(grant), {...env, SIGNING_GRANT_SECRET: "another-key-that-is-at-least-43-characters-long"}, noNetwork)).status, 401);
+test("retired token and SDK signature routes reject every legacy grant without reading credentials", async () => {
+  for (const path of ["/v1/oauth/token", "/v1/meeting-sdk/signature"]) {
+    for (const body of [undefined, "{invalid", "", JSON.stringify({grant_type: "authorization_code", code: "old-code", code_verifier: "old-verifier"}),
+      JSON.stringify({grant_type: "refresh_token", refresh_token: "old-refresh-token"}),
+      JSON.stringify({handoff: "old-handoff", signing_grant: "old-grant", access_token: "old-access-token"}), "x".repeat(20_000)]) {
+      const request = new Request(`${ORIGIN}${path}?access_token=old-query-token`, {method: "POST", body,
+        headers: {"Content-Type": "application/json", Authorization: "Bearer old-token", Origin: "https://example.test"}});
+      await expectError(await local(request), 410, "update_required");
+    }
+    for (const method of ["GET", "HEAD", "OPTIONS"]) {
+      await expectError(await local(new Request(`${ORIGIN}${path}`, {method})), 410, "update_required");
+    }
+    // Retirement is independent of missing configuration and unavailable rate-limit bindings.
+    await expectError(await local(post(path, {}), {} as Env), 410, "update_required");
+  }
 });
 
-test("signer verifies live authorization and signs a one-hour native SDK JWT", async () => {
-  const env = environment(); const grant = await obtainGrant(env);
-  const response = await handleRequest(signatureRequest(grant), env, dependency((url, init) => {
-    assert.equal(url, "https://api.zoom.us/v2/users/me/zak");
-    assert.equal(new Headers(init.headers).get("Authorization"), "Bearer fake-access");
-    assert.equal(init.redirect, "manual");
-    return Response.json({token: "fake-zak"});
-  }));
+test("old session requests containing an OAuth verifier require an app update", async () => {
+  for (const body of [{client_id: "old-confidential-client", code_verifier: "v".repeat(43)},
+    {...sessionBody(), code_verifier: "v".repeat(43)}, {...sessionBody(), code_verifier: null}]) {
+    await expectError(await local(post("/v1/oauth/session", body)), 410, "update_required");
+  }
+});
+
+test("session creation returns only a short-lived authorization URL with private response headers", async () => {
+  const response = await local(post("/v1/oauth/session", sessionBody()));
   assert.equal(response.status, 200);
-  const result = await response.json() as {signature: string, expiresAt: number};
-  const [header, payload, signature] = result.signature.split(".");
-  assert.deepEqual(JSON.parse(Buffer.from(header, "base64url").toString()), {alg: "HS256", typ: "JWT"});
-  assert.deepEqual(JSON.parse(Buffer.from(payload, "base64url").toString()), {
-    appKey: env.ZOOM_SDK_CLIENT_ID, iat: NOW - 30, exp: NOW + 3570, tokenExp: NOW + 3570
-  });
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.ZOOM_SDK_CLIENT_SECRET),
-    {name: "HMAC", hash: "SHA-256"}, false, ["verify"]);
-  assert.equal(await crypto.subtle.verify("HMAC", key, Buffer.from(signature, "base64url"), new TextEncoder().encode(`${header}.${payload}`)), true);
-  assert.equal(result.expiresAt, NOW + 3570);
-  assert.equal(JSON.stringify(result).includes("fake-zak"), false);
+  const body = await response.json() as {authorize_url: string; expires_in: number};
+  assert.deepEqual(Object.keys(body).sort(), ["authorize_url", "expires_in"]);
+  assert.equal(body.expires_in, 180);
+  assert.equal(new URL(body.authorize_url).hostname, "zoom.us");
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.get("Pragma"), "no-cache");
+  assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
+  assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
 });
 
-test("expired and tampered grants cannot mint SDK JWTs", async () => {
-  const env = environment(); const grant = await obtainGrant(env);
-  assert.equal((await handleRequest(signatureRequest(grant), env, {...noNetwork, now: () => NOW + 3600})).status, 401);
-  const parts = grant.split(".");
-  parts[1] = Buffer.from(JSON.stringify({exp: NOW + 7200})).toString("base64url");
-  assert.equal((await handleRequest(signatureRequest(parts.join(".")), env, noNetwork)).status, 401);
-  assert.equal((await handleRequest(signatureRequest("unsigned"), env, noNetwork)).status, 401);
-});
-
-test("revoked authorization cannot mint SDK JWTs and provider error text is not leaked", async () => {
-  const env = environment(); const grant = await obtainGrant(env);
-  const response = await handleRequest(signatureRequest(grant), env, dependency(() => new Response("private token detail", {status: 401})));
-  assert.equal(response.status, 401);
-  assert.equal(await response.text(), '{"error":"authorization_required"}');
-});
-
-test("missing scope and malformed provider responses fail closed", async () => {
-  for (const update of [{scope: "user:read:zak"}, {expires_in: -1}, {access_token: ""}, {token_type: "basic"}]) {
-    const response = await handleRequest(post("/v1/oauth/token", codeBody()), environment(),
-      dependency(() => Response.json({...providerTokens(), ...update})));
-    assert.equal(response.status, "scope" in update ? 403 : 502);
+test("form sessions accept the public contract and reject duplicate fields", async () => {
+  const body = new URLSearchParams(sessionBody() as Record<string, string>);
+  const request = (value: URLSearchParams) => new Request(`${ORIGIN}/v1/oauth/session`, {method: "POST", body: value});
+  assert.equal((await local(request(body))).status, 200);
+  for (const [key, value] of body) {
+    const duplicate = new URLSearchParams(body);
+    duplicate.append(key, value);
+    await expectError(await local(request(duplicate)), 400, "invalid_request");
   }
 });
 
-test("rate limiting applies before provider requests and before SDK signing", async () => {
-  const env = environment();
-  const denied = {limit: async () => ({success: false})};
-  const response = await handleRequest(post("/v1/oauth/token", codeBody()), {...env, REQUEST_LIMITER: denied}, noNetwork);
-  assert.equal(response.status, 429); assert.equal(response.headers.get("Retry-After"), "60");
-  const grant = await obtainGrant(env);
-  assert.equal((await handleRequest(signatureRequest(grant), {...env, SIGNATURE_LIMITER: denied}, noNetwork)).status, 429);
+test("session JSON must be an object and the media type must be supported", async () => {
+  for (const body of ["", "{bad", "null", "[]", '"string"', "42", "true"]) {
+    const response = await local(new Request(`${ORIGIN}/v1/oauth/session`, {method: "POST", body, headers: {"Content-Type": "application/json"}}));
+    await expectError(response, 400, "invalid_request");
+  }
+  for (const type of ["text/plain", "application/octet-stream"]) {
+    await expectError(await local(new Request(`${ORIGIN}/v1/oauth/session`, {method: "POST", body: "{}", headers: {"Content-Type": type}})), 415, "unsupported_media_type");
+  }
 });
 
-test("oversized bodies, query credentials, and browser requests are rejected", async () => {
-  assert.equal((await handleRequest(post("/v1/oauth/token", {code: "x".repeat(20_000)}), environment(), noNetwork)).status, 413);
-  assert.equal((await handleRequest(post("/v1/oauth/token?code=secret", codeBody()), environment(), noNetwork)).status, 400);
-  assert.equal((await handleRequest(post("/v1/oauth/token", codeBody(), {Origin: "https://attacker.test"}), environment(), noNetwork)).status, 403);
+test("session validation rejects missing, unexpected, malformed, and wrong-client parameters", async () => {
+  const invalid: Record<string, unknown>[] = [];
+  for (const key of Object.keys(sessionBody())) {
+    const body = sessionBody(); delete body[key]; invalid.push(body);
+  }
+  for (const change of [{client_id: "another-public-client"}, {client_id: ""}, {client_secret: "secret"},
+    {redirect_uri: "https://attacker.test/callback"}, {access_token: "token"}, {code_challenge_method: "plain"},
+    {code_challenge_method: "s256"}, ...["code_challenge", "handoff_challenge", "state"].flatMap(key =>
+      ["x".repeat(42), "x".repeat(44), "=".repeat(43), " ".repeat(43), null, 43].map(value => ({[key]: value})))]) {
+    invalid.push({...sessionBody(), ...change});
+  }
+  for (const body of invalid) await expectError(await local(post("/v1/oauth/session", body)), 400, "invalid_request");
 });
 
-test("unconfigured deployment and unexpected endpoints cannot sign", async () => {
-  assert.equal((await handleRequest(post("/v1/oauth/token", codeBody()), {...environment(), ZOOM_PUBLIC_CLIENT_ID: ""}, noNetwork)).status, 503);
-  assert.equal((await handleRequest(post("/arbitrary-proxy", codeBody()), environment(), noNetwork)).status, 404);
-  assert.equal((await handleRequest(new Request("https://auth.example.test/v1/meeting-sdk/signature"), environment(), noNetwork)).status, 405);
-  assert.equal((await handleRequest(post("/v1/meeting-sdk/signature"), environment(), noNetwork)).status, 401);
+test("OAuth and handoff proofs must differ while the public state remains an independent nonce field", async () => {
+  const body = sessionBody();
+  await expectError(await local(post("/v1/oauth/session", {...body, handoff_challenge: body.code_challenge})), 400, "invalid_request");
+  // State is public correlation data, not a third secret or a proof of possession.
+  assert.equal((await local(post("/v1/oauth/session", {...body, state: body.code_challenge}))).status, 200);
 });
 
-test("upstream network errors and oversized responses expose no credentials", async () => {
-  const response = await handleRequest(post("/v1/oauth/token", codeBody()), environment(),
-    dependency(() => { throw new Error("fake-refresh-token should never appear"); }));
-  assert.equal(response.status, 502);
-  assert.equal(await response.text(), '{"error":"zoom_unavailable"}');
-  const oversized = await handleRequest(post("/v1/oauth/token", codeBody()), environment(),
-    dependency(() => new Response("x".repeat(70_000))));
-  assert.equal(oversized.status, 502);
+test("native endpoints reject browser origins, query credentials, insecure transport, and wrong methods", async () => {
+  for (const path of ["/v1/oauth/session", "/v1/oauth/handoff"]) {
+    for (const origin of ["https://attacker.test", "null"]) {
+      await expectError(await local(post(path, sessionBody(), {Origin: origin})), 403, "native_client_required");
+    }
+    await expectError(await local(post(`${path}?access_token=token`, sessionBody())), 400, "invalid_request");
+    await expectError(await local(new Request(`${ORIGIN}${path}`)), 405, "method_not_allowed");
+    await expectError(await local(new Request(`http://auth.example.test${path}`, {method: "POST"})), 400, "https_required");
+  }
+  await expectError(await local(post("/oauth/zoom/callback", {})), 405, "method_not_allowed");
 });
 
-test("Zoom redirects never forward credentials or retry token exchanges or authorization checks", async () => {
-  const env = environment();
-  const grant = await obtainGrant(env);
-  const requests = [
-    {make: () => post("/v1/oauth/token", codeBody()), endpoint: "https://zoom.us/oauth/token"},
-    {make: () => post("/v1/oauth/token", {grant_type: "refresh_token", refresh_token: "fake-refresh"}),
-      endpoint: "https://zoom.us/oauth/token"},
-    {make: () => signatureRequest(grant), endpoint: "https://api.zoom.us/v2/users/me/zak"}
-  ];
-  for (const status of [301, 302, 303, 307, 308]) {
-    for (const {make, endpoint} of requests) {
-      let calls = 0;
-      let cancelled = false;
-      const response = await handleRequest(make(), env, dependency((url, init) => {
-        calls++;
-        assert.equal(url, endpoint);
-        assert.equal(init.redirect, "manual");
-        return new Response(new ReadableStream({cancel() { cancelled = true; }}), {
-          status, headers: {Location: "https://another.example.test/collect?private-detail=never-expose"}
-        });
-      }));
-      assert.equal(calls, 1);
-      assert.equal(cancelled, true);
-      assert.equal(response.status, 502);
-      assert.equal(response.headers.get("Location"), null);
-      assert.equal(await response.text(), '{"error":"zoom_unavailable"}');
+test("body limits apply to actual bytes and invalid or excessive declared lengths", async () => {
+  for (const path of ["/v1/oauth/session", "/v1/oauth/handoff"]) {
+    await expectError(await local(new Request(`${ORIGIN}${path}`, {method: "POST", headers: {"Content-Type": "application/json"}, body: "x".repeat(16_385)})), 413, "payload_too_large");
+    for (const length of ["16385", "-1", "not-a-number"]) {
+      await expectError(await local(post(path, sessionBody(), {"Content-Length": length})), 413, "payload_too_large");
     }
   }
 });
 
-test("service exposes only health and authenticated APIs, without hosting documents", async () => {
+test("all active authorization routes rate limit by hashed client address", async () => {
+  const keys: string[] = [];
   const env = environment();
-  const health = await handleRequest(new Request("https://auth.example.test/health"), env, noNetwork);
-  assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), {status: "ok"});
-  for (const path of ["/", "/privacy/", "/terms/", "/support/", "/index.html", "/arbitrary-path"]) {
-    for (const method of ["GET", "HEAD", "POST"]) {
-      const response = await handleRequest(new Request(`https://auth.example.test${path}`, {method}), env, noNetwork);
-      assert.equal(response.status, 404);
-      assert.equal(response.headers.get("Location"), null);
-      assert.equal(await response.text(), '{"error":"not_found"}');
+  env.REQUEST_LIMITER = {limit: async ({key}) => {keys.push(key); return {success: false};}};
+  for (const path of ["/v1/oauth/session", "/v1/oauth/handoff", "/oauth/zoom/callback"]) {
+    const request = path.includes("callback") ? new Request(`${ORIGIN}${path}`, {headers: {"CF-Connecting-IP": "203.0.113.7"}})
+      : post(path, sessionBody(), {"CF-Connecting-IP": "203.0.113.7"});
+    const response = await local(request, env);
+    assert.equal(response.headers.get("Retry-After"), "60");
+    await expectError(response, 429, "rate_limited");
+  }
+  assert.deepEqual(keys, Array(3).fill(hash("203.0.113.7")));
+});
+
+test("missing or malformed server configuration fails closed", async () => {
+  for (const change of [{ZOOM_PUBLIC_CLIENT_ID: ""}, {ZOOM_PUBLIC_CLIENT_ID: "bad client"},
+    {SIGNING_GRANT_SECRET: "short"}, {SIGNING_GRANT_SECRET: " ".repeat(43)}]) {
+    await expectError(await local(post("/v1/oauth/session", sessionBody()), {...environment(), ...change}), 503, "not_configured");
+  }
+});
+
+test("health and connect remain public while unknown paths never become a credential proxy", async () => {
+  const response = await local(new Request(`${ORIGIN}/health`));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {status: "ok"});
+  assert.equal((await local(new Request(`${ORIGIN}/connect`))).status, 200);
+  for (const path of ["/v1/users/me", "/oauth/token", "/v1/oauth/refresh", "/.env"]) {
+    for (const method of ["GET", "POST", "HEAD"]) {
+      await expectError(await local(new Request(`${ORIGIN}${path}`, {method})), 404, "not_found");
     }
   }
-  assert.equal((await handleRequest(post("/health"), env, noNetwork)).status, 404);
-  assert.equal((await handleRequest(new Request("https://auth.example.test/v1/oauth/token"), env, noNetwork)).status, 405);
-  assert.equal((await handleRequest(post("/v1/meeting-sdk/signature"), env, noNetwork)).status, 401);
 });

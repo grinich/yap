@@ -86,7 +86,7 @@ struct ZoomConnectLinkRequestTests {
             let client = ZoomAccountClient(store: store, transport: ZoomHTTPTransport { request in
                 await network.rejectSession(request)
             }, publicConfiguration: ZoomPublicConfiguration(oauthPublicClientID: "fixture-public",
-                sdkClientID: "fixture-sdk", sdkSignerURL: URL(string: "https://fixture.example/v1/meeting-sdk/signature")!))
+                oauthRedirectURL: URL(string: "https://fixture.example/oauth/zoom/callback")!))
             let connection = ZoomConnectionModel(client: client, openURL: { _ in
                 Issue.record("The fixture must never open a real authorization page")
             }, onSignInCompleted: {})
@@ -108,7 +108,7 @@ private actor ConnectLinkStore: ZoomCredentialStore {
     init(connected: Bool) {
         if connected {
             tokens = ZoomOAuthTokens(clientID: "fixture-public", accessToken: "fixture-access",
-                refreshToken: "fixture-refresh", expiresAt: Date().addingTimeInterval(3_600))
+                refreshToken: "fixture-refresh", expiresAt: Date().addingTimeInterval(3_600), authorizationMethod: "nativePKCEv1")
         }
     }
 

@@ -602,7 +602,12 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (NSInteger)prepareCameraEffectsWithJWT:(NSString *)jwt completion:(void (^)(NSInteger, NSString *))completion {
+    return [self prepareCameraEffectsWithJWT:jwt publicAppKey:nil completion:completion];
+}
+
+- (NSInteger)prepareCameraEffectsWithJWT:(NSString *)jwt publicAppKey:(NSString *)publicAppKey completion:(void (^)(NSInteger, NSString *))completion {
     NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if ((jwt.length > 0) == (publicAppKey.length > 0)) return ZoomSDKError_InvalidParameter;
     if (self.shutdownRequested) return ZoomSDKError_WrongUsage;
     if (WHZoomNativeOwner && WHZoomNativeOwner != self) return ZoomSDKError_WrongUsage;
     if (self.cameraEffectsReady && !self.ending) { completion(0, nil); return 0; }
@@ -621,7 +626,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     self.initialized = YES; WHZoomNativeOwner = self;
     ZoomSDKAuthService *auth = [[ZoomSDK sharedSDK] getAuthService];
     auth.delegate = self;
-    ZoomSDKAuthContext *context = [ZoomSDKAuthContext new]; context.jwtToken = jwt;
+    ZoomSDKAuthContext *context = [ZoomSDKAuthContext new]; context.jwtToken = jwt; context.publicAppKey = publicAppKey;
     result = [auth sdkAuth:context];
     if (result != ZoomSDKError_Success) {
         self.cameraPreparationCompletion = nil; [self closeCameraEffects]; return result;
@@ -1103,9 +1108,14 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
 }
 
 - (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID {
+    return [self beginRoomShareWithJWT:jwt publicAppKey:nil sessionID:sessionID];
+}
+
+- (NSInteger)beginRoomShareWithJWT:(NSString *)jwt publicAppKey:(NSString *)publicAppKey sessionID:(NSString *)sessionID {
+    if ((jwt.length > 0) == (publicAppKey.length > 0)) return ZoomSDKError_InvalidParameter;
     if (self.shutdownRequested || self.sessionID) return ZoomSDKError_WrongUsage;
     self.roomShare = YES;
-    return [self beginWithJWT:jwt zak:@"" meetingNumber:0 vanityID:nil passcode:nil registrantToken:nil
+    return [self beginWithJWT:jwt publicAppKey:publicAppKey zak:@"" meetingNumber:0 vanityID:nil passcode:nil registrantToken:nil
                  displayName:@"" host:NO microphoneMuted:YES cameraEnabled:NO sessionID:sessionID];
 }
 
@@ -1113,7 +1123,16 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
                 vanityID:(NSString *)vanityID passcode:(NSString *)passcode
          registrantToken:(NSString *)registrantToken displayName:(NSString *)displayName
                     host:(BOOL)host microphoneMuted:(BOOL)microphoneMuted cameraEnabled:(BOOL)cameraEnabled sessionID:(NSString *)sessionID {
+    return [self beginWithJWT:jwt publicAppKey:nil zak:zak meetingNumber:meetingNumber vanityID:vanityID passcode:passcode
+             registrantToken:registrantToken displayName:displayName host:host microphoneMuted:microphoneMuted cameraEnabled:cameraEnabled sessionID:sessionID];
+}
+
+- (NSInteger)beginWithJWT:(NSString *)jwt publicAppKey:(NSString *)publicAppKey zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
+                vanityID:(NSString *)vanityID passcode:(NSString *)passcode
+         registrantToken:(NSString *)registrantToken displayName:(NSString *)displayName
+                    host:(BOOL)host microphoneMuted:(BOOL)microphoneMuted cameraEnabled:(BOOL)cameraEnabled sessionID:(NSString *)sessionID {
     NSAssert(NSThread.isMainThread, @"Zoom operations require the main thread");
+    if ((jwt.length > 0) == (publicAppKey.length > 0)) return ZoomSDKError_InvalidParameter;
     if (self.shutdownRequested || self.sessionID || self.initialized || (WHZoomNativeOwner && WHZoomNativeOwner != self)) return ZoomSDKError_WrongUsage;
     self.sessionID = sessionID; self.ending = NO; self.joinRequested = NO; self.hosting = host;
     self.microphoneMutedOnEntry = self.roomShare || microphoneMuted;
@@ -1144,7 +1163,7 @@ static NSString *WHZoomErrorName(ZoomSDKError error) {
     }
     ZoomSDKAuthService *auth = [[ZoomSDK sharedSDK] getAuthService];
     auth.delegate = self;
-    ZoomSDKAuthContext *context = [ZoomSDKAuthContext new]; context.jwtToken = jwt;
+    ZoomSDKAuthContext *context = [ZoomSDKAuthContext new]; context.jwtToken = jwt; context.publicAppKey = publicAppKey;
     result = [auth sdkAuth:context];
     [self logConnection:"auth-request-return" code:result status:0 reason:0];
     if (result != ZoomSDKError_Success) { [self resetNative]; self.sessionID = nil; return result; }

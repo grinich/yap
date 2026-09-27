@@ -84,7 +84,7 @@ struct GalleryOrderTests {
     @Test func reorderingKeepsHiddenPeopleAvailableWhenVisibilityChanges() async throws {
         let (meeting, driver, session) = try await fixture()
         driver.onEvent?(session, .participants([
-            MeetingParticipant(id: "self", name: "Self", isSelf: true),
+            MeetingParticipant(id: "self", name: "Self", isSelf: true, isCameraEnabled: true),
             MeetingParticipant(id: "A", name: "A", isCameraEnabled: true),
             MeetingParticipant(id: "off", name: "Camera off"),
             MeetingParticipant(id: "B", name: "B", isCameraEnabled: true)
@@ -101,5 +101,38 @@ struct GalleryOrderTests {
         meeting.showNonVideoParticipants = true
         #expect(meeting.galleryParticipants.map(\.id) == ["self", "B", "A", "off"])
         #expect(driver.visibleParticipantIDs == ["self", "B", "A", "off"])
+    }
+
+    @Test(arguments: [false, true])
+    func cameraOffSelfIsHiddenAndCameraOnRestoresIt(showingShare: Bool) async {
+        let driver = DemoMeetingDriver(participantCount: 6)
+        let meeting = MeetingCoordinator(driver: driver)
+        meeting.showNonVideoParticipants = true
+        await meeting.host(displayName: "Self")
+        if showingShare { driver.receiveFixtureScreenShares() }
+
+        #expect(meeting.participants.count == 6)
+        #expect(!meeting.visibleParticipants.contains { $0.isSelf })
+        #expect(!driver.visibleParticipantIDs.contains("demo-self"))
+        #expect(meeting.visibleParticipants.count == 5)
+
+        await meeting.setCameraEnabled(true)
+        #expect(meeting.visibleParticipants.first?.isSelf == true)
+        #expect(driver.visibleParticipantIDs.first == "demo-self")
+        await meeting.setCameraEnabled(false)
+        #expect(!meeting.visibleParticipants.contains { $0.isSelf })
+        #expect(!driver.visibleParticipantIDs.contains("demo-self"))
+        #expect(meeting.participants.contains { $0.isSelf })
+
+        meeting.showNonVideoParticipants = false
+        #expect(!meeting.visibleParticipants.contains { $0.isSelf })
+        meeting.hideSelfView = true
+        await meeting.setCameraEnabled(true)
+        #expect(!meeting.visibleParticipants.contains { $0.isSelf })
+        #expect(!driver.visibleParticipantIDs.contains("demo-self"))
+        meeting.hideSelfView = false
+        #expect(meeting.visibleParticipants.first?.isSelf == true)
+        #expect(driver.visibleParticipantIDs.first == "demo-self")
+        await meeting.leave()
     }
 }

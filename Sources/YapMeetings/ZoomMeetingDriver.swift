@@ -91,8 +91,8 @@ public final class ZoomMeetingDriver: MeetingDriver, CameraEffectsDriver, Meetin
             let native = makeNativeBridge()
             bridge = native
             let result = request.isRoomShare
-                ? native.beginRoomShare(jwt: credentials.sdkJWT, sessionID: sessionID.uuidString)
-                : native.begin(jwt: credentials.sdkJWT, zak: credentials.zak,
+                ? native.beginRoomShare(jwt: credentials.sdkAuthorization.jwt, publicAppKey: credentials.sdkAuthorization.publicAppKey, sessionID: sessionID.uuidString)
+                : native.begin(jwt: credentials.sdkAuthorization.jwt, publicAppKey: credentials.sdkAuthorization.publicAppKey, zak: credentials.zak,
                 meetingNumber: meetingNumber, vanityID: link?.vanityID,
                 passcode: link?.embeddedPasscode, registrantToken: link?.registrantToken,
                 displayName: request.displayName, host: request.isHost, microphoneMuted: microphoneMuted,
@@ -391,19 +391,19 @@ public final class ZoomMeetingDriver: MeetingDriver, CameraEffectsDriver, Meetin
         guard sessionID == nil else {
             throw MeetingError.unavailable("Wait for Zoom to finish connecting, then reopen Camera settings.")
         }
-        // Reserve the process-wide SDK before the signature request can suspend.
+        // Reserve the process-wide SDK before loading authorization can suspend.
         Self.activeOwner = self
         let generation = cameraEffectsGeneration
         let task = Task { @MainActor [weak self] () throws -> CameraEffectsStatus in
             guard let self else { throw CancellationError() }
             do {
-                let jwt = try await accountClient.cameraSettingsSignature()
+                let authorization = try await accountClient.cameraSettingsAuthorization()
                 try Task.checkCancellation()
                 guard generation == cameraEffectsGeneration, cameraEffectsOpen, sessionID == nil else { throw CancellationError() }
                 let native = makeNativeBridge()
                 bridge = native
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    let result = native.prepareCameraEffects(jwt: jwt) { code, message in
+                    let result = native.prepareCameraEffects(jwt: authorization.jwt, publicAppKey: authorization.publicAppKey) { code, message in
                         if code == 0 { continuation.resume() }
                         else { continuation.resume(throwing: MeetingError.unavailable(message ?? "Zoom couldn’t prepare Camera settings. Try again.")) }
                     }

@@ -14,9 +14,7 @@ export CLANG_MODULE_CACHE_PATH="$YAP_NATIVE_WORK/module-cache"
 
 # These are independent executables, each with its own main and inert SDK
 # collaborators. They never join a meeting or activate a media device.
-# Keep visible-window fixtures out of unattended CI. AvatarEventsTests and
-# VideoDimensionsTests also remain excluded until their old roster mocks are
-# updated for the current SDK selectors; their omission is not a passing test.
+# Keep visible-window fixtures out of unattended CI.
 run_bounded() {
     python3 - "$@" <<'PY'
 import os
@@ -78,10 +76,12 @@ run_native_suite() {
 
 run_native_suite ComputerAudioSharingTests "${bridge_objects[@]}"
 run_native_suite VideoCaptureReadinessTests "${bridge_objects[@]}"
+run_native_suite AvatarEventsTests "${bridge_objects[@]}"
+run_native_suite VideoDimensionsTests "${bridge_objects[@]}"
 run_native_suite JoinMediaPreferenceTests "${bridge_objects[@]}"
 run_native_suite PhotoShutterTests
 run_native_suite ShareStatusTests
 run_native_suite CloudRecordingPolicyTests "$YAP_NATIVE_WORK/WHZoomCloudRecordingPolicy.o"
 run_native_suite RenderHostLifecycleTests "$YAP_NATIVE_WORK/WHZoomRenderHost.o"
 run_native_suite VideoDetachGraceTests "$YAP_NATIVE_WORK/WHZoomVideoDetachGrace.o"
-printf 'All 11 native bridge suites passed.\n'
+printf 'All 13 native bridge suites passed.\n'

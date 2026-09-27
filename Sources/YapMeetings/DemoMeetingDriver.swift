@@ -351,6 +351,29 @@ public final class DemoMeetingDriver: MeetingDriver, MeetingMediaDriver {
         }
     }
 
+    /// A scrollable history ending in a thread started by you, including mixed senders
+    /// and wrapped replies. Exercises the same rows as a real incoming conversation.
+    public func receiveFixtureChatHistory() {
+        guard let sessionID else { return }
+        for index in 0..<16 {
+            fixtureMessageSequence += 1
+            publish(MeetingChatMessage(senderName: index.isMultiple(of: 3) ? "Jordan Ellis" : "Avery Chen",
+                text: index.isMultiple(of: 3) ? "A longer update for the team: the new calendar menu is ready to review, and the next step is checking how it feels in a busy meeting." : "The agenda is ready for item \(index + 1).",
+                sdkID: "fixture-history-\(fixtureMessageSequence)", canReply: true, senderID: "demo-1"), sessionID: sessionID)
+        }
+        fixtureMessageSequence += 1
+        let rootID = "fixture-history-thread-\(fixtureMessageSequence)"
+        publish(MeetingChatMessage(senderName: request?.displayName ?? "You",
+            text: "Can we put the new customer stories on the homepage?", isFromSelf: true,
+            sdkID: rootID, canReply: true, senderID: "demo-self"), sessionID: sessionID)
+        for (index, text) in ["Yes — they’re on the standard terms.", "I’ll send over the approved copy. There are a couple of longer quotes we can use, too.", "Perfect, thank you! 🙌"].enumerated() {
+            let isSelf = index == 2
+            publish(MeetingChatMessage(senderName: isSelf ? (request?.displayName ?? "You") : (index == 0 ? "Avery Chen" : "Jordan Ellis"),
+                text: text, isFromSelf: isSelf, sdkID: "\(rootID)-reply-\(index)", threadID: rootID,
+                isReply: true, canReply: true, senderID: isSelf ? "demo-self" : "demo-\(index + 1)"), sessionID: sessionID)
+        }
+    }
+
     public func receiveFixturePrivateMessage() {
         guard let sessionID else { return }
         fixtureMessageSequence += 1

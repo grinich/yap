@@ -5,8 +5,8 @@ import YapMeetings
 
 @Suite("Managed Zoom connection setup") @MainActor
 struct ZoomManagedConnectionTests {
-    private let configuration = ZoomPublicConfiguration(oauthPublicClientID: "fixture-public", sdkClientID: "fixture-sdk",
-        sdkSignerURL: URL(string: "https://signer.example/v1/meeting-sdk/signature")!)
+    private let configuration = ZoomPublicConfiguration(oauthPublicClientID: "fixture-public",
+        oauthRedirectURL: URL(string: "https://signer.example/oauth/zoom/callback")!)
 
     @Test func bundledSetupOffersSignInWithoutWritingDeveloperSecrets() async {
         let store = ManagedConnectionStore()

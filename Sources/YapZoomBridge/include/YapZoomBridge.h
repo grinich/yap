@@ -24,6 +24,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// Authorizes the SDK for settings only. This entry point never joins or starts capture.
 - (NSInteger)prepareCameraEffectsWithJWT:(NSString *)jwt completion:(void (^)(NSInteger code, NSString * _Nullable message))completion
     NS_SWIFT_NAME(prepareCameraEffects(jwt:completion:));
+/// Supply exactly one credential. Public builds use publicAppKey with a nil JWT.
+- (NSInteger)prepareCameraEffectsWithJWT:(nullable NSString *)jwt publicAppKey:(nullable NSString *)publicAppKey
+    completion:(void (^)(NSInteger code, NSString * _Nullable message))completion
+    NS_SWIFT_NAME(prepareCameraEffects(jwt:publicAppKey:completion:));
 - (void)setPreferredCameraBackground:(NSString *)background imagePath:(nullable NSString *)path autoFraming:(BOOL)autoFraming
     NS_SWIFT_NAME(setPreferredCameraEffects(background:imagePath:autoFraming:));
 - (NSInteger)applyCameraBackground:(NSString *)background imagePath:(nullable NSString *)path autoFraming:(BOOL)autoFraming
@@ -40,12 +44,19 @@ NS_ASSUME_NONNULL_BEGIN
 /// NO keeps the owner intact; callers must not discard it or terminate yet.
 - (BOOL)shutdown;
 - (NSInteger)beginRoomShareWithJWT:(NSString *)jwt sessionID:(NSString *)sessionID NS_SWIFT_NAME(beginRoomShare(jwt:sessionID:));
+- (NSInteger)beginRoomShareWithJWT:(nullable NSString *)jwt publicAppKey:(nullable NSString *)publicAppKey sessionID:(NSString *)sessionID
+    NS_SWIFT_NAME(beginRoomShare(jwt:publicAppKey:sessionID:));
 - (NSInteger)submitRoomSharingCode:(NSString *)code;
 - (NSInteger)beginWithJWT:(NSString *)jwt zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
                 vanityID:(nullable NSString *)vanityID passcode:(nullable NSString *)passcode
          registrantToken:(nullable NSString *)registrantToken displayName:(NSString *)displayName
                     host:(BOOL)host microphoneMuted:(BOOL)microphoneMuted cameraEnabled:(BOOL)cameraEnabled sessionID:(NSString *)sessionID
     NS_SWIFT_NAME(begin(jwt:zak:meetingNumber:vanityID:passcode:registrantToken:displayName:host:microphoneMuted:cameraEnabled:sessionID:));
+- (NSInteger)beginWithJWT:(nullable NSString *)jwt publicAppKey:(nullable NSString *)publicAppKey zak:(NSString *)zak meetingNumber:(int64_t)meetingNumber
+                vanityID:(nullable NSString *)vanityID passcode:(nullable NSString *)passcode
+         registrantToken:(nullable NSString *)registrantToken displayName:(NSString *)displayName
+                    host:(BOOL)host microphoneMuted:(BOOL)microphoneMuted cameraEnabled:(BOOL)cameraEnabled sessionID:(NSString *)sessionID
+    NS_SWIFT_NAME(begin(jwt:publicAppKey:zak:meetingNumber:vanityID:passcode:registrantToken:displayName:host:microphoneMuted:cameraEnabled:sessionID:));
 - (void)leaveEndingMeeting:(BOOL)end NS_SWIFT_NAME(leave(endForEveryone:));
 - (NSInteger)setMicrophoneMuted:(BOOL)muted;
 - (NSInteger)setCameraEnabled:(BOOL)enabled;

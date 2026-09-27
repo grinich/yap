@@ -10,10 +10,11 @@ struct ZoomHostingTests {
         let result = try await client.hostingCredentials(title: "Fixture room")
         #expect(result.meetingNumber == 999_888_777)
         #expect(result.credentials.zak.hasPrefix("fixture-host-zak-"))
-        #expect(result.credentials.sdkJWT.split(separator: ".").count == 3)
+        let jwt = try #require(result.credentials.sdkAuthorization.jwt)
+        #expect(jwt.split(separator: ".").count == 3)
         #expect(!result.description.contains("999888777"))
         #expect(!result.description.contains(result.credentials.zak))
-        #expect(!result.debugDescription.contains(result.credentials.sdkJWT))
+        #expect(!result.debugDescription.contains(jwt))
 
         let requests = await server.requests
         let creation = try #require(requests.first { $0.httpMethod == "POST" })

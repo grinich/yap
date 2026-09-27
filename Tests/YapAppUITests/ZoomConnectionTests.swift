@@ -219,8 +219,8 @@ struct ZoomConnectionTests {
         try vault.save(configurationData, for: configurationKey)
         try vault.save(tokenData, for: tokensKey)
         try vault.save(Data("saved-google".utf8), for: googleKey)
-        let managed = ZoomPublicConfiguration(oauthPublicClientID: "managed-public", sdkClientID: "managed-sdk",
-            sdkSignerURL: URL(string: "https://signer.example/v1/meeting-sdk/signature")!)
+        let managed = ZoomPublicConfiguration(oauthPublicClientID: "managed-public",
+            oauthRedirectURL: URL(string: "https://signer.example/oauth/zoom/callback")!)
         let client = ZoomAccountClient(store: KeychainZoomCredentialStore(vault: vault), publicConfiguration: managed)
         let model = ZoomConnectionModel(client: client, openURL: { _ in Issue.record("Switching mode must not open authorization") })
         await model.loadStatus()

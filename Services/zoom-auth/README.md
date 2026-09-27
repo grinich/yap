@@ -1,78 +1,78 @@
-# Yap authentication service for Zoom
+# Yap code relay for Zoom
 
-This Cloudflare Worker implements the **revised managed authorization flow for an upcoming review build**: production-client OAuth at a fixed HTTPS callback, an encrypted return to the native app, token refresh, and short-lived Meeting SDK signatures. The confidential production OAuth/SDK secret remains on the server. The service receives authorization codes, PKCE verifiers and OAuth tokens; meeting media, chat attachments, recording files and Google Calendar data do not pass through it.
+This Cloudflare Worker relays a **short-lived authorization code** from the branded HTTPS callback to the initiating Mac. The Mac performs public-client PKCE token exchange and refresh directly with Zoom. The Worker never exchanges codes, refreshes tokens, returns OAuth tokens, or signs SDK JWTs. Meeting media, chat attachments, recordings and Google Calendar data do not pass through it.
 
-**Released Yap 0.1.6 (build 7) uses the earlier public-client loopback flow.** The Worker retains that exchange/refresh route for compatibility. Changing this source or deploying the Worker does not retrofit the new native flow into the signed 0.1.6 installer. The revised flow needs a new packaged build, matching saved Zoom configuration, deployment and live authorization acceptance before a replacement is ready. Local checks below do not prove those steps have happened.
+Zoom's [public PKCE guidance](https://developers.zoom.us/blog/public-pkce/) supports direct token exchange without a client secret or Authorization header and native SDK authentication through `ZoomSDKAuthContext.publicAppKey`. Yap uses the public client ID for this property; the pinned SDK 7.1.5 header exposes it as an alternative to `jwtToken`. Actual release acceptance still requires live own-user authorization, SDK authentication and meeting tests.
 
-## Revised managed flow
+## Protocol
 
-1. The Mac creates an independent random state nonce and PKCE verifier and posts them with the production client ID to `POST /v1/oauth/session`. The service validates the fixed client/callback configuration and returns a Zoom authorization URL with an S256 challenge.
-2. The OAuth state is an AES-GCM envelope containing the nonce, verifier, production audience, fixed redirect and an expiry of at most 180 seconds. It uses a key derived for the `authorization-session` purpose. The service keeps no session database; the encrypted envelope travels through the browser.
-3. Zoom returns the authorization code to `GET /oauth/zoom/callback` on the exact configured HTTPS origin. The service authenticates/decrypts state, validates the redirect and expiry, and exchanges the code with Zoom using the production client secret and verifier. Production authorization codes are exchanged only here; `/v1/oauth/token` does not accept a native-supplied production authorization code.
-4. After validating the token response and required scopes, the service creates its access-token-bound signing grant. It encrypts the token response, nonce, verifier hash and original token expiry into a distinct `native-token-handoff` envelope, also valid for at most 180 seconds. The completion page offers **Open Yap** at `yap://oauth/zoom?state=…&handoff=…`. The URL contains ciphertext, not a plaintext code, verifier or token.
-5. The Mac validates and consumes the pending state once, then posts `grant_type=urn:yap:params:oauth:grant-type:handoff`, client ID, encrypted handoff, state and its original verifier to `/v1/oauth/token`. The service checks the proof and returns the tokens with their remaining lifetime; redemption does not extend token expiry. The app validates own-user ZAK access and saves credentials in Keychain.
-6. Refresh uses the same HTTPS token endpoint, production client ID and refresh token. The server authenticates to Zoom with the production secret. SDK signing separately requires the access token plus `X-Signing-Authorization`; the service verifies the token-bound grant and a fresh own-user ZAK response before signing.
+1. The Mac generates an OAuth PKCE verifier, a separate handoff verifier and a random state nonce. **The OAuth verifier never leaves the Mac except for its direct Zoom token request.** It posts only the two S256 challenges and state to `POST /v1/oauth/session`:
 
-The session and handoff use purpose-separated authenticated encryption derived from `SIGNING_GRANT_SECRET`. The service processes plaintext only in request memory and has no persistent user/token store. Encrypted envelopes may remain in browser history; their expiry is not history deletion. The desktop consumes its pending nonce once, and Zoom controls authorization-code reuse. The stateless service has no consumed-handoff ledger: a handoff can be redeemed again before expiry only with the original verifier. Do not claim server-enforced one-time handoff redemption.
+   ```json
+   {"client_id":"PUBLIC_CLIENT_ID","code_challenge":"S256_CHALLENGE","code_challenge_method":"S256","handoff_challenge":"INDEPENDENT_S256_CHALLENGE","state":"RANDOM_NONCE"}
+   ```
 
-Callback pages return `no-store`, `no-referrer`, framing restrictions and a restrictive content security policy. Native API routes reject browser Origin headers. Token-bearing upstream requests go to fixed Zoom URLs and reject redirects. Request/provider body sizes and upstream time are bounded. Invocation logs and traces are disabled; unexpected application errors log only a fixed event. Cloudflare infrastructure metadata and rate-limit state remain separate from application credential retention. See [Privacy](../../PRIVACY.md).
+2. The Worker accepts only its configured public client and exact canonical callback origin. Both challenges and the nonce are 43-character base64url values; the challenges must differ. It returns `{authorize_url, expires_in:180}`. The Zoom authorization URL includes public client ID, fixed HTTPS redirect, S256 challenge and an authenticated `v2` state envelope.
+3. The browser returns to `/oauth/zoom/callback`. The Worker validates the state envelope, audience, fixed redirect and original 180-second deadline. It **does not contact Zoom or infer that authentication succeeded**. It wraps the authorization code, client, redirect, nonce and handoff challenge in a separate authenticated envelope. The page's explicit **Open Yap** link contains `yap://oauth/zoom?state=…&handoff=…`; this custom URL contains no plaintext code or verifier. Cancellation returns only the nonce and generic cancellation indication.
+4. The Mac validates the pending state and posts `{client_id,handoff,state,handoff_verifier}` to `POST /v1/oauth/handoff`. After proof, audience, expiry and redirect checks, the Worker returns exactly `{code,redirect_uri,client_id}`. It does not return a signing grant, access token, refresh token or SDK signature.
+5. The Mac validates those fields, then exchanges the code **directly at `https://zoom.us/oauth/token`** using the public client ID and original OAuth verifier. Only Zoom can validate/consume this code and issue the tokens. The Mac validates required scopes and own-user access before saving credentials in Keychain. Refresh and API requests also go directly to Zoom.
+6. Native SDK authentication uses the public client ID through `publicAppKey`; starting/joining as the signed-in user still uses the own-user ZAK and Zoom's SDK authorization checks.
 
-| Route | Purpose |
+The session and handoff share the **original** 180-second deadline; callback and redemption do not extend it. The envelopes use purpose-separated AES-GCM keys derived from the existing `SIGNING_GRANT_SECRET` (the legacy binding name is retained to minimize deployment migration). Neither OAuth verifier nor OAuth tokens are placed in an envelope. The browser callback itself necessarily carries Zoom's short-lived code; invocation logging and traces remain disabled.
+
+This stateless relay has no consumed-handoff ledger. The same handoff can be redeemed again within its short deadline only with its original proof. Zoom enforces single-use code exchange and the native app consumes its pending nonce. Do not claim server-enforced one-time handoff redemption. An attacker-supplied callback code is not authorization evidence: it can only reach Zoom's PKCE validation and cannot unlock any signing or token API on this Worker.
+
+## Routes and legacy retirement
+
+| Route | Behavior |
 | --- | --- |
-| `GET /connect` | Integration landing page with installation and explicit native sign-in entry |
-| `POST /v1/oauth/session` | Create an encrypted production OAuth session |
-| `GET /oauth/zoom/callback` | Receive Zoom's code on the fixed HTTPS callback and render the native handoff |
-| `POST /v1/oauth/token` | Redeem a production handoff or refresh production tokens; retain explicitly selected legacy public-client exchange/refresh |
-| `POST /v1/meeting-sdk/signature` | Verify the token-bound signing grant and current Zoom access, then issue the native SDK JWT |
-| `GET /health` | Service health only; not an authorization or deployment-configuration test |
+| `GET /connect` | Integration landing page and explicit native sign-in entry |
+| `POST /v1/oauth/session` | Creates a code-only public PKCE session; old `code_verifier` requests return `410 update_required` |
+| `GET /oauth/zoom/callback` | Validates the fixed callback/session and renders an encrypted code handoff |
+| `POST /v1/oauth/handoff` | Validates the independent proof and returns only code, redirect and public client ID |
+| `/v1/oauth/token` | Retired: `410 {"error":"update_required"}` for every method and grant; no body processing or upstream call |
+| `/v1/meeting-sdk/signature` | Retired: `410 {"error":"update_required"}`; no SDK JWT issuance |
+| `GET /health` | Liveness only, not proof of OAuth/SDK readiness |
 
-## Configuration and compatibility
+Retirement includes old public loopback exchanges, confidential exchanges, refresh requests and encrypted **token** handoffs. Old ciphertext purposes/versions cannot be redeemed by the new handoff route. Older signed apps require an update and a fresh explicit Zoom sign-in; their saved proxy-flow credentials are not sufficient evidence of native-PKCE provenance. Do not present a failed old-client refresh or an encrypted code handoff as a completed connection.
 
-The current source configuration uses:
+## Configuration and domains
 
-| Binding | Meaning / configured public value |
-| --- | --- |
-| `ZOOM_OAUTH_CLIENT_ID` | Production OAuth client: `UHoml3aIQpy86gZeijjfpQ` |
-| `ZOOM_SDK_CLIENT_ID` | Production SDK client: `UHoml3aIQpy86gZeijjfpQ` |
-| `ZOOM_OAUTH_REDIRECT_URI` | `https://meeting-auth.mgrinich.workers.dev/oauth/zoom/callback`; must exactly match the registered Zoom callback and signed app's service origin |
-| `ZOOM_PUBLIC_CLIENT_ID` | Legacy public-client compatibility only: `_Xz_EnBNS3OPtUmqZ1og3A` |
-| `ZOOM_SDK_CLIENT_SECRET` | Server secret used for SDK signing and confidential OAuth only when the production OAuth and SDK client IDs match |
-| `SIGNING_GRANT_SECRET` | Independent random server secret of at least 43 characters for signed grants and purpose-separated envelope keys |
+| Binding | Production | Development |
+| --- | --- | --- |
+| `ZOOM_PUBLIC_CLIENT_ID` | `_Xz_EnBNS3OPtUmqZ1og3A` | `l_yJBHqMTnOAnq2TdzeceQ` |
+| `ZOOM_OAUTH_REDIRECT_URI` | `https://auth.yap.enterprises/oauth/zoom/callback` | `https://auth-dev.yap.enterprises/oauth/zoom/callback` |
+| `ZOOM_OAUTH_LEGACY_REDIRECT_URIS` | Old production workers.dev callback | Old development workers.dev callback |
+| `SIGNING_GRANT_SECRET` | Existing independent random envelope secret, at least 43 characters | Separate development envelope secret |
+| `REQUEST_LIMITER` | Production request-rate namespace | Separate development request-rate namespace |
 
-Production configuration fails closed unless the OAuth and SDK IDs match and the callback is a fixed HTTPS URL with a fully qualified hostname and `/oauth/zoom/callback` path. No user info, arbitrary port, query or fragment is accepted. Verify the provider's saved production credentials and callback against the packaged candidate; identifiers in source alone are not proof of provider configuration or approval.
+There is no OAuth/SDK confidential client ID, SDK secret or signature limiter dependency. The server's existing envelope secret name is intentionally unchanged. This source does not delete old deployed secrets; removal from Cloudflare is an operator action after reviewing rollback requirements. Never copy production secrets into development or put them in source, logs, command arguments or local test output.
 
-The legacy `authorization_code` request is accepted only for `ZOOM_PUBLIC_CLIENT_ID`, with its PKCE verifier and an `http://127.0.0.1:<ephemeral-port>/callback` redirect. Legacy refresh and signing grants remain tied to that legacy client ID. This preserves the old managed installer; it does not make loopback the production confidential-client callback. Personal developer mode is different again: its Mac communicates directly with Zoom and signs locally, without this service.
+Every configured callback must be fixed HTTPS with a fully qualified hostname and `/oauth/zoom/callback`, with no credentials, custom port, query or fragment. The legacy list permits at most four distinct origins. New sessions and handoffs accept **only the canonical branded origin**. Known workers.dev origins return update-required for native routes; their old browser callbacks ask the user to restart. Other origins and cross-environment envelopes fail closed. Callback URLs are never built from request Host/forwarding headers or client input.
 
-Both managed flows require the same user-level scopes: `user:read:zak`, `meeting:write:meeting`, and `cloud_recording:read:list_user_recordings`. No admin/master scopes are requested. See the [functional test plan](../../Documentation/Zoom-Test-Plan.md) for account roles, prepared data, expected outcomes and remaining acceptance work.
+The public OAuth callback must match Zoom's saved environment-specific allowlist and the packaged native app exactly. The Worker custom domains remain `auth.yap.enterprises` and `auth-dev.yap.enterprises`; the public `yap.enterprises` website is separate. `workers_dev` remains enabled only to serve explicit migration failures and the existing landing/health pages. It does not retain token-proxy compatibility.
 
-## Development environment
+## Security and data boundary
 
-The named Wrangler environment `development` uses a separate Worker, `meeting-auth-development`, and the Zoom app's development credential pair. Its fixed callback is `https://meeting-auth-development.mgrinich.workers.dev/oauth/zoom/callback`. Register that exact HTTPS URL in Zoom's **Development** OAuth configuration; the production callback remains on `meeting-auth.mgrinich.workers.dev`.
+Native routes reject browser Origin headers. Inputs and encrypted envelopes are size-bounded. Callback pages use no-store, no-referrer, framing restrictions and a restrictive Content Security Policy. There are no outbound Worker fetches, user/token database or persistent code store. Unexpected errors log only the constant `auth_service_failure` event, never exception text or request data. Application log policy does not imply that Cloudflare retains no infrastructure metadata.
 
-Development OAuth and SDK identifiers are both `ZA20iVuUSmSKMGVmx7tDyA`; its legacy public-client identifier is `l_yJBHqMTnOAnq2TdzeceQ`. The environment repeats all non-inherited bindings, uses separate rate-limit namespaces, and keeps the same restrictions on invocation logging and traces. Provision its own `ZOOM_SDK_CLIENT_SECRET` from the matching development credentials and a different random `SIGNING_GRANT_SECRET`. Production secrets must not be copied into this environment.
+Both environments keep invocation logs and tracing disabled and explicitly enable query-string redaction for Workers logs and traces. This is not a claim about platform-wide infrastructure retention. The request limiter keys are hashes of the source IP; that rate-limit state is separate from application credential storage. Encrypted handoffs may remain in browser history, but cannot be decrypted without the server key or redeemed without the independent proof before expiry. Expiry is not history deletion.
 
-For development operations, pass `--env development` explicitly. The root configuration targets production; omit the environment only for an intentional production operation. A non-deploying development bundle check is:
+The native app retains the same requested user scopes: `user:read:zak`, `meeting:write:meeting`, and `cloud_recording:read:list_user_recordings`. No API traffic or recording bytes are proxied by this Worker. See the repository's functional test plan for live prerequisites; synthetic tests do not prove provider configuration, account consent, cross-account meetings or reviewer acceptance.
 
-```sh
-WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler deploy --env development --dry-run --outdir .wrangler/dry-run-development
-```
+## Local validation
 
-A development app must use the development client IDs and `https://meeting-auth-development.mgrinich.workers.dev/v1/meeting-sdk/signature` in its Zoom configuration. This selects the separate session, callback, token and signing endpoints. The released app and production review candidate keep the production IDs and service origin; Google Calendar configuration is unchanged. Configuring this environment does not provision its secrets or deploy it, and a successful dry run does not establish that its live Zoom authorization works.
-
-## Local checks
-
-Use Node.js 24 and the committed `package-lock.json`. Its public npm registry URLs, exact versions, and integrity hashes make dependency installation independent of a developer's registry proxy. Optional platform packages provide the native tooling; dependency lifecycle scripts are disabled.
+Use Node.js 24 and the committed lockfile. Tests use synthetic code/challenge values and request stubs; no Zoom or Cloudflare credential is needed.
 
 ```sh
 npm ci --ignore-scripts --no-audit --no-fund
 npm run typecheck
 npm test
-WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler deploy --dry-run --outdir .wrangler/dry-run
+WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler deploy --env '' --dry-run --outdir .wrangler/dry-run
+WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler deploy --env development --dry-run --outdir .wrangler/dry-run-development
 ```
 
-Tests inject synthetic provider responses and do not require Zoom or Cloudflare credentials. The dry run compiles and validates a bundle without uploading it. These checks do not establish that production credentials, Zoom approval, or a deployed endpoint are configured.
-
-`worker-configuration.d.ts` is generated by the locked Wrangler version. It includes runtime types and binding names from `wrangler.jsonc`, including the two required secrets. Check the committed output using the invalid example placeholders, without real secrets:
+Dry runs bundle locally without publishing. `worker-configuration.d.ts` is generated by locked Wrangler. Use only the deliberately invalid example placeholder to check generated bindings:
 
 ```sh
 (
@@ -83,15 +83,18 @@ Tests inject synthetic provider responses and do not require Zoom or Cloudflare 
 )
 ```
 
-After an intentional binding or Wrangler change, run the same command without `-- --check` and review the generated file. `--strict-vars false` generates string types rather than secret values. If `.dev.vars` already exists, the example command stops to preserve it; use an isolated checkout for this check.
+After changing bindings, run the same operation without `-- --check` and review the generated diff. Never overwrite a pre-existing `.dev.vars`. `--strict-vars false` generates string types rather than embedding values. Do not upload `.dev.vars.example` via secret tooling.
 
-## CI and deployment boundary
+The existing CI authentication job uses read-only repository permissions, synthetic placeholders, dependency lockfile and local tests/typechecks/bundle checks. It does not deploy. Wrangler's [dry-run docs](https://developers.cloudflare.com/workers/wrangler/commands/#deploy) and [local secret handling](https://developers.cloudflare.com/workers/local-development/environment-variables/) explain this boundary.
 
-The authentication-service job in `.github/workflows/ci.yml` runs on ordinary pushes and pull requests with read-only repository permissions, no persisted GitHub credentials, and no Cloudflare or Zoom secrets. It uses `.dev.vars.example` only while checking generated declarations and deletes the temporary copy before any bundle check. The job never deploys and does not publish the bundle.
+## Deployment and release acceptance
 
-`.dev.vars.example` contains deliberately invalid development placeholders. Do not upload it with `wrangler secret bulk` or `--secrets-file`, and do not copy its values into production. `.dev.vars` is ignored by Git. Production setup is separate: verify the production OAuth/SDK IDs and fixed HTTPS callback, provision the matching production secret and independent signing-grant secret through Cloudflare's secret storage, and confirm the legacy ID needed by already released apps. Validate the full deployed browser/native flow with the new packaged app before calling it ready. Keep secret values out of command arguments, logs, source files and public CI.
+1. Confirm Zoom public-client PKCE is enabled separately for production/development and the exact branded HTTPS callback is allowed in each. Preserve the public IDs and existing environment-specific envelope secrets.
+2. Deploy the code relay to development first, then production after local checks and live development acceptance. The named `--env development` targets the development Worker; an omitted environment targets production. Production mutations remain an explicit operator step.
+3. Test consent, cancellation, return to the initiating app, direct Zoom exchange/refresh and SDK `publicAppKey` authentication. Check that token/signature endpoints and old session callers return update-required on both canonical and workers.dev origins, without revealing credentials.
+4. Package the native app with the matching public ID and callback. Verify that old proxy-flow credentials prompt fresh connection, successful own-user ZAK is required where appropriate, and failures never claim a connected account. Complete real meeting/recording acceptance and signed release verification before handoff to reviewers.
 
-Wrangler's [dry-run command](https://developers.cloudflare.com/workers/wrangler/commands/#deploy) and [local secret handling](https://developers.cloudflare.com/workers/local-development/environment-variables/) document the distinction between local validation and deployment.
+No Worker source change alone updates already installed clients or establishes approval. A health response is not a complete authorization test. Keep live credentials and private meeting/account evidence outside public source.
 
 ## Local review and help preview
 

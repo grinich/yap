@@ -20,4 +20,25 @@ struct GalleryDropTargetTests {
         #expect(MeetingGalleryDropTarget.index(at: .zero, frames: [.zero]) == nil)
         #expect(MeetingGalleryDropTarget.index(at: .zero, frames: []) == nil)
     }
+
+    @Test func fixedShareTileIsExcludedFromParticipantDropIndices() {
+        for size in [CGSize(width: 320, height: 750), CGSize(width: 960, height: 680)] {
+            let frames = MeetingTileArrangement.frames(aspectRatios: [16 / 9, 9 / 16, 16 / 9, 16 / 9],
+                                                       size: size, spacing: 10)
+            let shareFrame = frames[0]
+            #expect(MeetingGalleryDropTarget.index(at: CGPoint(x: shareFrame.midX, y: shareFrame.midY),
+                                                   frames: frames, fixedLeadingTileCount: 1) == nil)
+            for (participantIndex, frame) in frames.dropFirst().enumerated() {
+                #expect(MeetingGalleryDropTarget.index(at: CGPoint(x: frame.midX, y: frame.midY),
+                                                       frames: frames, fixedLeadingTileCount: 1) == participantIndex)
+            }
+        }
+    }
+
+    @Test func galleryContainingOnlyShareHasNoParticipantDropTarget() {
+        let frames = MeetingTileArrangement.frames(aspectRatios: [16 / 9],
+                                                   size: CGSize(width: 320, height: 180), spacing: 10)
+        #expect(MeetingGalleryDropTarget.index(at: CGPoint(x: 160, y: 90),
+                                               frames: frames, fixedLeadingTileCount: 1) == nil)
+    }
 }

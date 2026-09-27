@@ -56,16 +56,13 @@ private final class ZoomManagedOAuthPending {
 }
 
 enum ZoomManagedOAuth {
-    struct Handoff: Sendable {
-        let value: String
-        let verifier: String
-        let state: String
-    }
-
     @MainActor
     static func authorize(configuration: ZoomPublicConfiguration, transport: ZoomHTTPTransport,
-                          openURL: @escaping @MainActor @Sendable (URL) -> Void) async throws -> Handoff {
+                          openURL: @escaping @MainActor @Sendable (URL) -> Void) async throws -> ZoomDesktopOAuth.Authorization {
         let verifier = try ZoomDesktopOAuth.randomToken()
+        // Independent proof lets the service release the code without ever
+        // receiving the OAuth PKCE verifier that only Zoom needs.
+        let handoffVerifier = try ZoomDesktopOAuth.randomToken()
         let state = try ZoomDesktopOAuth.randomToken()
         let attempt = ZoomManagedOAuthPending()
         return try await withTaskCancellationHandler {
@@ -78,11 +75,12 @@ enum ZoomManagedOAuth {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
             request.httpBody = try JSONSerialization.data(withJSONObject: [
-                "client_id": configuration.oauthPublicClientID, "code_verifier": verifier, "state": state
+                "client_id": configuration.oauthPublicClientID, "code_challenge": challenge(verifier),
+                "code_challenge_method": "S256", "handoff_challenge": challenge(handoffVerifier), "state": state
             ])
             let (data, response) = try await transport.send(request)
             try Task.checkCancellation()
-            guard response.statusCode == 200, data.count <= 16_384,
+            guard response.url == configuration.oauthSessionURL, response.statusCode == 200, data.count <= 16_384,
                   let session = try? JSONDecoder().decode(Session.self, from: data),
                   session.expires_in > 0, session.expires_in <= 180,
                   let url = validatedAuthorizeURL(session.authorize_url, configuration: configuration, verifier: verifier) else {
@@ -101,13 +99,48 @@ enum ZoomManagedOAuth {
                 return try await group.next()!
             }
             try Task.checkCancellation()
-            return Handoff(value: handoff, verifier: verifier, state: state)
+            let code = try await redeem(handoff: handoff, state: state, handoffVerifier: handoffVerifier,
+                configuration: configuration, transport: transport)
+            try Task.checkCancellation()
+            return ZoomDesktopOAuth.Authorization(code: code, verifier: verifier,
+                redirectURI: configuration.oauthRedirectURL.absoluteString)
         } onCancel: {
             Task { @MainActor in
                 ZoomManagedOAuthCallback.remove(state: state)
                 attempt.finish(.failure(CancellationError()))
             }
         }
+    }
+
+    private static func redeem(handoff: String, state: String, handoffVerifier: String,
+                               configuration: ZoomPublicConfiguration, transport: ZoomHTTPTransport) async throws -> String {
+        var request = URLRequest(url: configuration.oauthHandoffURL, cachePolicy: .reloadIgnoringLocalCacheData)
+        request.httpMethod = "POST"
+        request.httpShouldHandleCookies = false
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "client_id": configuration.oauthPublicClientID, "handoff": handoff,
+            "state": state, "handoff_verifier": handoffVerifier
+        ])
+        let (data, response) = try await transport.send(request)
+        try Task.checkCancellation()
+        // Explicitly reject the old token-returning response contract and any
+        // service-directed destination for the subsequent native token exchange.
+        guard response.url == configuration.oauthHandoffURL, response.statusCode == 200, data.count <= 16_384,
+              let fields = try? JSONDecoder().decode([String: String].self, from: data),
+              Set(fields.keys) == Set(["code", "client_id", "redirect_uri"]),
+              fields["client_id"] == configuration.oauthPublicClientID,
+              fields["redirect_uri"] == configuration.oauthRedirectURL.absoluteString,
+              let code = fields["code"], code.utf8.count <= 4_096, ZoomOAuthTokens.validToken(code) else {
+            throw ZoomAccountError.invalidResponse
+        }
+        return code
+    }
+
+    private static func challenge(_ verifier: String) -> String {
+        Data(SHA256.hash(data: Data(verifier.utf8))).zoomBase64URL
     }
 
     private struct Session: Decodable {
@@ -117,7 +150,7 @@ enum ZoomManagedOAuth {
 
     static func validEnvelope(_ value: String) -> Bool {
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)
-        return value.utf8.count <= 12_000 && parts.count == 3 && parts[0] == "v1" &&
+        return value.utf8.count <= 12_000 && parts.count == 3 && parts[0] == "v2" &&
             parts.dropFirst().allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") } }
     }
 
@@ -129,10 +162,10 @@ enum ZoomManagedOAuth {
         let names = ["client_id", "response_type", "redirect_uri", "state", "code_challenge", "code_challenge_method"]
         guard items.count == names.count, Set(items.map(\.name)) == Set(names) else { return nil }
         let fields = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
-        let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).zoomBase64URL
+        let expectedChallenge = challenge(verifier)
         guard fields["client_id"] == configuration.oauthPublicClientID, fields["response_type"] == "code",
               fields["redirect_uri"] == configuration.oauthRedirectURL.absoluteString,
-              fields["code_challenge"] == challenge, fields["code_challenge_method"] == "S256",
+              fields["code_challenge"] == expectedChallenge, fields["code_challenge_method"] == "S256",
               fields["state"].map(validEnvelope) == true else { return nil }
         return components.url
     }

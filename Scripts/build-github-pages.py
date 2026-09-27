@@ -18,6 +18,7 @@ def google_completion_files():
     """Static receipt pages. No OAuth parameters or account data reach this renderer."""
     css = (ROOT / 'Services/zoom-auth/site/google-completion.css').read_bytes()
     css_hash = hashlib.sha256(css).hexdigest()[:12]
+    icon_hash = hashlib.sha256((ROOT / 'Resources/YapIcon.png').read_bytes()).hexdigest()[:12]
     files = {'assets/google-completion.css': css}
     outcomes = {
         'received': ('Ready to yap.', 'Sign-in received',
@@ -35,10 +36,10 @@ def google_completion_files():
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
 <title>{html.escape(title)} — Yap</title>
-<link rel="icon" href="{SITE_URL}/assets/icon.png" type="image/png">
+<link rel="icon" href="{SITE_URL}/assets/icon.png?v={icon_hash}" type="image/png">
 <link rel="stylesheet" href="{SITE_URL}/assets/google-completion.css?v={css_hash}">
 </head><body><main>
-<img class="app-icon" src="{SITE_URL}/assets/icon.png" width="112" height="112" alt="Yap">
+<img class="app-icon" src="{SITE_URL}/assets/icon.png?v={icon_hash}" width="112" height="112" alt="Yap">
 <p class="wordmark">Yap</p>
 <p class="status" data-outcome="{outcome}">{html.escape(status)}</p>
 <h1>{html.escape(title)}</h1>

@@ -17,7 +17,7 @@ a:focus-visible{outline:3px solid #70b0ff;outline-offset:4px}.small{font-size:14
 <p>Connect Zoom to join and host meetings, share your screen, and watch your cloud recordings in Yap.</p>
 <a class="button" href="yap://connect/zoom">Connect Zoom in Yap</a>
 <p class="small">Yap opens Zoom’s sign-in page in your browser. Choose your Zoom account and review the permissions, then return to Yap. If you’re already connected, this opens your connection settings.</p>
-<section class="install"><h2>Before you connect</h2><p class="small">Use Yap 0.1.7 or later. Install the Yap build provided with your invitation, move it to Applications, and open it once. Then choose Connect Zoom above. Requires Apple silicon and macOS 26 or later.</p>
+<section class="install"><h2>Before you connect</h2><p class="small">Use Yap 0.1.8 or later. Install the Yap build provided with your invitation, move it to Applications, and open it once. Then choose Connect Zoom above. Requires Apple silicon and macOS 26 or later.</p>
 <p class="small">There’s no separate Yap account or subscription. Cloud recordings require a Zoom plan and account permissions that include them. Google Calendar is optional.</p></section>
 <footer><a href="https://grinich.github.io/yap/guide/">Help</a><a href="https://grinich.github.io/yap/privacy/">Privacy</a><a href="https://grinich.github.io/yap/terms/">Terms</a></footer>
 </main></body></html>`, {headers: {

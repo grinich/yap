@@ -63,7 +63,9 @@ jobs:
         run: swift package resolve --force-resolved-versions
       - name: Test application and release safety
         run: |
-          /bin/bash Scripts/test.sh
+          # Native UI suites share AppKit's process and main run loop. A suite's
+          # .serialized trait does not isolate it from other Swift Testing suites.
+          /bin/bash Scripts/test.sh --no-parallel
           python3 -m unittest discover -s Scripts/tests -v
           python3 Scripts/test-update-signatures.py
       - name: Build standalone app and validate nested signatures

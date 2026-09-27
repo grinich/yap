@@ -2,6 +2,22 @@ import Foundation
 import YapMeetings
 
 enum MeetingPresentationRules {
+    /// A populated roster can still render no tiles after camera/self filters.
+    /// Sharing and the intentional gaps between photo batches own their canvas.
+    @MainActor
+    static func emptyCanvasMessage(for meeting: MeetingCoordinator) -> (title: String, detail: String)? {
+        guard !meeting.isTakingGroupPhoto,
+              !(meeting.capabilities.canReceiveShare && meeting.selectedReceivedShare != nil),
+              meeting.galleryReceivedShare == nil, meeting.visibleParticipants.isEmpty else { return nil }
+        if meeting.participants.isEmpty {
+            return ("Waiting for participants.", "People will appear here when they join.")
+        }
+        if meeting.participants.allSatisfy(\.isSelf) {
+            return ("You’re the only one here.", "Invite someone to join the conversation.")
+        }
+        return ("No cameras to show.", "Cameras are off or hidden by your view settings.")
+    }
+
     /// Preference and observed outbound resolution are independent facts.
     static func videoQualityDescription(_ quality: MeetingVideoQuality?) -> String {
         guard let quality else { return "Video quality is available when the camera is on." }

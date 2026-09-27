@@ -36,9 +36,13 @@ struct MeetingView: View {
     private var showsConnectionStage: Bool {
         !meeting.isConnected && meeting.participants.isEmpty && meeting.selectedReceivedShare == nil
     }
+    private var emptyCanvasMessage: (title: String, detail: String)? {
+        MeetingPresentationRules.emptyCanvasMessage(for: meeting)
+    }
     private var showsControls: Bool {
         !meeting.isTakingGroupPhoto && (isPointerInside || keyboardControlsActive || voiceOverEnabled || isTrackingMenu ||
-        showShareChooser || model.showLeaveConfirmation || !meeting.isConnected || !meeting.unreadChatMessageIDs.isEmpty)
+        showShareChooser || model.showLeaveConfirmation || !meeting.isConnected || emptyCanvasMessage != nil ||
+        !meeting.unreadChatMessageIDs.isEmpty)
     }
 
     private func copyInvitation(_ invitation: URL) {
@@ -481,14 +485,16 @@ struct MeetingView: View {
             MeetingGalleryView(meeting: meeting) { participant in participantTileContent(participant) }
                 .id(meeting.sessionID)
                 .padding(6)
-        } else if meeting.participants.isEmpty {
+        } else if let message = emptyCanvasMessage {
             VStack(spacing: 16) {
                 Image(systemName: "video").font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)
-                Text("A little room for conversation.")
+                Text(message.title)
                     .font(.system(size: 20, weight: .medium))
-                Text("People will appear here when they arrive.")
+                Text(message.detail)
                     .font(.system(size: 13)).foregroundStyle(.secondary)
             }
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let pair = meeting.oneToOneParticipants {
             speakerCanvas(pair.remote, local: meeting.hideSelfView ? nil : pair.local, compactHeight: compactHeight)

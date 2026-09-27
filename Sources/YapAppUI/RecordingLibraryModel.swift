@@ -221,7 +221,7 @@ public final class RecordingLibraryModel {
         }
         // Preparation pauses the old item temporarily; its saved intent owns
         // whether the replacement resumes. A genuinely paused video stays paused.
-        if !isPreparing, player.rate != 0 { player.rate = speed }
+        if !isPreparing, !player.isExplicitlyPaused, player.rate != 0 { player.rate = speed }
     }
 
     var filteredMeetings: [ZoomRecordingMeeting] {
@@ -763,10 +763,11 @@ public final class RecordingLibraryModel {
                 self.isDownloading = false
                 if destination == nil {
                     // Keep the selected speed and a failed stream's saved intent.
-                    // A later model pause takes precedence over AVPlayer's transient rate.
+                    // Native Pause also wins if a delayed preroll rate arrives
+                    // while the download is copying its replacement file.
                     let positionToResume = self.pendingPosition ?? RecordingPlaybackPosition(time: position.time,
                         rate: self.player.currentItem?.status == .readyToPlay && self.playbackError == nil
-                            ? (self.player.rate == 0 ? 0 : self.playbackSpeed)
+                            ? (self.player.isExplicitlyPaused || self.player.rate == 0 ? 0 : self.playbackSpeed)
                             : (position.rate == 0 ? 0 : self.playbackSpeed))
                     // A hide/pause request revokes this download's automatic resume,
                     // even if AVPlayer still reports the rate from before that request.

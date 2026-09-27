@@ -1,159 +1,186 @@
 import assert from "node:assert/strict";
-import {test} from "node:test";
+import {createHash} from "node:crypto";
+import test from "node:test";
 import {handleRequest} from "../src/index.ts";
 
-const NOW = 1_800_000_000;
-const CANONICAL = "https://auth.yap.enterprises";
-const LEGACY = "https://meeting-auth.mgrinich.workers.dev";
+const PRODUCTION = "https://auth.yap.enterprises";
 const DEVELOPMENT = "https://auth-dev.yap.enterprises";
-const DEVELOPMENT_LEGACY = "https://meeting-auth-development.mgrinich.workers.dev";
+const OLD_PRODUCTION = "https://meeting-auth.mgrinich.workers.dev";
+const OLD_DEVELOPMENT = "https://meeting-auth-development.mgrinich.workers.dev";
 const CALLBACK = "/oauth/zoom/callback";
+const NOW = 1_800_000_000;
 const STATE = "n".repeat(43);
-const VERIFIER = "v".repeat(43);
-const TOKENS = {access_token: "fixture-access", refresh_token: "fixture-refresh", token_type: "bearer",
-  expires_in: 3600, scope: "user:read:zak meeting:write:meeting cloud_recording:read:list_user_recordings"};
-
-function environment(): Env {
-  return {ZOOM_PUBLIC_CLIENT_ID: "fixture-legacy-client", ZOOM_OAUTH_CLIENT_ID: "fixture-client",
-    ZOOM_SDK_CLIENT_ID: "fixture-client", ZOOM_SDK_CLIENT_SECRET: "fixture-sdk-secret",
-    ZOOM_OAUTH_REDIRECT_URI: CANONICAL + CALLBACK,
-    ZOOM_OAUTH_LEGACY_REDIRECT_URIS: JSON.stringify([LEGACY + CALLBACK]),
-    SIGNING_GRANT_SECRET: "fixture-independent-grant-secret-at-least-43-characters",
-    REQUEST_LIMITER: {limit: async () => ({success: true})}, SIGNATURE_LIMITER: {limit: async () => ({success: true})}};
+const PROOF = "h".repeat(43);
+const CODE = "native-only-authorization-code";
+const hash = (value: string) => createHash("sha256").update(value).digest("base64url");
+function environment(development = false): Env {
+  return {ZOOM_PUBLIC_CLIENT_ID: development ? "development-public-client" : "production-public-client",
+    ZOOM_OAUTH_REDIRECT_URI: `${development ? DEVELOPMENT : PRODUCTION}${CALLBACK}`,
+    ZOOM_OAUTH_LEGACY_REDIRECT_URIS: JSON.stringify([`${development ? OLD_DEVELOPMENT : OLD_PRODUCTION}${CALLBACK}`]),
+    SIGNING_GRANT_SECRET: development ? "development-only-envelope-secret-at-least-43-characters" : "production-test-envelope-secret-at-least-43-characters",
+    REQUEST_LIMITER: {limit: async () => ({success: true})}};
 }
-function dependencies(responder: (url: string, init: RequestInit) => Response) {
-  return {now: () => NOW, fetch: (async (url: RequestInfo | URL, init?: RequestInit) => responder(String(url), init ?? {})) as typeof fetch};
+function sessionBody(env = environment()): Record<string, string> {
+  return {client_id: env.ZOOM_PUBLIC_CLIENT_ID, code_challenge: hash("v".repeat(43)), code_challenge_method: "S256",
+    handoff_challenge: hash(PROOF), state: STATE};
 }
-const noNetwork = dependencies(() => { assert.fail("must not contact Zoom"); });
-function post(origin: string, path: string, body: unknown, headers: Record<string, string> = {}) {
-  return new Request(origin + path, {method: "POST", headers: {"Content-Type": "application/json", ...headers}, body: JSON.stringify(body)});
+function post(origin: string, path: string, body: unknown, headers: Record<string, string> = {}): Request {
+  return new Request(`${origin}${path}`, {method: "POST", headers: {"Content-Type": "application/json", ...headers}, body: JSON.stringify(body)});
 }
-function sessionRequest(origin: string, env = environment()) {
-  return post(origin, "/v1/oauth/session", {client_id: env.ZOOM_OAUTH_CLIENT_ID, code_verifier: VERIFIER, state: STATE});
+async function local(request: Request, env = environment()): Promise<Response> {
+  let calls = 0;
+  const response = await handleRequest(request, env, {now: () => NOW, fetch: (async () => {
+    calls++;
+    return Response.json({access_token: "must-never-be-returned", refresh_token: "must-never-be-returned"});
+  }) as typeof fetch});
+  assert.equal(calls, 0, "canonical and migration requests must never call upstream");
+  return response;
 }
-async function start(origin: string, env = environment()): Promise<URL> {
-  const response = await handleRequest(sessionRequest(origin, env), env, noNetwork);
+async function start(origin = PRODUCTION, env = environment()): Promise<URL> {
+  const response = await local(post(origin, "/v1/oauth/session", sessionBody(env)), env);
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("Location"), null);
-  const authorize = new URL((await response.json() as {authorize_url: string}).authorize_url);
-  assert.equal(authorize.searchParams.get("redirect_uri"), origin + CALLBACK);
-  return authorize;
+  const body = await response.json() as {authorize_url: string; expires_in: number};
+  assert.deepEqual(Object.keys(body).sort(), ["authorize_url", "expires_in"]);
+  assert.equal(body.expires_in, 180);
+  return new URL(body.authorize_url);
 }
-function callback(authorize: URL, origin: string): Request {
-  const url = new URL(origin + CALLBACK);
-  url.search = new URLSearchParams({state: authorize.searchParams.get("state")!, code: "fixture-code"}).toString();
-  return new Request(url);
+function callback(origin: string, authorize: URL): URL {
+  const url = new URL(`${origin}${CALLBACK}`);
+  url.search = new URLSearchParams({state: authorize.searchParams.get("state")!, code: CODE}).toString();
+  return url;
 }
-async function complete(authorize: URL, origin: string, env = environment()): Promise<URL> {
-  const response = await handleRequest(callback(authorize, origin), env, dependencies((url, init) => {
-    assert.equal(url, "https://zoom.us/oauth/token");
-    const fields = new URLSearchParams(String(init.body));
-    assert.equal(fields.get("redirect_uri"), origin + CALLBACK);
-    assert.equal(fields.get("client_id"), env.ZOOM_OAUTH_CLIENT_ID);
-    assert.equal(fields.get("code_verifier"), VERIFIER);
-    assert.equal(new Headers(init.headers).get("Authorization"), `Basic ${btoa(`${env.ZOOM_OAUTH_CLIENT_ID}:${env.ZOOM_SDK_CLIENT_SECRET}`)}`);
-    return Response.json(TOKENS);
-  }));
+async function handoff(authorize: URL, origin = PRODUCTION, env = environment()): Promise<string> {
+  const response = await local(new Request(callback(origin, authorize)), env);
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("Location"), null);
   const html = await response.text();
-  const href = /href="(yap:\/\/oauth\/zoom\?[^"]+)"/.exec(html)?.[1];
-  assert.ok(href);
-  assert.equal(html.includes(TOKENS.access_token), false);
-  return new URL(href.replaceAll("&amp;", "&"));
+  assert.ok(!html.includes(CODE));
+  const match = html.match(/href="(yap:\/\/oauth\/zoom\?[^"\s]+)"/);
+  assert.ok(match);
+  const url = new URL(match[1].replaceAll("&amp;", "&"));
+  assert.equal(url.searchParams.get("state"), STATE);
+  return url.searchParams.get("handoff")!;
+}
+function redemption(sealed: string, env = environment()): Record<string, string> {
+  return {client_id: env.ZOOM_PUBLIC_CLIENT_ID, handoff: sealed, state: STATE, handoff_verifier: PROOF};
+}
+async function expectError(response: Response, status: number, error: string): Promise<void> {
+  assert.equal(response.status, status);
+  assert.deepEqual(await response.json(), {error});
+  assert.equal(response.headers.get("Location"), null);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+}
+async function expectRestart(response: Response): Promise<void> {
+  assert.equal(response.status, 400);
+  const html = await response.text();
+  assert.match(html, /Start sign-in again/);
+  assert.match(html, /href="yap:\/\/open"/);
+  assert.doesNotMatch(html, /handoff=|access_token|refresh_token|signing_grant/);
+  assert.equal(response.headers.get("Location"), null);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
 }
 
-for (const origin of [CANONICAL, LEGACY]) {
-  test(`full native authorization still works directly on ${origin}`, async () => {
-    const env = environment();
-    const handoff = await complete(await start(origin, env), origin, env);
-    const response = await handleRequest(post(origin, "/v1/oauth/token", {
-      grant_type: "urn:yap:params:oauth:grant-type:handoff", client_id: env.ZOOM_OAUTH_CLIENT_ID,
-      code_verifier: VERIFIER, state: handoff.searchParams.get("state"), handoff: handoff.searchParams.get("handoff")
-    }), env, noNetwork);
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("Location"), null);
-    const tokens = await response.json() as {access_token: string, signing_authorization: string};
-    assert.equal(tokens.access_token, TOKENS.access_token);
-    // Existing grants remain valid when an updated app uses the new origin.
-    const signature = await handleRequest(post(CANONICAL, "/v1/meeting-sdk/signature", {}, {
-      Authorization: `Bearer ${tokens.access_token}`, "X-Signing-Authorization": tokens.signing_authorization
-    }), env, dependencies((url) => {
-      assert.equal(url, "https://api.zoom.us/v2/users/me/zak");
-      return Response.json({token: "fixture-zak"});
-    }));
-    assert.equal(signature.status, 200);
-    assert.equal(signature.headers.get("Location"), null);
-  });
-}
-
-test("in-flight legacy sign-in survives deployment of the canonical domain", async () => {
-  const before = {...environment(), ZOOM_OAUTH_REDIRECT_URI: LEGACY + CALLBACK, ZOOM_OAUTH_LEGACY_REDIRECT_URIS: "[]"};
-  const authorize = await start(LEGACY, before);
-  await complete(authorize, LEGACY, environment());
+test("production code flow always uses the canonical branded callback and public client", async () => {
+  const env = environment();
+  const authorize = await start();
+  assert.equal(authorize.searchParams.get("redirect_uri"), `${PRODUCTION}${CALLBACK}`);
+  assert.equal(authorize.searchParams.get("client_id"), env.ZOOM_PUBLIC_CLIENT_ID);
+  assert.ok(!authorize.href.includes("workers.dev"));
+  const sealed = await handoff(authorize);
+  const response = await local(post(PRODUCTION, "/v1/oauth/handoff", redemption(sealed)));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {code: CODE, redirect_uri: `${PRODUCTION}${CALLBACK}`, client_id: env.ZOOM_PUBLIC_CLIENT_ID});
 });
 
-test("moving a valid OAuth state between trusted callback hosts never exchanges a code", async () => {
-  for (const [from, to] of [[CANONICAL, LEGACY], [LEGACY, CANONICAL]]) {
-    const authorize = await start(from);
-    const response = await handleRequest(callback(authorize, to), environment(), noNetwork);
-    assert.equal(response.status, 400);
-    assert.equal(response.headers.get("Location"), null);
-    assert.doesNotMatch(await response.text(), /handoff=/);
+test("development code flow uses its own canonical origin and public client", async () => {
+  const env = environment(true);
+  const authorize = await start(DEVELOPMENT, env);
+  assert.equal(authorize.searchParams.get("redirect_uri"), `${DEVELOPMENT}${CALLBACK}`);
+  assert.equal(authorize.searchParams.get("client_id"), env.ZOOM_PUBLIC_CLIENT_ID);
+  const sealed = await handoff(authorize, DEVELOPMENT, env);
+  const response = await local(post(DEVELOPMENT, "/v1/oauth/handoff", redemption(sealed, env)), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {code: CODE, redirect_uri: `${DEVELOPMENT}${CALLBACK}`, client_id: env.ZOOM_PUBLIC_CLIENT_ID});
+});
+
+test("known workers.dev aliases require updates for session and handoff without redirecting credentials", async () => {
+  for (const development of [false, true]) {
+    const env = environment(development);
+    const canonical = development ? DEVELOPMENT : PRODUCTION;
+    const legacy = development ? OLD_DEVELOPMENT : OLD_PRODUCTION;
+    const authorize = await start(canonical, env);
+    const sealed = await handoff(authorize, canonical, env);
+    for (const path of ["/v1/oauth/session", "/v1/oauth/handoff"]) {
+      const body = path.endsWith("session") ? sessionBody(env) : redemption(sealed, env);
+      await expectError(await local(post(legacy, path, body), env), 410, "update_required");
+    }
+    await expectRestart(await local(new Request(callback(legacy, authorize)), env));
   }
 });
 
-test("unknown origins cannot use auth APIs or spoof host selection with forwarding headers", async () => {
-  for (const origin of ["https://attacker.example", "https://auth.yap.enterprises.attacker.example",
-    "https://auth.yap.enterprises:8443", DEVELOPMENT, DEVELOPMENT_LEGACY]) {
-    for (const path of ["/v1/oauth/session", "/v1/oauth/token", "/v1/meeting-sdk/signature", CALLBACK]) {
-      const request = path === CALLBACK ? new Request(origin + path) : post(origin, path, {}, {
-        Host: "auth.yap.enterprises", "X-Forwarded-Host": "auth.yap.enterprises", Forwarded: "host=auth.yap.enterprises;proto=https"
-      });
-      const response = await handleRequest(request, environment(), noNetwork);
-      assert.equal(response.status, 400);
-      assert.deepEqual(await response.json(), {error: "invalid_service_origin"});
+test("unknown and cross-environment origins cannot be trusted through forwarded host headers", async () => {
+  for (const origin of ["https://attacker.test", "https://auth.yap.enterprises.attacker.test", `${PRODUCTION}:8443`, DEVELOPMENT, OLD_DEVELOPMENT]) {
+    for (const path of ["/v1/oauth/session", "/v1/oauth/handoff"]) {
+      await expectError(await local(post(origin, path, sessionBody(), {Host: "auth.yap.enterprises", "X-Forwarded-Host": "auth.yap.enterprises",
+        Forwarded: "host=auth.yap.enterprises;proto=https"})), 400, "invalid_service_origin");
+    }
+    await expectRestart(await local(new Request(`${origin}${CALLBACK}?state=invalid&code=code`)));
+  }
+});
+
+test("sealed redirect binding rejects relocation even if another environment reused the same client and key", async () => {
+  const authorize = await start();
+  const sealed = await handoff(authorize);
+  const relocated = {...environment(), ZOOM_OAUTH_REDIRECT_URI: `${DEVELOPMENT}${CALLBACK}`, ZOOM_OAUTH_LEGACY_REDIRECT_URIS: "[]"};
+  await expectRestart(await local(new Request(callback(DEVELOPMENT, authorize)), relocated));
+  await expectError(await local(post(DEVELOPMENT, "/v1/oauth/handoff", redemption(sealed, relocated)), relocated), 400, "invalid_oauth_session");
+});
+
+test("production envelopes cannot cross into the real development client and key", async () => {
+  const authorize = await start();
+  const sealed = await handoff(authorize);
+  const env = environment(true);
+  await expectRestart(await local(new Request(callback(DEVELOPMENT, authorize)), env));
+  await expectError(await local(post(DEVELOPMENT, "/v1/oauth/handoff", redemption(sealed, env)), env), 400, "invalid_oauth_session");
+  await expectError(await local(post(DEVELOPMENT, "/v1/oauth/session", sessionBody()), env), 400, "invalid_request");
+});
+
+test("invalid canonical callback configuration fails closed before creating an authorization session", async () => {
+  for (const redirect of ["", "not-a-url", `http://auth.yap.enterprises${CALLBACK}`, `https://user:password@auth.yap.enterprises${CALLBACK}`,
+    `${PRODUCTION}:8443${CALLBACK}`, `${PRODUCTION}/other/callback`, `${PRODUCTION}${CALLBACK}?extra=1`, `${PRODUCTION}${CALLBACK}#fragment`,
+    `https://localhost${CALLBACK}`, `https://127.0.0.1${CALLBACK}`]) {
+    const env = {...environment(), ZOOM_OAUTH_REDIRECT_URI: redirect};
+    await expectError(await local(post(PRODUCTION, "/v1/oauth/session", sessionBody(env)), env), 503, "not_configured");
+  }
+});
+
+test("invalid or ambiguous legacy origin configuration fails closed", async () => {
+  for (const legacy of ["not-json", "null", "{}", JSON.stringify([`${PRODUCTION}${CALLBACK}`]),
+    JSON.stringify([`${OLD_PRODUCTION}${CALLBACK}`, `${OLD_PRODUCTION}${CALLBACK}`]),
+    JSON.stringify([`http://meeting-auth.mgrinich.workers.dev${CALLBACK}`]),
+    JSON.stringify([null]), JSON.stringify(Array.from({length: 5}, (_, i) => `https://legacy-${i}.example.test${CALLBACK}`))]) {
+    const env = {...environment(), ZOOM_OAUTH_LEGACY_REDIRECT_URIS: legacy};
+    await expectError(await local(post(PRODUCTION, "/v1/oauth/session", sessionBody(env)), env), 503, "not_configured");
+  }
+});
+
+test("retired token and signature compatibility routes stay retired on both canonical and legacy domains", async () => {
+  for (const development of [false, true]) {
+    const env = environment(development);
+    for (const origin of development ? [DEVELOPMENT, OLD_DEVELOPMENT] : [PRODUCTION, OLD_PRODUCTION]) {
+      for (const path of ["/v1/oauth/token", "/v1/meeting-sdk/signature"]) {
+        await expectError(await local(post(origin, path, {client_id: env.ZOOM_PUBLIC_CLIENT_ID, grant_type: "refresh_token",
+          refresh_token: "legacy-refresh-token", access_token: "legacy-access-token", signing_grant: "legacy-grant"}, {Authorization: "Bearer legacy-access-token"}), env), 410, "update_required");
+      }
     }
   }
 });
 
-test("malformed, duplicate and unsafe legacy callback configurations fail closed", async () => {
-  for (const configured of ["not-json", "{}", '[null]', JSON.stringify(Array(5).fill(LEGACY + CALLBACK)),
-    JSON.stringify([CANONICAL + CALLBACK]), JSON.stringify([LEGACY + CALLBACK, LEGACY + CALLBACK]),
-    ...["http://legacy.example/oauth/zoom/callback", "https://legacy.example:8443/oauth/zoom/callback",
-      "https://user@legacy.example/oauth/zoom/callback", "https://legacy.example/wrong-path",
-      "https://legacy.example/oauth/zoom/callback?next=elsewhere", "https://legacy.example/oauth/zoom/callback#fragment"]
-      .map(value => JSON.stringify([value]))]) {
-    const env = {...environment(), ZOOM_OAUTH_LEGACY_REDIRECT_URIS: configured};
-    assert.equal((await handleRequest(sessionRequest(CANONICAL, env), env, noNetwork)).status, 503);
-  }
-});
-
-test("development uses its own canonical and legacy hosts and cannot accept production state", async () => {
-  const env = {...environment(), ZOOM_OAUTH_CLIENT_ID: "fixture-development-client", ZOOM_SDK_CLIENT_ID: "fixture-development-client",
-    ZOOM_OAUTH_REDIRECT_URI: DEVELOPMENT + CALLBACK,
-    ZOOM_OAUTH_LEGACY_REDIRECT_URIS: JSON.stringify([DEVELOPMENT_LEGACY + CALLBACK]),
-    SIGNING_GRANT_SECRET: "different-development-grant-secret-at-least-43-characters"};
-  for (const origin of [DEVELOPMENT, DEVELOPMENT_LEGACY]) await complete(await start(origin, env), origin, env);
-  for (const origin of [CANONICAL, LEGACY]) {
-    assert.equal((await handleRequest(sessionRequest(origin, env), env, noNetwork)).status, 400);
-  }
-  const productionState = await start(CANONICAL);
-  assert.equal((await handleRequest(callback(productionState, DEVELOPMENT), env, noNetwork)).status, 400);
-});
-
-test("saved production refresh tokens work on both service origins without changing credentials", async () => {
-  for (const origin of [CANONICAL, LEGACY]) {
-    const env = environment();
-    const response = await handleRequest(post(origin, "/v1/oauth/token", {
-      grant_type: "refresh_token", client_id: env.ZOOM_OAUTH_CLIENT_ID, refresh_token: "existing-refresh"
-    }), env, dependencies((url, init) => {
-      assert.equal(url, "https://zoom.us/oauth/token");
-      assert.equal(new URLSearchParams(String(init.body)).get("refresh_token"), "existing-refresh");
-      assert.equal(new Headers(init.headers).get("Authorization"), `Basic ${btoa("fixture-client:fixture-sdk-secret")}`);
-      return Response.json(TOKENS);
-    }));
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("Location"), null);
+test("old in-flight callbacks offer a clean restart instead of reviving the old token flow", async () => {
+  for (const origin of [PRODUCTION, OLD_PRODUCTION]) {
+    for (const state of ["legacy-unsealed-state", "v1.old-iv.old-ciphertext"]) {
+      const url = new URL(`${origin}${CALLBACK}`);
+      url.search = new URLSearchParams({state, code: "old-authorization-code"}).toString();
+      await expectRestart(await local(new Request(url)));
+    }
   }
 });

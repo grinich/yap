@@ -173,9 +173,11 @@ int main(void) {
             JoinMediaBridge *bridge = NewBridge();
             JoinMediaSettings *settings = (id)fixtureSDK.settings;
             JoinMediaAction *action = (id)fixtureSDK.meeting.action;
-            Check([bridge beginWithJWT:@"inert" zak:@"inert" meetingNumber:12345678901 vanityID:nil passcode:nil registrantToken:nil
+            Check([bridge beginWithJWT:nil publicAppKey:@"fixture-public-client" zak:@"inert" meetingNumber:12345678901 vanityID:nil passcode:nil registrantToken:nil
                 displayName:@"Fixture" host:host.boolValue microphoneMuted:quietly.boolValue cameraEnabled:!quietly.boolValue sessionID:@"fixture"] == 0,
                 @"host and guest accept the captured preference");
+            Check([fixtureSDK.auth.lastContext.publicAppKey isEqualToString:@"fixture-public-client"] && fixtureSDK.auth.lastContext.jwtToken.length == 0,
+                @"host and guest authenticate with the public client ID and no signer JWT");
             [bridge onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
             Check(fixtureSDK.meeting.joins == 1 && settings.audio.muted == quietly.boolValue && !settings.audio.autoJoin,
                 @"authorization confirms the desired microphone entry state without starting audio");
@@ -201,7 +203,7 @@ int main(void) {
         }
 
         JoinMediaBridge *room = NewBridge();
-        Check([room beginRoomShareWithJWT:@"inert" sessionID:@"room"] == 0, @"room pairing begins independently");
+        Check([room beginRoomShareWithJWT:nil publicAppKey:@"fixture-public-client" sessionID:@"room"] == 0, @"room pairing begins independently");
         [room onZoomSDKAuthReturn:ZoomSDKAuthError_Success]; Admit(room);
         Check([(JoinMediaAction *)fixtureSDK.meeting.action audioJoins] == 0 && fixtureSDK.meeting.action.unmutes == 0 &&
             [(JoinMediaSettings *)fixtureSDK.settings audio].muted && ![(JoinMediaSettings *)fixtureSDK.settings audio].autoJoin,

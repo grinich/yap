@@ -150,9 +150,10 @@ static void DrainMainQueue(void) {
 @interface CameraAuth : NSObject
 @property(nonatomic, weak) id delegate;
 @property(nonatomic) NSUInteger requests;
+@property(nonatomic, strong) ZoomSDKAuthContext *lastContext;
 @end
 @implementation CameraAuth
-- (ZoomSDKError)sdkAuth:(ZoomSDKAuthContext *)context { self.requests++; return ZoomSDKError_Success; }
+- (ZoomSDKError)sdkAuth:(ZoomSDKAuthContext *)context { self.requests++; self.lastContext = context; return ZoomSDKError_Success; }
 - (BOOL)isAuthorized { return YES; }
 @end
 

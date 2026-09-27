@@ -16,10 +16,12 @@ int main(int argc, const char *argv[]) {
         CameraGateBridge *bridge = [CameraGateBridge new];
         bridge.operations = [NSMutableArray array]; fixtureSDK.meeting.action.operations = bridge.operations;
         __block NSUInteger completions = 0;
-        Check([bridge prepareCameraEffectsWithJWT:@"inert-fixture" completion:^(NSInteger code, NSString *message) {
+        Check([bridge prepareCameraEffectsWithJWT:nil publicAppKey:@"fixture-public-client" completion:^(NSInteger code, NSString *message) {
             completions++; Check(code == 0, @"settings authorization completes successfully");
         }] == 0, @"settings preparation requests fixture authentication");
         Check(completions == 0 && fixtureSDK.auth.requests == 1, @"preparation waits for authentication");
+        Check([fixtureSDK.auth.lastContext.publicAppKey isEqualToString:@"fixture-public-client"] && fixtureSDK.auth.lastContext.jwtToken.length == 0,
+              @"managed camera settings pass the public client ID without a JWT");
         [bridge onZoomSDKAuthReturn:ZoomSDKAuthError_Success];
         Check(completions == 1 && bridge.cameraEffectsReady, @"auth success prepares settings exactly once");
         Check(fixtureSDK.meeting.joins == 0 && fixtureSDK.meeting.action.unmutes == 0,
@@ -86,6 +88,8 @@ int main(int argc, const char *argv[]) {
         Check([cancelled prepareCameraEffectsWithJWT:@"cancelled-fixture" completion:^(NSInteger code, NSString *message) {
             cancellations++; Check(code != 0, @"closed authentication is reported as cancellation/failure");
         }] == 0, @"a subsequent settings session can acquire the released SDK");
+        Check([fixtureSDK.auth.lastContext.jwtToken isEqualToString:@"cancelled-fixture"] && fixtureSDK.auth.lastContext.publicAppKey.length == 0,
+              @"explicit developer JWT authorization remains separate from public authentication");
         [cancelled closeCameraEffects];
         NSUInteger joins = fixtureSDK.meeting.joins;
         [cancelled onZoomSDKAuthReturn:ZoomSDKAuthError_Success];

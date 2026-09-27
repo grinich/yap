@@ -8,22 +8,21 @@
   "workers_dev": true,
   "preview_urls": false,
   "routes": [{"pattern": "auth.yap.enterprises", "custom_domain": true}],
-  "secrets": {"required": ["ZOOM_SDK_CLIENT_SECRET", "SIGNING_GRANT_SECRET"]},
+  "secrets": {"required": ["SIGNING_GRANT_SECRET"]},
   "vars": {
     "ZOOM_PUBLIC_CLIENT_ID": "_Xz_EnBNS3OPtUmqZ1og3A",
-    "ZOOM_OAUTH_CLIENT_ID": "UHoml3aIQpy86gZeijjfpQ",
     "ZOOM_OAUTH_REDIRECT_URI": "https://auth.yap.enterprises/oauth/zoom/callback",
-    "ZOOM_OAUTH_LEGACY_REDIRECT_URIS": "[\"https://meeting-auth.mgrinich.workers.dev/oauth/zoom/callback\"]",
-    "ZOOM_SDK_CLIENT_ID": "UHoml3aIQpy86gZeijjfpQ"
+    "ZOOM_OAUTH_LEGACY_REDIRECT_URIS": "[\"https://meeting-auth.mgrinich.workers.dev/oauth/zoom/callback\"]"
   },
   "ratelimits": [
-    {"name": "REQUEST_LIMITER", "namespace_id": "26090701", "simple": {"limit": 120, "period": 60}},
-    {"name": "SIGNATURE_LIMITER", "namespace_id": "26090702", "simple": {"limit": 10, "period": 60}}
+    {"name": "REQUEST_LIMITER", "namespace_id": "26090701", "simple": {"limit": 120, "period": 60}}
   ],
-  // Tokens and OAuth codes pass through this service. Retain only explicit,
-  // constant error events; request URLs, headers, bodies and traces are excluded.
+  // OAuth codes pass through this relay; tokens and PKCE verifiers do not.
+  // Application logs contain only constant error events; invocation logs and
+  // traces are disabled, with query-string redaction set explicitly as well.
   "observability": {
     "enabled": true,
+    "redact_query_string": true,
     "logs": {"enabled": true, "invocation_logs": false, "head_sampling_rate": 1},
     "traces": {"enabled": false}
   },
@@ -33,20 +32,18 @@
       "workers_dev": true,
       "preview_urls": false,
       "routes": [{"pattern": "auth-dev.yap.enterprises", "custom_domain": true}],
-      "secrets": {"required": ["ZOOM_SDK_CLIENT_SECRET", "SIGNING_GRANT_SECRET"]},
+      "secrets": {"required": ["SIGNING_GRANT_SECRET"]},
       "vars": {
         "ZOOM_PUBLIC_CLIENT_ID": "l_yJBHqMTnOAnq2TdzeceQ",
-        "ZOOM_OAUTH_CLIENT_ID": "ZA20iVuUSmSKMGVmx7tDyA",
         "ZOOM_OAUTH_REDIRECT_URI": "https://auth-dev.yap.enterprises/oauth/zoom/callback",
-        "ZOOM_OAUTH_LEGACY_REDIRECT_URIS": "[\"https://meeting-auth-development.mgrinich.workers.dev/oauth/zoom/callback\"]",
-        "ZOOM_SDK_CLIENT_ID": "ZA20iVuUSmSKMGVmx7tDyA"
+        "ZOOM_OAUTH_LEGACY_REDIRECT_URIS": "[\"https://meeting-auth-development.mgrinich.workers.dev/oauth/zoom/callback\"]"
       },
       "ratelimits": [
-        {"name": "REQUEST_LIMITER", "namespace_id": "26091401", "simple": {"limit": 120, "period": 60}},
-        {"name": "SIGNATURE_LIMITER", "namespace_id": "26091402", "simple": {"limit": 10, "period": 60}}
+        {"name": "REQUEST_LIMITER", "namespace_id": "26091401", "simple": {"limit": 120, "period": 60}}
       ],
       "observability": {
         "enabled": true,
+        "redact_query_string": true,
         "logs": {"enabled": true, "invocation_logs": false, "head_sampling_rate": 1},
         "traces": {"enabled": false}
       }

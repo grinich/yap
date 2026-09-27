@@ -190,7 +190,7 @@ def social_metadata(brand: str, title: str, description: str, route: str, image_
 <meta name="twitter:image" content="{image}"><meta name="twitter:image:alt" content="{alt}">'''
 
 
-def shell(brand: str, title: str, description: str, body: str, route: str, css_hash: str, image_size: tuple[int, int]) -> str:
+def shell(brand: str, title: str, description: str, body: str, route: str, css_hash: str, icon_hash: str, image_size: tuple[int, int]) -> str:
     def nav(label: str, href: str) -> str:
         current = ' aria-current="page"' if route == href else ""
         return f'<a href="{href}"{current}>{label}</a>'
@@ -201,20 +201,20 @@ def shell(brand: str, title: str, description: str, body: str, route: str, css_h
 <meta name="description" content="{html.escape(description, quote=True)}"><meta name="referrer" content="no-referrer">
 {canonical}
 {social_metadata(brand, title, description, route, image_size)}
-<link rel="icon" href="/assets/icon.png" type="image/png"><link rel="stylesheet" href="/assets/site.css?v={css_hash}">
+<link rel="icon" href="/assets/icon.png?v={icon_hash}" type="image/png"><link rel="stylesheet" href="/assets/site.css?v={css_hash}">
 </head><body><a class="skip" href="#main">Skip to content</a>
-<header class="site-header"><div class="shell topbar"><a class="brand" href="/" aria-label="{html.escape(brand, quote=True)} home"><img src="/assets/icon.png" alt="" width="42" height="42">{html.escape(brand)}</a><nav class="nav" aria-label="Main">{nav("Guide", "/guide/")}{nav("Support", "/support/")}<a href="{REPOSITORY}">Source ↗</a></nav></div></header>
+<header class="site-header"><div class="shell topbar"><a class="brand" href="/" aria-label="{html.escape(brand, quote=True)} home"><img src="/assets/icon.png?v={icon_hash}" alt="" width="42" height="42">{html.escape(brand)}</a><nav class="nav" aria-label="Main">{nav("Guide", "/guide/")}{nav("Support", "/support/")}<a href="{REPOSITORY}">Source ↗</a></nav></div></header>
 <main id="main" class="shell">{body}</main>
 <footer class="site-footer"><div class="shell"><div class="footer-top"><span>{html.escape(brand)} · An independent Mac app</span><nav class="footer-links" aria-label="Legal and project">{nav("Privacy", "/privacy/")}{nav("Terms", "/terms/")}{nav("Notices", "/notices/")}<a href="{REPOSITORY}">GitHub</a></nav></div><p>Independent of Zoom, Google, and Apple. Screenshots show the native interface with fictional participants, sample meetings, and an original sample recording. This site uses no analytics, external fonts, or tracking scripts.</p></div></footer></body></html>
 '''
 
 
-def document(brand: str, title: str, description: str, text: str, source: str, route: str, css_hash: str, image_size: tuple[int, int]) -> str:
+def document(brand: str, title: str, description: str, text: str, source: str, route: str, css_hash: str, icon_hash: str, image_size: tuple[int, int]) -> str:
     renderer = Markdown(source)
     body = renderer.render(text, omit_title=True)
     toc = ''.join(f'<a href="#{identifier}">{html.escape(label)}</a>' for identifier, label in renderer.headings)
     content = f'<header class="page-title"><span class="eyebrow">{html.escape(brand)} / {html.escape(title)}</span><h1>{html.escape(title)}</h1><p>{html.escape(description)}</p></header><div class="document"><nav class="toc" aria-label="On this page"><div class="toc-label">On this page</div>{toc}</nav><article class="markdown">{body}<p class="source-note">Published from the project’s <a href="{REPOSITORY}/blob/main/{quote(source)}">source document</a>.</p></article></div>'
-    return shell(brand, title, description, content, route, css_hash, image_size)
+    return shell(brand, title, description, content, route, css_hash, icon_hash, image_size)
 
 
 class PageLinks(HTMLParser):
@@ -283,6 +283,7 @@ def build_files(root: Path = ROOT) -> dict[str, bytes]:
     files = {"assets/site.css": css}
     for source, target in ASSETS.items():
         files[target] = (root / source).read_bytes()
+    icon_hash = hashlib.sha256(files["assets/icon.png"]).hexdigest()[:12]
     social_image = files[SOCIAL_IMAGE_PATH]
     if len(social_image) < 24 or social_image[:8] != b"\x89PNG\r\n\x1a\n" or social_image[12:16] != b"IHDR":
         raise ValueError("Social share image must be a PNG")
@@ -308,24 +309,24 @@ def build_files(root: Path = ROOT) -> dict[str, bytes]:
 <section class="section agenda"><h2>Less between you and your next meeting</h2>{renderer.render(agenda_section)}</section>
 <section class="section shortcut-area"><h2>A few keys worth knowing</h2><div class="markdown">{renderer.render(shortcuts)}</div></section>
 <section class="source-card"><h2>Try {html.escape(brand)}</h2>{renderer.render(try_section)}<div class="actions"><a class="button" href="{REPOSITORY}#try-{slug(brand)}">Installation and setup ↗</a><a class="button secondary" href="/support/">Get in touch</a></div></section>'''
-    files["index.html"] = shell(brand, tagline[1], deck[1], content, "/", css_hash, image_size).encode()
+    files["index.html"] = shell(brand, tagline[1], deck[1], content, "/", css_hash, icon_hash, image_size).encode()
     documents = [("privacy", "Privacy", "How the app and its authorization service handle your data.", "PRIVACY.md"),
                  ("terms", "Terms for the free preview", "The terms and current publication status of the preview.", "TERMS.md"),
                  ("notices", "Third-party notices", "The components and licenses behind the app.", "THIRD_PARTY_NOTICES.md")]
     for route, title, description, source in documents:
-        files[f"{route}/index.html"] = document(brand, title, description, (root / source).read_text(), source, f"/{route}/", css_hash, image_size).encode()
+        files[f"{route}/index.html"] = document(brand, title, description, (root / source).read_text(), source, f"/{route}/", css_hash, icon_hash, image_size).encode()
     guide_source = str(SERVICE / "site/guide.md")
     guide = (root / guide_source).read_text().replace("{{brand}}", brand).replace("{{shortcuts}}", shortcuts)
-    files["guide/index.html"] = document(brand, "User guide", "Connect your account, join a meeting, and find your way through recordings.", guide, guide_source, "/guide/", css_hash, image_size).encode()
+    files["guide/index.html"] = document(brand, "User guide", "Connect your account, join a meeting, and find your way through recordings.", guide, guide_source, "/guide/", css_hash, icon_hash, image_size).encode()
     privacy = (root / "PRIVACY.md").read_text()
     email = re.search(r'\[([^\]]+)\]\((mailto:[^)]+)\)', privacy)
     if not email:
         raise ValueError("Privacy policy must provide a private contact")
     support = "# Support\n\n## Report a problem\n\n" + section(readme, "Support and feedback")
     support += f"\n\n## Privacy and security\n\nFor private account, privacy, or security matters, contact [{email[1]}]({email[2]}). Include only the information needed to explain the issue. Do not post credentials, tokens, meeting passcodes, or private transcripts in public Issues.\n\n## Before you write\n\nCheck the [user guide](/guide/) for connection, recordings, and removal instructions. Include the app version and macOS version, what you expected, what happened, and the steps needed to reproduce it. Screenshots with sample content are helpful.\n\n## Availability\n\n" + try_section
-    files["support/index.html"] = document(brand, "Support", "Questions, bug reports, and a private route for sensitive matters.", support, "README.md", "/support/", css_hash, image_size).encode()
+    files["support/index.html"] = document(brand, "Support", "Questions, bug reports, and a private route for sensitive matters.", support, "README.md", "/support/", css_hash, icon_hash, image_size).encode()
     missing = '<section class="not-found"><span class="eyebrow">404</span><h1>This page isn’t here.</h1><p>Try the <a href="/guide/">user guide</a>, or head back to the <a href="/">homepage</a>.</p></section>'
-    files["404.html"] = shell(brand, "Page not found", "This page could not be found.", missing, "/404.html", css_hash, image_size).encode()
+    files["404.html"] = shell(brand, "Page not found", "This page could not be found.", missing, "/404.html", css_hash, icon_hash, image_size).encode()
     files["_headers"] = b"/*\n  Content-Security-Policy: default-src 'none'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n  X-Frame-Options: DENY\n"
     files["robots.txt"] = f"User-agent: *\nAllow: /\nDisallow: /v1/\nSitemap: {CANONICAL_URL}/sitemap.xml\n".encode()
     urls = ("/", "/guide/", "/support/", "/privacy/", "/terms/", "/notices/")
